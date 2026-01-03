@@ -394,19 +394,19 @@ def generate_recommendation(scenarios: dict) -> str:
     optimized = scenarios.get('optimized')
     
     if flat and matched:
-        wait_reduction = flat.p90_wait - matched.p90_wait
+        wait_change = matched.p90_wait - flat.p90_wait
         staff_diff = matched.total_staff_hours - flat.total_staff_hours
         
         report.append(f"\nDemand-matched vs Flat staffing:")
-        report.append(f"  - P90 wait change: {wait_reduction:+.1f} minutes")
+        report.append(f"  - P90 wait change: {wait_change:+.1f} minutes")
         report.append(f"  - Staff-hour change: {staff_diff:+d} hours")
     
     if optimized and flat:
-        wait_reduction = flat.p90_wait - optimized.p90_wait
+        wait_change = optimized.p90_wait - flat.p90_wait
         staff_diff = optimized.total_staff_hours - flat.total_staff_hours
         
         report.append(f"\nOptimized vs Flat staffing:")
-        report.append(f"  - P90 wait change: {wait_reduction:+.1f} minutes")
+        report.append(f"  - P90 wait change: {wait_change:+.1f} minutes")
         report.append(f"  - Staff-hour change: {staff_diff:+d} hours")
     
     if optimized:
@@ -447,8 +447,13 @@ def export_results_csv(results: list[SimulationResult], filename: str):
     print(f"Results exported to {filename}")
 
 
-def plot_scenarios(scenarios: dict):
-    """Visualize scenario comparisons with error bars and staffing heatmap."""
+def plot_scenarios(scenarios: dict, save_path: Optional[Path] = None, show: bool = True):
+    """Visualize scenario comparisons with error bars and staffing heatmap.
+
+    Args:
+        save_path: If provided, save the figure to this path.
+        show: If True, open an interactive window.
+    """
     if not HAS_MATPLOTLIB:
         print("Plotting skipped: matplotlib not installed.")
         print("Install with: pip install matplotlib")
@@ -537,7 +542,14 @@ def plot_scenarios(scenarios: dict):
     plt.suptitle("Government Service Center: Staffing Analysis", 
                 fontsize=14, fontweight='bold', y=1.02)
     fig.tight_layout()
-    plt.show()
+    if save_path is not None:
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(save_path, dpi=200, bbox_inches="tight")
+        print(f"Saved plot to: {save_path}")
+    if show:
+        plt.show()
+    else:
+        plt.close(fig)
 
 
 # ============================================================================
@@ -578,6 +590,12 @@ def main():
         action="store_true",
         help="Show scenario comparison chart (requires matplotlib)"
     )
+    parser.add_argument(
+        "--save-plot",
+        type=Path,
+        default=None,
+        help="Save scenario comparison figure to a file (e.g., outputs/fig.png)"
+    )
     
     args = parser.parse_args()
     
@@ -599,8 +617,8 @@ def main():
     if args.scenario_analysis:
         scenarios = run_scenario_analysis(simulator_path=sim_path)
         print(generate_recommendation(scenarios))
-        if args.plot:
-            plot_scenarios(scenarios)
+        if args.plot or args.save_plot is not None:
+            plot_scenarios(scenarios, save_path=args.save_plot, show=args.plot)
         
     elif args.optimize:
         print("Running grid search optimization...")
