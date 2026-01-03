@@ -145,6 +145,7 @@ python optimizer.py --scenario-analysis --plot --simulator ../cpp/build/queue_si
 # Save a portfolio figure without opening a window
 python optimizer.py --scenario-analysis --save-plot ../outputs/staffing_analysis.png --simulator ../cpp/build/queue_sim.exe
 ```
+#
 
 ### Running Grid Search Optimization
 ```bash
