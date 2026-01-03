@@ -1,0 +1,177 @@
+DESIGN DOCUMENT (Recruiter + Technical)
+Project: Public-Sector Queue Resource Allocation Simulator
+Date: 2026-01-02
+Languages: C++ (simulation) + Python (optimization/analysis)
+Runs locally, no external datasets
+
+1) Executive Summary (What this is)
+This project is an end-to-end decision support system for staffing a government service center (e.g., permits/licensing/DMV-style operations). It combines:
+- A discrete-event simulation (DES) in C++ to realistically model time-varying demand and stochastic service.
+- An optimization/analysis layer in Python that searches staffing schedules, quantifies uncertainty with Monte Carlo confidence intervals, and generates stakeholder-friendly visuals.
+
+The outcome is not just a model, but a defensible operational recommendation: “Given demand variability and labor constraints, here is a staffing plan that best balances service levels (wait times) and cost (staff-hours).”
+
+2) Public-Sector Problem Framing (Why it matters)
+Government service operations face recurring citizen wait-time problems:
+- Demand fluctuates strongly by time of day (morning peaks, lunchtime lull, afternoon peaks).
+- Staffing levels are constrained and costly.
+- Decision-makers must justify staffing choices with evidence and quantify risk (tail wait time, not just average).
+
+This tool is designed to mimic how an R&D decision-support prototype would be built: simple assumptions, transparent math, and reproducible simulation experiments.
+
+3) System Model (What is simulated)
+Entities
+- Citizens: arrive over time, wait in a single FIFO queue, then receive service.
+- Service windows: identical servers that can be opened/closed by hour.
+
+Resources
+- Staffing vector s = (s1..s8), where si is the number of open windows in hour i.
+
+Stochastic Processes
+- Arrivals: non-homogeneous Poisson process (NHPP) with hourly rates λ(t) specified per hour.
+- Service: exponential service times with mean 8 minutes.
+
+Queue policy
+- Single FIFO queue feeding all open windows.
+
+Time horizon
+- One 8-hour day (480 minutes).
+
+Key simplifying assumptions (intentional)
+- No appointments, balking, or reneging.
+- Homogeneous servers and single-stage service.
+- No external datasets (arrival profile is synthetic but realistic).
+
+4) Why simulation vs closed-form queueing formulas
+Classic steady-state queueing results (e.g., M/M/c) are excellent for stationary systems, but public-facing service centers are typically:
+- Time-varying (arrival rates change hour by hour).
+- Transient (the system does not settle into a single steady state).
+
+A discrete-event simulation captures these dynamics directly and makes it easy to do “what-if” staffing experiments.
+
+5) Discrete-Event Simulation Architecture (C++)
+Core data structures
+- Event priority queue (min-heap): stores ARRIVAL and DEPARTURE events ordered by event time.
+- FIFO waiting queue: stores citizens waiting for service.
+- Server state: each window is busy/free; busy time tracked per hour for utilization.
+
+Event flow
+1) Initialize state at time 0.
+2) Schedule first arrival.
+3) Repeat until end of day:
+   - Pop next event (earliest time).
+   - If ARRIVAL: create citizen record, enqueue or start service immediately if a window is free; schedule the next arrival.
+   - If DEPARTURE: record completion; free a window; start next service if queue is non-empty and window is staffed in the current hour.
+4) Compute metrics: mean wait, P90 wait, throughput, utilization.
+
+NHPP arrival generation
+- Uses thinning (accept/reject) based on λ(t) / λ_max to generate time-varying Poisson arrivals.
+- Rates are interpreted as arrivals per hour and converted to arrivals per minute internally.
+
+Reproducibility
+- RNG is explicitly seeded; results are deterministic given a seed.
+
+6) Optimization + Analysis Layer (Python)
+Decision variables
+- Staffing schedule across 8 hours (s1..s8), constrained by maximum windows per slot and maximum total staff-hours.
+
+Objective (transparent, policy-weighted)
+- Minimize a weighted cost of mean wait time and staff-hours.
+
+Monte Carlo evaluation + uncertainty quantification
+- Each policy is evaluated via multiple independent replications.
+- Outputs include 95% confidence intervals (CI) for mean wait and P90 wait.
+- This is a key “quant-style” practice: we quantify uncertainty, not just point estimates.
+
+Scenario analysis
+The tool compares three policies:
+A) Flat staffing: constant windows open all day.
+B) Demand-matched staffing: heuristic staffing proportional to demand.
+C) Optimized staffing: search for a policy that meets a P90 target and minimizes cost.
+
+Visualization (decision support)
+- Service level comparison chart with 95% CI error bars.
+- Staffing schedule heatmap showing “where” staffing is allocated across the day.
+
+7) Measured Results (Real run from this workspace)
+These are from running:
+  python python/optimizer.py --scenario-analysis
+
+Arrival profile (per hour): [12, 15, 10, 8, 8, 12, 14, 10]
+Service time mean: 8 minutes
+
+Scenario A: Flat staffing (3 windows each hour)
+- Staffing: [3, 3, 3, 3, 3, 3, 3, 3]
+- Mean wait: 0.82 min (95% CI: 0.52–1.13)
+- P90 wait:  3.51 min (95% CI: 1.90–5.12)
+- Staff-hours: 24 (n=10 replications)
+
+Scenario B: Demand-matched staffing (heuristic)
+- Staffing: [2, 3, 2, 2, 2, 2, 3, 2]
+- Mean wait: 6.70 min (95% CI: 2.81–10.59)
+- P90 wait:  20.31 min (95% CI: 10.28–30.33)
+- Staff-hours: 18 (n=10 replications)
+
+Scenario C: Optimized staffing (P90 <= 15 min target)
+- Staffing: [3, 3, 2, 2, 2, 2, 3, 2]
+- Mean wait: 1.63 min (95% CI: 0.09–3.18)
+- P90 wait:  5.53 min (95% CI: 1.14–9.91)
+- Staff-hours: 19 (n=3 replications in the search step)
+
+Interpretation (what a decision-maker hears)
+- The lowest-cost heuristic (18 staff-hours) creates unacceptable tail waits (P90 ~20 min).
+- A targeted +1 staff-hour adjustment (18 -> 19) materially improves service-level reliability.
+- Flat staffing delivers very low waits, but at a 24 staff-hour cost; optimized achieves near-flat service levels with fewer staff-hours.
+
+8) Performance Notes (Real measurements)
+These numbers depend on the machine and run settings, but they demonstrate that the workflow is lightweight and locally runnable.
+
+Measured C++ simulator runtime (heavy run):
+- Command: queue_sim.exe with 100 replications
+- Time: ~103 ms total wall time (Measure-Command TotalMilliseconds = 103.1051)
+
+Note: End-to-end Python+simulation timing was attempted; interactive plot operations can be cancelled by the user. For a clean benchmark, run with plot saving only.
+
+9) How to Explain This to Recruiters (simple narrative)
+If a recruiter asks “what did you build?”, a strong 20–30 second explanation is:
+
+“I built a small decision-support system in C++ and Python. The C++ piece is a discrete-event simulator for a service center with time-varying demand, so you can realistically simulate queues and wait times. The Python layer searches staffing schedules under constraints and evaluates them with Monte Carlo replications and confidence intervals. The output isn’t just numbers—it’s a staffing recommendation plus visuals that show the tradeoff between service levels and labor cost.”
+
+If asked “what’s quant about it?”, the answer is:
+- stochastic modeling (NHPP arrivals, exponential service)
+- tail-risk metrics (P90)
+- uncertainty quantification (95% CI)
+- constrained decision optimization
+
+10) Resume Bullets (X–Y–Z format; truthful, metric-heavy)
+Use 2–4 of these.
+
+- Built a C++ discrete-event simulation engine to model time-varying queue dynamics in a government service center, producing mean and P90 wait-time estimates with 95% confidence intervals via Monte Carlo replications.
+- Implemented a Python optimization loop to select an 8-hour staffing schedule under constraints (<=4 windows/slot, <=28 staff-hours), generating stakeholder-ready visuals (CI error bars + staffing heatmap).
+- Demonstrated a cost/service tradeoff: a low-cost heuristic used 18 staff-hours but yielded P90 wait ~20.31 min, while an optimized schedule achieved P90 wait ~5.53 min at 19 staff-hours on the same synthetic demand profile.
+- Benchmarked the C++ simulator for fast local experimentation, measuring ~103 ms wall-time for a 100-replication workload on the current machine.
+
+11) What this signals to hiring teams (why it’s “hire-ready”)
+For quant/dev/research roles:
+- You quantify uncertainty (95% CI), not only point estimates.
+- You use tail metrics (P90) to address operational risk.
+- You translate a real-world constraint problem into a reproducible, explainable workflow.
+
+For big-tech SWE roles:
+- You built a full end-to-end system (simulation -> analysis -> visualization).
+- You have clean separation of concerns (C++ engine, Python orchestration).
+- You can discuss correctness, reproducibility, and performance tradeoffs.
+
+12) How to run (quick)
+- Build C++ simulator (MinGW):
+  cd cpp\build
+  g++ -std=c++17 -O2 -Wall -I../include -o queue_sim.exe ../src/simulation.cpp ../src/main.cpp
+
+- Scenario analysis (with CI + optional plot saving):
+  cd python
+  python optimizer.py --scenario-analysis --plot --simulator ..\cpp\build\queue_sim.exe
+
+- Save a portfolio figure:
+  python optimizer.py --scenario-analysis --save-plot ..\outputs\staffing_analysis.png --simulator ..\cpp\build\queue_sim.exe
+
+END OF DOCUMENT
