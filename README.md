@@ -123,6 +123,12 @@ avg_served,45.0
 ...
 ```
 
+
+## Vis 
+
+<img width="2473" height="1363" alt="image" src="https://github.com/user-attachments/assets/ef4877bd-b010-4188-8908-7c84fa62b085" />
+
+
 ## Python Optimizer
 
 ### Requirements
@@ -227,3 +233,4 @@ Public domain - developed for government R&D demonstration purposes.
 
 - Banks, J., Carson, J. S., Nelson, B. L., & Nicol, D. M. (2014). *Discrete-Event System Simulation*. Pearson.
 - Law, A. M. (2015). *Simulation Modeling and Analysis*. McGraw-Hill.
+
