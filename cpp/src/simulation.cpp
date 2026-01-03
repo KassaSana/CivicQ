@@ -93,16 +93,17 @@ int QueueSimulator::get_open_windows(double time) const {
 
 double QueueSimulator::generate_next_arrival_time() {
     // Thinning algorithm for non-homogeneous Poisson process
-    double lambda_max = *std::max_element(
-        config_.arrival_rates.begin(), 
+    // Arrival rates are specified in citizens/hour; convert to citizens/min
+    double lambda_max_per_min = (*std::max_element(
+        config_.arrival_rates.begin(),
         config_.arrival_rates.end()
-    );
+    )) / 60.0;
     
     double t = current_time_;
     while (t < config_.simulation_duration) {
         // Generate candidate inter-arrival time using max rate
         double u1 = uniform_dist_(rng_);
-        t += -std::log(u1) / lambda_max;
+        t += -std::log(u1) / lambda_max_per_min;
         
         if (t >= config_.simulation_duration) {
             return config_.simulation_duration + 1.0;  // No more arrivals
@@ -111,7 +112,7 @@ double QueueSimulator::generate_next_arrival_time() {
         // Accept/reject based on actual rate at time t
         double u2 = uniform_dist_(rng_);
         double lambda_t = get_arrival_rate(t);
-        if (u2 <= lambda_t / lambda_max) {
+        if (u2 <= lambda_t / lambda_max_per_min) {
             return t;
         }
     }
