@@ -224,8 +224,6 @@ The optimizer compares three staffing policies:
 - Metaheuristics (GA, SA)
 
 **Constraints:**
-- Max 500 lines C++ simulation code
-- Max 300 lines Python orchestration
 - Grid search only (no external solvers)
 
 ## License
@@ -236,4 +234,5 @@ Public domain - developed for government R&D demonstration purposes.
 
 - Banks, J., Carson, J. S., Nelson, B. L., & Nicol, D. M. (2014). *Discrete-Event System Simulation*. Pearson.
 - Law, A. M. (2015). *Simulation Modeling and Analysis*. McGraw-Hill.
+
 
