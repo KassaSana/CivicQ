@@ -19,6 +19,7 @@ Evaluation uses a separate seed block from design, and treats days
 (replications) as the independent unit when building confidence intervals.
 """
 
+import itertools
 import math
 import sys
 from concurrent.futures import ThreadPoolExecutor
@@ -201,15 +202,24 @@ def evaluate(staffing: list, rates: list, mean_service: float, threshold: float 
 # Simulation greedy staffing (SGS)
 # ============================================================================
 
-def _feasible(staffing, rates, mean_service, threshold, alpha, reps, seed, **kw):
+def _feasible(staffing, rates, mean_service, threshold, alpha, reps, seed,
+              criterion="point", **kw):
+    """
+    criterion="point": every hour's estimated late probability <= alpha.
+    criterion="ucb":   every hour's upper 95% bound <= alpha (chance-constrained;
+                       guards against plans that only pass by sampling luck).
+    """
     ev = evaluate(staffing, rates, mean_service, threshold, reps=reps, seed=seed, **kw)
+    if criterion == "ucb":
+        return all(hi <= alpha for _, hi in ev.late_ci), ev
     return all(p <= alpha for p in ev.late_prob), ev
 
 
 def simulation_staffing(rates: list, mean_service: float, threshold: float = 15.0,
                         alpha: float = 0.10, reps: int = DESIGN_REPS,
                         seed: int = DESIGN_SEED, start: list = None,
-                        max_iter: int = 200, **sim_kwargs) -> tuple[list, int]:
+                        max_iter: int = 200, criterion: str = "point",
+                        **sim_kwargs) -> tuple[list, int]:
     """
     Smallest-found plan meeting P(W > threshold | arrival hour i) <= alpha in
     every hour, estimated on the design seeds with common random numbers.
@@ -222,32 +232,54 @@ def simulation_staffing(rates: list, mean_service: float, threshold: float = 15.
     plan = list(start) if start else analytic_plans(rates, mean_service, threshold, alpha)["SIPP"]
     calls = 0
     for _ in range(max_iter):
-        ok, ev = _feasible(plan, rates, mean_service, threshold, alpha, reps, seed, **sim_kwargs)
+        ok, ev = _feasible(plan, rates, mean_service, threshold, alpha, reps, seed,
+                           criterion, **sim_kwargs)
         calls += 1
         if ok:
             break
-        first_bad = next(i for i, p in enumerate(ev.late_prob) if p > alpha)
+        upper = [hi for _, hi in ev.late_ci] if criterion == "ucb" else ev.late_prob
+        first_bad = next(i for i, p in enumerate(upper) if p > alpha)
         plan[first_bad] += 1
     else:
         raise RuntimeError("SGS did not converge")
 
-    # Phase 2: try every single-window removal; keep the one that stays feasible
-    # with the lowest worst-hour late probability; repeat until none is feasible
-    while True:
-        candidates = []
-        for i in range(SLOTS):
-            if plan[i] <= 1:
-                continue
-            trial = list(plan)
-            trial[i] -= 1
-            candidates.append(trial)
+    def check_all(candidates):
         with ThreadPoolExecutor() as pool:
             results = list(pool.map(
                 lambda p: _feasible(p, rates, mean_service, threshold, alpha, reps, seed,
-                                    **sim_kwargs),
+                                    criterion, **sim_kwargs),
                 candidates))
-        calls += len(candidates)
-        feasible = [(max(ev.late_prob), p) for p, (ok, ev) in zip(candidates, results) if ok]
+        return [(max(ev.late_prob), p) for p, (ok, ev) in zip(candidates, results) if ok]
+
+    # Phase 2: local search over cost-reducing moves. First try every
+    # single-window removal; if none is feasible, try "remove two, add one"
+    # moves, which shift staff between hours while still saving a staff-hour.
+    # Among feasible moves keep the one with the lowest worst-hour late
+    # probability; stop at a local optimum of this neighborhood.
+    while True:
+        removals = []
+        for i in range(SLOTS):
+            if plan[i] > 1:
+                trial = list(plan)
+                trial[i] -= 1
+                removals.append(trial)
+        calls += len(removals)
+        feasible = check_all(removals)
+        if not feasible:
+            shifts = []
+            for i, k in itertools.combinations(range(SLOTS), 2):
+                if plan[i] <= 1 or plan[k] <= 1:
+                    continue
+                for j in range(SLOTS):
+                    if j in (i, k):
+                        continue
+                    trial = list(plan)
+                    trial[i] -= 1
+                    trial[k] -= 1
+                    trial[j] += 1
+                    shifts.append(trial)
+            calls += len(shifts)
+            feasible = check_all(shifts)
         if not feasible:
             return plan, calls
         plan = min(feasible)[1]
