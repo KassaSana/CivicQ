@@ -138,7 +138,7 @@ Total SIPP excess (staff-hours summed over the 6 settings at each service time),
 ![Sensitivity](figures/fig4_sensitivity.png)
 
 **The office.** Service-time variability matters more than demand uncertainty.
-- The office's current recommended plan (`[2,3,3,2,2,3,3,2]`, 20 h, from the cost-weighted optimizer) has its worst hour at 10.0% under exponential service, already on the limit.
+- The 20 h plan `[2,3,3,2,2,3,3,2]` has its worst hour at 10.0% under exponential service, already on the limit. It was the optimizer's recommendation when these experiments ran, and it remains one of its statistically tied choices (§5.4).
 - With lognormal service at CV 1.5 that rises to 16.1%. With 10% demand uncertainty it rises only to 11.3%.
 - The staff-hours needed barely move (18–22 h across all 12 combinations) because staffing comes in whole windows.
 
@@ -171,7 +171,16 @@ This fits the theory. Poisson noise grows like √λ, while noise from an uncert
 
 **Selection bias.** Under D4, the cheapest plan in a 6,561-plan screen (20 h) **failed** on fresh seeds. Picking the minimum of thousands of noisy estimates favours lucky plans. After requiring each pick to also pass on an independent validation block (seeds 200000+), 3 candidates were rejected and the validated plan uses 21 h, which is the same staff-hours SGS found independently (the hour-by-hour split differs slightly).
 
-**Implication for CivicQ's own optimizer.** `python/optimizer.py` confirms its finalists with 30 days. That is too few: the 18 h plan's mean daily P90 is 13.4 min (1,000 days, CI 12.9–14.0), but it measured 15.5 on its 30 confirmation days (CI 11.0–20.0), so the optimizer rejected it and recommended 20 h.
+**Implication for CivicQ's own optimizer.** `python/optimizer.py` used to confirm its finalists with 30 days. That made its *reported numbers* unreliable. The 18 h plan's mean daily P90 is 13.4 min (1,000 days, CI 12.9–14.0), but on its 30 confirmation days it measured 15.5 (CI 11.0–20.0), so the trade-off table showed it missing the target.
+
+The recommendation itself was not an artifact of noise. The optimizer minimizes mean wait + 0.5 × staff-hours, and the 18 h plan loses on that cost at every sample size (13.17 vs 12.73 over 1,000 days).
+
+Fixing the check exposed a subtler problem. Near the optimum the cost surface is flat: six 20–21 h plans lie within about 0.1 cost units, so a single "best" plan is arbitrary. A 10-plan shortlist had also missed the lowest-cost one. The optimizer now:
+- confirms with 300 days;
+- shortlists 30 finalists;
+- reports every finalist whose paired 95% CI on the cost difference includes zero as statistically tied.
+
+It currently recommends `[3,3,3,2,2,3,3,2]` (21 h), with five 20–21 h plans tied.
 
 ## 6. Threats to validity
 - **Synthetic demand.** Arrival rates follow a stylized double-peak profile. There are no public arrival-count data for walk-in offices; the CA DMV data contain only waits.

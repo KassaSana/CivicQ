@@ -33,7 +33,9 @@ VALID_SEED = 200_000   # Third seed block: validates a screened choice before it
 THRESHOLD = 15.0     # minutes
 ALPHA = 0.10         # P(W > THRESHOLD | arrival hour) target
 OFFICE_S = 8.0
-RECOMMENDED = [2, 3, 3, 2, 2, 3, 3, 2]   # optimizer.py's cost-weighted choice
+# optimizer.py's cost-weighted choice when E2 was designed; with 300-day
+# confirmation it is one of several statistically tied 20-21 h plans
+RECOMMENDED = [2, 3, 3, 2, 2, 3, 3, 2]
 
 SERVICE_TIMES = [4.0, 8.0, 16.0, 32.0]
 AMPLITUDES = [0.3, 0.6]

@@ -46,8 +46,12 @@ MIN_WINDOWS_PER_SLOT = 2
 MAX_WINDOWS_PER_SLOT = 4
 MAX_TOTAL_STAFF_HOURS = 28
 NUM_REPLICATIONS = 10       # Screening replications per configuration
-CONFIRM_REPLICATIONS = 30   # Replications for finalists and reported scenarios
-CONFIRM_TOP_K = 10          # Finalists re-evaluated in the second stage
+# Replications for finalists and every reported number. With 30 days the P90
+# CI was about +/-4 min, enough to misreport a plan at 13.4 min as missing a
+# 15-min target; 300 days narrows it to about +/-1 min (see research/REPORT.md).
+CONFIRM_REPLICATIONS = 300
+CONFIRM_TOP_K = 30          # Finalists re-evaluated in the second stage (the cost
+                            # surface is flat near the optimum, so shortlist widely)
 MEAN_SERVICE_TIME = 8.0     # minutes
 P90_TARGET = 15.0           # minutes
 STRESS_FACTORS = (0.9, 1.0, 1.1, 1.2)   # Demand multipliers for robustness checks
@@ -114,6 +118,8 @@ class SimulationResult:
     daily_arrivals: list = field(default_factory=list)      # [rep][slot] arrival counts
     daily_late: list = field(default_factory=list)          # [rep][slot] late counts
     mean_service: float = 0.0
+    # (result, mean cost difference, 95% CI) for finalists statistically tied with this one
+    tied_alternatives: list = field(default_factory=list)
 
 
 # ============================================================================
@@ -459,6 +465,22 @@ def grid_search_optimize(
             best_cost = result.cost_score
             best_result = result
 
+    # Finalists share seeds (common random numbers), so compare daily costs
+    # pairwise: an alternative whose 95% CI on the cost difference includes 0
+    # cannot be told apart from the winner with this many replications
+    if best_result is not None:
+        def daily_cost(r):
+            return [wait_weight * w + staff_weight * r.total_staff_hours
+                    for w in r.daily_mean_waits]
+        best_daily = daily_cost(best_result)
+        for result in confirmed:
+            if result is best_result or not (p90_target is None or result.p90_wait <= p90_target):
+                continue
+            diffs = [a - b for a, b in zip(daily_cost(result), best_daily)]
+            low, high = compute_confidence_interval(diffs)
+            if low <= 0:
+                best_result.tied_alternatives.append((result, sum(diffs) / len(diffs), (low, high)))
+
     if verbose:
         print(f"Optimization complete. Best cost: {best_cost:.2f}")
 
@@ -708,6 +730,10 @@ def generate_recommendation(scenarios: dict, stress: Optional[dict] = None,
         report.append(f"    Expected P90 wait: {optimized.p90_wait:.1f} minutes "
                       f"(95% CI {optimized.p90_wait_ci[0]:.1f}-{optimized.p90_wait_ci[1]:.1f})")
         report.append(f"    Total daily staff-hours: {optimized.total_staff_hours}")
+        for alt, diff, (low, high) in optimized.tied_alternatives:
+            report.append(f"    Statistically tied: {list(alt.staffing)} "
+                          f"({alt.total_staff_hours} h, cost {diff:+.2f}, "
+                          f"95% CI {low:+.2f} to {high:+.2f})")
 
         if stress and 'optimized' in stress:
             holds = [f for f, r in sorted(stress['optimized'].items())

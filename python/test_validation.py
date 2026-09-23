@@ -52,6 +52,14 @@ class TestErlangC(unittest.TestCase):
             self.assertLessEqual(s, optimizer.MAX_WINDOWS_PER_SLOT)
 
 
+class TestOptimizerSampleSizes(unittest.TestCase):
+    def test_confirmation_is_large_enough(self):
+        # 30 days gave P90 CIs of about +/-4 min and misreported plans near the
+        # 15-min target; keep confirmation in the hundreds (research/REPORT.md)
+        self.assertGreaterEqual(optimizer.CONFIRM_REPLICATIONS, 200)
+        self.assertGreaterEqual(optimizer.CONFIRM_TOP_K, 30)
+
+
 class TestConfidenceInterval(unittest.TestCase):
     def test_t_values(self):
         self.assertAlmostEqual(t_critical_95(2), 4.303)

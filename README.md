@@ -207,62 +207,71 @@ The optimizer compares three staffing policies:
 | **C. Optimized** | Cost-minimized under the 15-minute P90 constraint, found by simulation |
 
 ### Example Output
-Real output from `python optimizer.py --scenario-analysis`, with default arrival rates, 30 replications, and seeds 42–71:
+Real output from `python optimizer.py --scenario-analysis`, with default arrival rates, 300 replications, and seeds 42–341:
 ```
 [A] Flat Staffing (3 windows/slot)
     Staffing: [3, 3, 3, 3, 3, 3, 3, 3]
-    Mean wait: 1.50 min  (95% CI: 0.97-2.03)
-    P90 wait:  5.88 min  (95% CI: 3.84-7.91)
-    Staff-hours: 24  |  Overtime: 8.1 min  |  n=30 replications
+    Mean wait: 1.39 min  (95% CI: 1.24-1.53)
+    P90 wait:  5.29 min  (95% CI: 4.74-5.85)
+    Staff-hours: 24  |  Overtime: 8.6 min  |  n=300 replications
 
 [B] SIPP / Erlang-C (steady-state P90 <= 15 min each hour)
     Staffing: [3, 3, 3, 2, 2, 3, 3, 3]
-    Mean wait: 2.20 min  (95% CI: 1.35-3.04)
-    P90 wait:  7.97 min  (95% CI: 5.05-10.90)
-    Staff-hours: 22  |  Overtime: 8.1 min  |  n=30 replications
+    Mean wait: 1.77 min  (95% CI: 1.59-1.94)
+    P90 wait:  6.59 min  (95% CI: 5.97-7.21)
+    Staff-hours: 22  |  Overtime: 8.6 min  |  n=300 replications
 
 [C] Optimized (P90 <= 15 min target)
-    Staffing: [2, 3, 3, 2, 2, 3, 3, 2]
-    Mean wait: 3.10 min  (95% CI: 1.97-4.22)
-    P90 wait:  10.96 min  (95% CI: 7.42-14.49)
-    Staff-hours: 20  |  Overtime: 11.2 min  |  n=30 replications
+    Staffing: [3, 3, 3, 2, 2, 3, 3, 2]
+    Mean wait: 2.24 min  (95% CI: 2.03-2.45)
+    P90 wait:  8.20 min  (95% CI: 7.45-8.95)
+    Staff-hours: 21  |  Overtime: 11.9 min  |  n=300 replications
 
 ============================================================
 ROBUSTNESS: P90 wait (min) if demand differs from forecast
 ============================================================
   Scenario      90% demand   100% demand   110% demand   120% demand
-  Flat              4.8 ok        5.9 ok        7.0 ok        9.6 ok
-  Sipp              6.1 ok        8.0 ok        9.2 ok       11.8 ok
-  Optimized         8.4 ok       11.0 ok       12.5 ok     15.2 MISS
+  Flat              3.8 ok        5.3 ok        6.9 ok        9.1 ok
+  Sipp              4.8 ok        6.6 ok        8.4 ok       10.9 ok
+  Optimized         6.1 ok        8.2 ok       10.7 ok       13.6 ok
 
 >>> RECOMMENDATION:
-    Adopt optimized staffing schedule: [2, 3, 3, 2, 2, 3, 3, 2]
-    Peak staffing periods: 9-10AM, 10-11AM, 1-2PM, 2-3PM
-    Expected P90 wait: 11.0 minutes (95% CI 7.4-14.5)
-    Total daily staff-hours: 20
-    Meets the P90 target up to 110% of forecast demand
-    If demand runs +20%: add one window at 3-4PM (P90 13.4 min)
+    Adopt optimized staffing schedule: [3, 3, 3, 2, 2, 3, 3, 2]
+    Peak staffing periods: 8-9AM, 9-10AM, 10-11AM, 1-2PM, 2-3PM
+    Expected P90 wait: 8.2 minutes (95% CI 7.5-8.9)
+    Total daily staff-hours: 21
+    Statistically tied: [3, 3, 2, 2, 2, 3, 3, 2] (20 h, cost +0.03, 95% CI -0.07 to +0.12)
+    Statistically tied: [2, 3, 3, 2, 2, 3, 3, 2] (20 h, cost +0.10, 95% CI -0.00 to +0.19)
+    Statistically tied: [3, 3, 2, 2, 2, 3, 3, 3] (21 h, cost +0.05, 95% CI -0.07 to +0.18)
+    Statistically tied: [2, 4, 2, 2, 2, 3, 3, 2] (20 h, cost +0.02, 95% CI -0.09 to +0.13)
+    Statistically tied: [2, 3, 3, 2, 2, 3, 3, 3] (21 h, cost +0.12, 95% CI -0.00 to +0.25)
+    Meets the P90 target up to 120% of forecast demand
 ```
 
 ### Reading the Results
-- **Staffing should lag demand.** Demand falls at 10AM (15 → 10 citizens/hour), but the optimized plan keeps 3 windows until 11AM to clear the backlog from the 9AM peak. Per-hour formulas like SIPP can't see this carryover between hours (Green, Kolesar & Soares, 2001).
-- **The office opens empty.** SIPP assumes each hour is already at steady state, so it staffs 8AM as if a queue were waiting. Simulation knows the day starts with no queue, so 2 windows are enough there.
-- **The trade-off:** relative to SIPP, the optimized plan saves 2 staff-hours per day for about 3 extra minutes of P90 wait. It stays within the 15-minute target, though the upper end of its 95% CI (14.5 min) is close to the limit.
-- **Forecast risk:** the optimized plan still meets the target if demand runs 10% above forecast, but not at +20%. In that case, one extra window at 3–4PM restores it. SIPP and Flat both absorb +20% because they carry 2–4 more staff-hours. Staffing to a single point forecast is a known weakness (Whitt, 2006), so the stress test is part of every scenario run.
+- **The best plan uses 20 or 21 staff-hours, and six plans are tied.** With the default weights (1 per minute of mean wait, 0.5 per staff-hour), the cost curve is flat there: an extra staff-hour cuts mean wait by about 0.5–0.6 minutes, almost exactly its 0.5 price. The optimizer reports every finalist whose paired 95% CI on the cost difference includes zero, so read the output as "any of these". To choose among them:
+  - pick a 20-hour plan to save labor;
+  - pick the 21-hour plan to protect against busier-than-forecast days. It still meets the target at +20% demand, where the 20-hour plans do not.
+- **Staffing should lag demand.** Demand falls at 10AM (15 → 10 citizens/hour), but the recommended plan keeps 3 windows until 11AM to clear the 9AM backlog. Per-hour formulas like SIPP can't see this carryover between hours (Green, Kolesar & Soares, 2001).
+- **The trade-off:** relative to SIPP, the recommended plan saves 1 staff-hour per day for about 1.6 extra minutes of P90 wait (8.2 vs 6.6 min), well within the 15-minute target.
+- **Forecast risk:** the recommended plan meets the target even with 20% more demand than forecast. Staffing to a single point forecast is a known weakness (Whitt, 2006), so the stress test is part of every scenario run.
 
 ### Cost vs Service Trade-off
-The weighted cost picks one plan, but the real decision is how many staff-hours to fund. `--frontier` shows the best plan found for each budget. The top 10 plans per budget from screening are re-run with 30 replications, and the scenario plans compete too:
+The weighted cost picks among plans, but the real decision is how many staff-hours to fund. `--frontier` shows the best plan found for each budget. The top 10 plans per budget from screening are re-run with 300 replications, and the scenario plans compete too:
 
 | Staff-hours | P90 wait (95% CI) | Mean wait | Staffing |
 |---|---|---|---|
-| 18 | 15.5 (11.0–20.0) | 4.7 | [2, 3, 2, 2, 2, 2, 3, 2] (misses target) |
-| 19 | 13.3 (9.0–17.6) | 4.0 | [2, 3, 3, 2, 2, 2, 3, 2] |
-| **20** | **11.0 (7.4–14.5)** | **3.1** | **[2, 3, 3, 2, 2, 3, 3, 2]** (optimized) |
-| 21 | 9.4 (6.3–12.5) | 2.6 | [3, 3, 3, 2, 2, 3, 3, 2] |
-| 22 | 8.0 (5.0–10.9) | 2.2 | [3, 3, 3, 2, 2, 3, 3, 3] (SIPP) |
-| 24 | 5.6 (3.5–7.7) | 1.5 | [3, 4, 3, 3, 2, 3, 3, 3] |
+| 17 | 19.6 (18.2–21.0) | 6.6 | [2, 2, 2, 2, 2, 2, 3, 2] (misses target) |
+| 18 | 13.5 (12.5–14.5) | 4.2 | [2, 3, 2, 2, 2, 2, 3, 2] |
+| 19 | 11.7 (10.8–12.6) | 3.4 | [2, 3, 2, 2, 2, 3, 3, 2] |
+| 20 | 10.0 (9.2–10.8) | 2.8 | [2, 3, 3, 2, 2, 3, 3, 2] |
+| **21** | **8.2 (7.5–8.9)** | **2.2** | **[3, 3, 3, 2, 2, 3, 3, 2]** (optimized) |
+| 22 | 6.6 (6.0–7.2) | 1.8 | [3, 3, 3, 2, 2, 3, 3, 3] (SIPP) |
+| 24 | 4.5 (4.0–5.0) | 1.2 | [3, 4, 3, 2, 3, 3, 3, 3] |
 
-19 staff-hours is the cheapest budget that meets the target on average, but its CI extends well past 15 minutes. At 20, the whole CI of the best plan found is under the target.
+18 staff-hours is the cheapest budget that meets the 15-minute target, with its whole CI below it. Under an hour-by-hour target (every hour at most 10% of arrivals waiting over 15 minutes), the answer is 21 ([research/REPORT.md](research/REPORT.md) §5.4).
+
+An earlier version of this table used 30 replications. That gave CIs of ±4 minutes and wrongly showed the 18-hour plan missing the target (15.5 minutes). That version also shortlisted only 10 finalists, which missed the tied 21-hour optimum.
 
 ## Technical Details
 
@@ -277,12 +286,13 @@ The weighted cost picks one plan, but the real decision is how many staff-hours 
 ### Optimization (Python)
 - **Method:** Two-stage exhaustive grid search
   1. Screen all 6,404 feasible plans with 10 replications each.
-  2. Re-evaluate the 10 cheapest plans whose P90 confidence interval could meet the target, using 30 replications each, and pick the winner from those.
+  2. Re-evaluate the 30 cheapest plans whose P90 confidence interval could meet the target, using 300 replications each, and pick the winner from those.
+  3. Report every finalist whose paired 95% CI on the cost difference from the winner includes zero as statistically tied.
 - **Statistical Handling:** 95% confidence intervals with Student-t critical values that match the number of replications
 - **Performance:** all replications of a plan run in one simulator process, and plans are evaluated in parallel
 - **Analytical baseline:** Erlang-C (M/M/c) formulas for the SIPP scenario
 - **Robustness:** every scenario is re-simulated with arrival rates at 90–120% of forecast, on the same seeds. If the optimized plan misses the target, the single extra window that best restores it is reported.
-- **Trade-off curve:** best P90 per staff-hour budget, re-simulated with 30 replications so noisy screening winners aren't reported as the best
+- **Trade-off curve:** best P90 per staff-hour budget, re-simulated with 300 replications so noisy screening winners aren't reported as the best
 
 ## Validation
 
@@ -312,7 +322,7 @@ python python/test_validation.py
 - Daily demand uncertainty costs up to 22% more staff in large offices.
 - The service-level definition alone moves this office's answer from 18 to 22 staff-hours.
 
-The study also found that the optimizer's 30-replication confirmation stage is too noisy to separate plans 2 staff-hours apart.
+The study also showed that 30 confirmation days gave P90 CIs of about ±4 minutes and misreported the 18-hour plan as missing the target. The optimizer now confirms with 300 days and reports statistical ties.
 
 ```bash
 python research/experiments.py --all && python research/figures.py

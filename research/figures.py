@@ -196,7 +196,7 @@ def fig_sensitivity():
     ax2.set_yticks(range(len(svc)))
     ax2.set_yticklabels(["exponential (CV 1)", "lognormal CV 0.5", "lognormal CV 1.0",
                          "lognormal CV 1.5"])
-    ax2.set_title("Recommended plan: worst-hour late % (x = misses 10%)")
+    ax2.set_title("20 h plan [2,3,3,2,2,3,3,2]: worst-hour late % (x = misses 10%)")
     ax2.grid(False)
     fig.colorbar(im, ax=ax2, shrink=0.85, pad=0.02).set_label("% waiting > 15 min",
                                                               color=INK_2)
