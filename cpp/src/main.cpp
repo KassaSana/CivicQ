@@ -1,7 +1,7 @@
 /**
  * @file main.cpp
  * @brief Command-line interface for queue simulation
- * 
+ *
  * Accepts configuration via command-line arguments and
  * outputs CSV results for Python consumption.
  */
@@ -24,6 +24,10 @@ void print_usage() {
               << "  --seed SEED                Random seed (default: 42)\n"
               << "  --replications N           Number of runs (default: 1)\n"
               << "  --duration MINUTES         Doors close at this time (default: 480)\n"
+              << "  --service-dist NAME        exp | lognormal | det (default: exp)\n"
+              << "  --service-cv CV            Service-time CV for lognormal (default: 1.0)\n"
+              << "  --rate-cv CV               CV of a random daily demand multiplier (default: 0)\n"
+              << "  --wait-threshold MINUTES   Late-wait threshold for per-hour counts (default: 15)\n"
               << "  --per-replication          One CSV row per replication instead of averages\n"
               << "  --output-waits             Include all wait times in output\n"
               << "  --help                     Show this help\n";
@@ -54,17 +58,17 @@ int main(int argc, char* argv[]) {
     int replications = 1;
     bool output_waits = false;
     bool per_replication = false;
-    
+
     // Default arrival rates: morning peak, midday lull, afternoon peak
     config.arrival_rates = {12.0, 15.0, 10.0, 8.0, 8.0, 12.0, 14.0, 10.0};
     config.staffing_per_slot = {2, 3, 2, 2, 2, 3, 3, 2};
     config.mean_service_time = 8.0;
     config.random_seed = 42;
-    
+
     // Parse arguments
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
-        
+
         if (arg == "--help" || arg == "-h") {
             print_usage();
             return 0;
@@ -87,6 +91,28 @@ int main(int argc, char* argv[]) {
         else if (arg == "--duration" && i + 1 < argc) {
             config.simulation_duration = std::stod(argv[++i]);
         }
+        else if (arg == "--service-dist" && i + 1 < argc) {
+            std::string name = argv[++i];
+            if (name == "exp") {
+                config.service_dist = ServiceDist::EXPONENTIAL;
+            } else if (name == "lognormal") {
+                config.service_dist = ServiceDist::LOGNORMAL;
+            } else if (name == "det") {
+                config.service_dist = ServiceDist::DETERMINISTIC;
+            } else {
+                std::cerr << "Error: unknown service distribution '" << name << "'\n";
+                return 1;
+            }
+        }
+        else if (arg == "--service-cv" && i + 1 < argc) {
+            config.service_cv = std::stod(argv[++i]);
+        }
+        else if (arg == "--rate-cv" && i + 1 < argc) {
+            config.rate_cv = std::stod(argv[++i]);
+        }
+        else if (arg == "--wait-threshold" && i + 1 < argc) {
+            config.wait_threshold = std::stod(argv[++i]);
+        }
         else if (arg == "--per-replication") {
             per_replication = true;
         }
@@ -94,7 +120,7 @@ int main(int argc, char* argv[]) {
             output_waits = true;
         }
     }
-    
+
     // Validate configuration
     if (config.staffing_per_slot.size() != 8) {
         std::cerr << "Error: staffing must have exactly 8 values\n";
@@ -110,20 +136,32 @@ int main(int argc, char* argv[]) {
             return 1;
         }
     }
+    if (config.service_cv <= 0.0 || config.rate_cv < 0.0 || config.mean_service_time <= 0.0) {
+        std::cerr << "Error: service time and CVs must be positive\n";
+        return 1;
+    }
     if (replications < 1) {
         std::cerr << "Error: replications must be at least 1\n";
         return 1;
     }
-    
+
     // Run simulation(s)
     auto results = run_replications(config, replications, config.random_seed);
-    
+
     // One row per replication (lets callers compute confidence intervals
     // without launching a process per replication)
     if (per_replication) {
         std::cout << "rep,mean_wait,p90_wait,served,arrived,overtime";
         for (int j = 0; j < 8; ++j) {
             std::cout << ",util_" << j;
+        }
+        // Appended columns (existing consumers read columns by name)
+        std::cout << ",mean_service,rate_multiplier";
+        for (int j = 0; j < 8; ++j) {
+            std::cout << ",arr_" << j;
+        }
+        for (int j = 0; j < 8; ++j) {
+            std::cout << ",late_" << j;
         }
         std::cout << "\n";
         for (size_t r = 0; r < results.size(); ++r) {
@@ -134,17 +172,24 @@ int main(int argc, char* argv[]) {
             for (int j = 0; j < 8; ++j) {
                 std::cout << "," << res.utilization_per_slot[j];
             }
+            std::cout << "," << res.mean_service_time << "," << res.rate_multiplier;
+            for (int j = 0; j < 8; ++j) {
+                std::cout << "," << res.arrivals_per_slot[j];
+            }
+            for (int j = 0; j < 8; ++j) {
+                std::cout << "," << res.late_per_slot[j];
+            }
             std::cout << "\n";
         }
         return 0;
     }
-    
+
     // Aggregate results across replications
     double sum_mean_wait = 0.0, sum_p90_wait = 0.0;
     double sum_served = 0.0, sum_arrived = 0.0, sum_overtime = 0.0;
     std::vector<double> sum_util(8, 0.0);
     std::vector<double> all_waits;
-    
+
     for (const auto& r : results) {
         sum_mean_wait += r.mean_wait_time;
         sum_p90_wait += r.p90_wait_time;
@@ -155,14 +200,14 @@ int main(int argc, char* argv[]) {
             sum_util[j] += r.utilization_per_slot[j];
         }
         if (output_waits) {
-            all_waits.insert(all_waits.end(), 
-                           r.all_wait_times.begin(), 
+            all_waits.insert(all_waits.end(),
+                           r.all_wait_times.begin(),
                            r.all_wait_times.end());
         }
     }
-    
+
     int n = replications;
-    
+
     // Output aggregated CSV
     std::cout << "metric,value\n";
     std::cout << "mean_wait_time," << (sum_mean_wait / n) << "\n";
@@ -171,11 +216,11 @@ int main(int argc, char* argv[]) {
     std::cout << "avg_arrived," << (sum_arrived / n) << "\n";
     std::cout << "avg_overtime," << (sum_overtime / n) << "\n";
     std::cout << "replications," << n << "\n";
-    
+
     for (int j = 0; j < 8; ++j) {
         std::cout << "utilization_slot_" << j << "," << (sum_util[j] / n) << "\n";
     }
-    
+
     // Output all wait times if requested (for distribution analysis)
     if (output_waits && !all_waits.empty()) {
         std::cout << "\nwait_times\n";
@@ -183,6 +228,6 @@ int main(int argc, char* argv[]) {
             std::cout << w << "\n";
         }
     }
-    
+
     return 0;
 }

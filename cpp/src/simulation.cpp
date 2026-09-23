@@ -22,7 +22,13 @@ namespace govqueue {
 QueueSimulator::QueueSimulator(const SimulationConfig& config)
     : config_(config)
     , service_dist_(1.0 / config.mean_service_time)
+    , lognormal_dist_(
+          // Match the requested mean and CV: sigma^2 = ln(1 + cv^2), mu = ln(mean) - sigma^2 / 2
+          std::log(config.mean_service_time)
+              - 0.5 * std::log(1.0 + config.service_cv * config.service_cv),
+          std::sqrt(std::log(1.0 + config.service_cv * config.service_cv)))
     , uniform_dist_(0.0, 1.0)
+    , rate_multiplier_(1.0)
     , current_time_(0.0)
     , last_departure_time_(0.0)
     , next_citizen_id_(0)
@@ -71,10 +77,22 @@ void QueueSimulator::reset() {
     // Reseed independent streams (common random numbers across staffing plans)
     std::seed_seq arrival_seed{static_cast<unsigned>(config_.random_seed), 1u};
     std::seed_seq service_seed{static_cast<unsigned>(config_.random_seed), 2u};
+    std::seed_seq rate_seed{static_cast<unsigned>(config_.random_seed), 3u};
     arrival_rng_.seed(arrival_seed);
     service_rng_.seed(service_seed);
+    rate_rng_.seed(rate_seed);
     service_dist_.reset();
+    lognormal_dist_.reset();
     uniform_dist_.reset();
+
+    // Day-level demand multiplier M ~ Gamma(1/cv^2, cv^2), mean 1, CV = rate_cv.
+    // Every staffing plan sees the same M for a given seed.
+    rate_multiplier_ = 1.0;
+    if (config_.rate_cv > 0.0) {
+        double shape = 1.0 / (config_.rate_cv * config_.rate_cv);
+        std::gamma_distribution<double> gamma(shape, 1.0 / shape);
+        rate_multiplier_ = gamma(rate_rng_);
+    }
 
     // Slot boundaries: let newly opened windows serve queued citizens
     for (int slot = 1; slot < NUM_SLOTS; ++slot) {
@@ -94,7 +112,7 @@ void QueueSimulator::reset() {
 double QueueSimulator::get_arrival_rate(double time) const {
     int slot = get_current_slot(time);
     // Convert from arrivals per hour to arrivals per minute
-    return config_.arrival_rates[slot] / 60.0;
+    return rate_multiplier_ * config_.arrival_rates[slot] / 60.0;
 }
 
 int QueueSimulator::get_current_slot(double time) const {
@@ -118,7 +136,7 @@ double QueueSimulator::slot_length(int slot) const {
 double QueueSimulator::generate_next_arrival_time() {
     // Thinning algorithm for non-homogeneous Poisson process
     // Arrival rates are specified in citizens/hour; convert to citizens/min
-    double lambda_max_per_min = (*std::max_element(
+    double lambda_max_per_min = rate_multiplier_ * (*std::max_element(
         config_.arrival_rates.begin(),
         config_.arrival_rates.end()
     )) / 60.0;
@@ -148,7 +166,15 @@ double QueueSimulator::generate_next_arrival_time() {
 }
 
 double QueueSimulator::generate_service_time() {
-    return service_dist_(service_rng_);
+    switch (config_.service_dist) {
+        case ServiceDist::LOGNORMAL:
+            return lognormal_dist_(service_rng_);
+        case ServiceDist::DETERMINISTIC:
+            return config_.mean_service_time;
+        case ServiceDist::EXPONENTIAL:
+        default:
+            return service_dist_(service_rng_);
+    }
 }
 
 int QueueSimulator::find_free_window() {
@@ -277,6 +303,9 @@ SimulationResults QueueSimulator::compute_results() const {
     results.total_arrived = static_cast<int>(citizens_.size());
     results.total_served = 0;
     results.overtime_minutes = std::max(0.0, last_departure_time_ - config_.simulation_duration);
+    results.rate_multiplier = rate_multiplier_;
+    results.arrivals_per_slot.assign(NUM_SLOTS, 0);
+    results.late_per_slot.assign(NUM_SLOTS, 0);
 
     std::vector<double> wait_times;
     std::vector<double> service_times;
@@ -288,6 +317,13 @@ SimulationResults QueueSimulator::compute_results() const {
             double service = citizen.departure_time - citizen.service_start_time;
             wait_times.push_back(wait);
             service_times.push_back(service);
+
+            // Per-hour service level, indexed by the hour the citizen arrived
+            int slot = get_current_slot(citizen.arrival_time);
+            results.arrivals_per_slot[slot]++;
+            if (wait > config_.wait_threshold) {
+                results.late_per_slot[slot]++;
+            }
         }
     }
 

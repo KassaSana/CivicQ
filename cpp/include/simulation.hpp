@@ -30,6 +30,15 @@ enum class EventType {
 };
 
 /**
+ * @brief Service-time distribution family (all parameterized by their mean)
+ */
+enum class ServiceDist {
+    EXPONENTIAL,     // CV = 1 (M/M/c)
+    LOGNORMAL,       // CV set by service_cv; empirically realistic (Brown et al. 2005)
+    DETERMINISTIC    // CV = 0
+};
+
+/**
  * @brief Simulation event structure
  */
 struct Event {
@@ -74,6 +83,9 @@ struct SimulationResults {
     int total_served;
     int total_arrived;
     double overtime_minutes;                   // Minutes past closing to serve everyone inside
+    double rate_multiplier;                    // Day-level demand multiplier (1 unless rate_cv > 0)
+    std::vector<int> arrivals_per_slot;        // Citizens arriving in each hourly slot
+    std::vector<int> late_per_slot;            // Of those, how many waited > wait_threshold
     std::vector<double> utilization_per_slot;  // 8 hourly slots
     std::vector<double> all_wait_times;        // For distribution analysis
 };
@@ -87,11 +99,19 @@ struct SimulationConfig {
     double mean_service_time;              // 1/mu in minutes
     int random_seed;
     double simulation_duration;            // Doors close at this time (default 480)
+    ServiceDist service_dist;              // Service-time distribution family
+    double service_cv;                     // Coefficient of variation (lognormal only)
+    double rate_cv;                        // CV of the day-level demand multiplier (0 = pure NHPP)
+    double wait_threshold;                 // Minutes; waits above this count as late
 
     SimulationConfig()
         : mean_service_time(8.0)
         , random_seed(42)
-        , simulation_duration(480.0) {}
+        , simulation_duration(480.0)
+        , service_dist(ServiceDist::EXPONENTIAL)
+        , service_cv(1.0)
+        , rate_cv(0.0)
+        , wait_threshold(15.0) {}
 };
 
 /**
@@ -103,6 +123,8 @@ struct SimulationConfig {
  * - FIFO queue discipline
  * - Doors close at simulation_duration; citizens already inside are served
  * - Separate random streams for arrivals and service (common random numbers)
+ * - Optional lognormal/deterministic service and a random day-level demand
+ *   multiplier (a gamma-mixed Poisson process, which is overdispersed)
  */
 class QueueSimulator {
 public:
@@ -126,8 +148,11 @@ private:
     // plan sees the same citizens with the same service requirements
     std::mt19937 arrival_rng_;
     std::mt19937 service_rng_;
+    std::mt19937 rate_rng_;
     std::exponential_distribution<double> service_dist_;
+    std::lognormal_distribution<double> lognormal_dist_;
     std::uniform_real_distribution<double> uniform_dist_;
+    double rate_multiplier_;   // Drawn once per run from rate_rng_
 
     // Simulation state
     double current_time_;

@@ -13,7 +13,7 @@ import io
 import itertools
 import math
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 import os
@@ -105,6 +105,15 @@ class SimulationResult:
     mean_wait_ci: tuple = (0.0, 0.0)   # 95% confidence interval
     p90_wait_ci: tuple = (0.0, 0.0)    # 95% confidence interval
     n_replications: int = 1
+    # Per arrival hour: fraction of citizens waiting > wait_threshold, pooled
+    # over all replications (ratio of sums)
+    late_prob_per_slot: list = field(default_factory=list)
+    arrivals_per_slot: list = field(default_factory=list)   # Total over replications
+    daily_p90s: list = field(default_factory=list)          # One P90 per replication (day)
+    daily_mean_waits: list = field(default_factory=list)    # One mean wait per replication
+    daily_arrivals: list = field(default_factory=list)      # [rep][slot] arrival counts
+    daily_late: list = field(default_factory=list)          # [rep][slot] late counts
+    mean_service: float = 0.0
 
 
 # ============================================================================
@@ -117,7 +126,12 @@ def run_simulation(
     replications: int = NUM_REPLICATIONS,
     seed: int = 42,
     simulator_path: Path = None,
-    duration: Optional[float] = None
+    duration: Optional[float] = None,
+    mean_service: float = MEAN_SERVICE_TIME,
+    service_dist: str = "exp",
+    service_cv: float = 1.0,
+    rate_cv: float = 0.0,
+    wait_threshold: float = 15.0
 ) -> SimulationResult:
     """
     Execute C++ simulator with given staffing configuration.
@@ -134,6 +148,11 @@ def run_simulation(
         seed: Base random seed
         simulator_path: Path to queue_sim executable
         duration: Closing time in minutes (simulator default: 480)
+        mean_service: Mean service time in minutes
+        service_dist: "exp", "lognormal" or "det"
+        service_cv: Service-time CV (lognormal only)
+        rate_cv: CV of a random day-level demand multiplier (0 = Poisson)
+        wait_threshold: Minutes; per-hour late probability counts waits above it
 
     Returns:
         SimulationResult with aggregated metrics and 95% CIs
@@ -148,13 +167,19 @@ def run_simulation(
         str(simulator_path),
         "--staffing", ",".join(str(s) for s in staffing),
         "--arrivals", ",".join(str(a) for a in arrival_rates),
-        "--service-time", str(MEAN_SERVICE_TIME),
+        "--service-time", str(mean_service),
         "--seed", str(seed),
         "--replications", str(replications),
         "--per-replication",
     ]
     if duration is not None:
         cmd += ["--duration", str(duration)]
+    if service_dist != "exp":
+        cmd += ["--service-dist", service_dist, "--service-cv", str(service_cv)]
+    if rate_cv:
+        cmd += ["--rate-cv", str(rate_cv)]
+    if wait_threshold != 15.0:
+        cmd += ["--wait-threshold", str(wait_threshold)]
 
     try:
         result = subprocess.run(
@@ -184,6 +209,8 @@ def run_simulation(
 
     mean_waits = column('mean_wait')
     p90_waits = column('p90_wait')
+    arrivals = [sum(column(f'arr_{i}')) for i in range(8)]
+    late = [sum(column(f'late_{i}')) for i in range(8)]
 
     return SimulationResult(
         staffing=tuple(staffing),
@@ -196,7 +223,14 @@ def run_simulation(
         avg_overtime=mean(column('overtime')),
         mean_wait_ci=compute_confidence_interval(mean_waits),
         p90_wait_ci=compute_confidence_interval(p90_waits),
-        n_replications=len(rows)
+        n_replications=len(rows),
+        late_prob_per_slot=[l / a if a else 0.0 for l, a in zip(late, arrivals)],
+        arrivals_per_slot=arrivals,
+        daily_p90s=p90_waits,
+        daily_mean_waits=mean_waits,
+        daily_arrivals=[[int(row[f'arr_{i}']) for i in range(8)] for row in rows],
+        daily_late=[[int(row[f'late_{i}']) for i in range(8)] for row in rows],
+        mean_service=mean(column('mean_service'))
     )
 
 
