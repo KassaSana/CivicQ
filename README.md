@@ -350,6 +350,7 @@ python python/test_validation.py
 - Daily demand uncertainty costs up to 22% more staff in large offices.
 - The service-level definition alone moves this office's answer from 18 to 22 staff-hours.
 - Real shifts (4h/8h) add 14-68% paid hours over an ideal hour-by-hour plan; searching over shift schedules with simulation is up to 15% cheaper than the textbook "hourly requirement, then shifts" method.
+- Appointments cut the staffing need mainly through shifts: booking 75% of demand into quiet hours shrinks an 8-Erlang office's roster by 24%, but barely changes the hour-by-hour need.
 - The simulator is cross-validated against the independent [Ciw](https://github.com/CiwPython/Ciw) library (0 of 54 tests reject).
 
 The study also showed that 30 confirmation days gave P90 CIs of about ±4 minutes and misreported the 18-hour plan as missing the target. The optimizer now confirms with 300 days and reports statistical ties.

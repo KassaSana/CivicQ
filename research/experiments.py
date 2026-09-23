@@ -3,7 +3,7 @@ Experiments for the CivicQ staffing study. Every result is written to
 research/results/*.csv and is reproducible from fixed seeds.
 
     python research/experiments.py --all
-    python research/experiments.py e1b e1      # or any subset: e1b e1 e2 e2b e3a e3b e4 e5
+    python research/experiments.py e1b e1      # or any subset: e1b e1 e2 e2b e3a e3b e4 e5 e6
 
 Design seeds (DESIGN_SEED..) choose plans; evaluation seeds (EVAL_SEED..) score
 them, so no reported number is biased by the search that produced the plan.
@@ -373,6 +373,115 @@ def run_e4():
 
 
 # ============================================================================
+# E6: appointments mixed with walk-ins
+# ============================================================================
+
+def appointment_book(rates, share, placement, no_show):
+    """
+    Move `share` of expected daily demand to appointments.
+
+    Returns (walk-in hourly rates, booked times in minutes). Bookings are
+    overbooked by 1/(1 - no_show) so expected shows equal the demand moved.
+    Placement of expected shows per hour:
+        proportional  same shape as demand
+        flat          evenly across the day
+        counter       water-filling into quiet hours so that walk-ins plus
+                      expected shows are as flat as possible
+    """
+    walk = [r * (1 - share) for r in rates]
+    moved = share * sum(rates)
+    if placement == "proportional":
+        shows = [share * r for r in rates]
+    elif placement == "flat":
+        shows = [moved / SLOTS] * SLOTS
+    elif placement == "counter":
+        lo, hi = min(walk), max(walk) + moved
+        for _ in range(100):                      # bisection on the water level
+            level = (lo + hi) / 2
+            if sum(max(0.0, level - w) for w in walk) > moved:
+                hi = level
+            else:
+                lo = level
+        shows = [max(0.0, lo - w) for w in walk]
+        shows = [s * moved / sum(shows) for s in shows]
+    else:
+        raise ValueError(placement)
+    wanted = [s / (1 - no_show) for s in shows]
+    total = round(sum(wanted))
+    counts = [int(w) for w in wanted]            # largest-remainder rounding
+    for i in sorted(range(SLOTS), key=lambda i: wanted[i] - counts[i], reverse=True):
+        if sum(counts) >= total:
+            break
+        counts[i] += 1
+    times = [60.0 * i + 60.0 * (k + 0.5) / c for i, c in enumerate(counts) for k in range(c)]
+    return walk, times
+
+
+def _class_split(r):
+    """Walk-in vs appointment late rate and mean wait from per-day totals."""
+    arr = np.array(r.daily_arrivals, float).sum(axis=1)
+    late = np.array(r.daily_late, float).sum(axis=1)
+    wait = np.array(r.daily_mean_waits) * arr
+    a_arr = np.array(r.daily_appt_arrived, float)
+    a_late = np.array(r.daily_appt_late, float)
+    a_wait = np.array(r.daily_appt_wait_sum, float)
+    w_arr = arr - a_arr
+    return {
+        "walkin_late": round(float((late - a_late).sum() / w_arr.sum()), 4),
+        "walkin_mean_wait": round(float((wait - a_wait).sum() / w_arr.sum()), 3),
+        "appt_late": round(float(a_late.sum() / a_arr.sum()), 4) if a_arr.sum() else "",
+        "appt_mean_wait": round(float(a_wait.sum() / a_arr.sum()), 3) if a_arr.sum() else "",
+        "appt_show_rate": "",
+    }
+
+
+def run_e6():
+    from shifts import STANDARD, Menu
+    from staffing_methods import _feasible
+    print("E6: appointments + walk-ins (hourly optimum and standard-menu roster)")
+    offices = [("office", OFFICE_RATES, OFFICE_S),
+               ("R8_S16_A0.6", arrival_profile(8.0, 16.0, 0.6), 16.0)]
+    cells = [(0.0, "none", 0.15)]
+    cells += [(f, pl, 0.15) for f in (0.25, 0.5, 0.75)
+              for pl in ("proportional", "flat", "counter")]
+    cells += [(0.5, pl, p) for p in (0.05, 0.30) for pl in ("proportional", "counter")]
+    menu = Menu(STANDARD)
+    rows = []
+    for name, rates, s in offices:
+        for share, placement, p in cells:
+            walk, times = appointment_book(rates, share, placement if share else "flat", p)
+            kw = {"appointments": times, "no_show": p, "punctuality_sd": 5.0}
+            hourly, _ = simulation_staffing(walk, s, THRESHOLD, ALPHA, criterion="ucb", **kw)
+            k = 1
+            while not _feasible(menu.profile(menu.full_days(k)), walk, s, THRESHOLD, ALPHA,
+                                DESIGN_REPS, DESIGN_SEED, "ucb", **kw)[0]:
+                k += 1
+            roster, calls = menu.integrated_search(walk, s, THRESHOLD, ALPHA,
+                                                   menu.full_days(k), **kw)
+            r = run_simulation(menu.profile(roster), walk, replications=EVAL_REPS,
+                               seed=EVAL_SEED, mean_service=s, wait_threshold=THRESHOLD, **kw)
+            split = _class_split(r)
+            if times:
+                split["appt_show_rate"] = round(float(np.mean(r.daily_appt_arrived)) / len(times), 3)
+            ev_hourly = evaluate(hourly, walk, s, THRESHOLD, **kw)
+            rows.append({
+                "office": name, "service_time": s, "share": share, "placement": placement,
+                "no_show": p, "booked": len(times),
+                "hourly_plan": json.dumps(hourly), "hourly_window_hours": sum(hourly),
+                "hourly_worst_late": round(max(ev_hourly.late_prob), 4),
+                "roster": json.dumps(menu.describe(roster)),
+                "roster_paid_hours": menu.paid_hours(roster),
+                "roster_worst_late": round(max(r.late_prob_per_slot), 4),
+                "roster_overtime": round(r.avg_overtime, 1),
+                **split,
+            })
+            print(f"  {name:<12} f={share:<4} {placement:<12} p={p:<4}: hourly {sum(hourly)} h, "
+                  f"roster {menu.paid_hours(roster)} h | walk-in late {split['walkin_late']:.3f}"
+                  + (f", appt late {split['appt_late']:.3f}" if times else ""))
+    write_csv("e6_appointments.csv", rows)
+
+
+# ============================================================================
 # E5: cross-validation against an independent simulator (Ciw)
 # ============================================================================
 
@@ -466,7 +575,7 @@ def run_e5(reps=2000):
 
 
 EXPERIMENTS = {"e1b": run_e1b, "e1": run_e1, "e2": run_e2, "e2b": run_e2b,
-               "e3a": run_e3a, "e3b": run_e3b, "e4": run_e4, "e5": run_e5}
+               "e3a": run_e3a, "e3b": run_e3b, "e4": run_e4, "e5": run_e5, "e6": run_e6}
 
 
 def main():

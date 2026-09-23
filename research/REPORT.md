@@ -18,6 +18,7 @@ The target is that at most 10% of each hour's arrivals wait more than 15 minutes
 - **Demand uncertainty is a scale effect.** A 20% day-to-day uncertainty in demand costs +8% staff for a 2-window office and +22% for a 24-window office.
 - **Two methodological results.** Common random numbers cut the variance of plan-vs-plan comparisons by a median of 40×. And the choice of service-level definition alone changes the required staffing for the same office from 18 to 22 staff-hours, which is a policy decision disguised as a technical one.
 - **Shifts matter more than the staffing rule (Round 2).** Real staff work 4- and 8-hour shifts. The textbook two-step method (set an hourly requirement, then choose shifts with an integer program) costs up to **68%** more paid hours than the ideal hour-by-hour plan. Searching over shift schedules directly with simulation cuts that to **14–33%**, and is up to **15%** cheaper than the best two-step schedule. Unlike the call-center finding of Ingolfsson et al. (2002), two-step schedules here never miss the target: they are safe but expensive.
+- **Appointments save staff through shifts, not hours (Round 3).** Moving demand to appointments barely changes the hour-by-hour staffing need: at most −6.5% even with 75% of demand booked. But booked into the quiet hours, appointments flatten demand enough for full-day shifts to fit it. That cut an 8-Erlang office's roster from 100 to 76 paid hours (−24%), against −4% when bookings follow the demand curve. A small office saw no change. Appointment holders waited less than walk-ins in every setting.
 - **Independent validation (Round 2).** An independent implementation in the open-source Ciw library agrees with CivicQ: 0 of 54 tests reject under constant staffing, and CivicQ stays within Ciw's bounds in all 25 hours tested under changing staffing. Along the way we found that Ciw's hourly schedules silently add overtime capacity at every shift boundary, which halves the measured lateness if used naively.
 
 ## 1. Background and gap
@@ -93,7 +94,12 @@ The simulator (C++) is validated against the exact Erlang-C mean wait and per-ho
 - **H6.** Unlike the call-center finding of Ingolfsson et al. (2002), SIPP-then-IP schedules do not miss the per-hour target in walk-in settings, because SIPP overstaffs. They cost more instead.
 - **H7.** CivicQ and an independent simulator (Ciw) give statistically indistinguishable per-hour late rates.
 
-*Change after pre-registration:* while testing H7 we found that Ciw cannot express CivicQ's staffing-change rule (see §5.6). H7 was therefore split into a strict test for constant staffing and a bounds test for changing staffing *before* E5 was run. This deviation is disclosed here.
+**Round 3** (stated before running E6):
+- **H8.** Converting demand to appointments saves staff mainly by smoothing demand. Counter-cyclical placement (booking the quiet hours) saves clearly more than placement proportional to demand.
+- **H9.** With 15% no-shows and walk-ins still present, a small office (about 1.5 Erlangs) saves less than 10% of roster paid hours, even with half of demand booked.
+- **H10.** Under FIFO, appointment holders get *worse* late rates than walk-ins when placement is proportional, because they are booked into the peaks. Counter-cyclical placement reverses this.
+
+*Change after pre-registration (Round 2):* while testing H7 we found that Ciw cannot express CivicQ's staffing-change rule (see §5.6). H7 was therefore split into a strict test for constant staffing and a bounds test for changing staffing *before* E5 was run. This deviation is disclosed here.
 
 ## 5. Results
 
@@ -256,11 +262,51 @@ When the count really changes, CivicQ's closing window finishes its customer *as
 
 **H7: supported** for constant staffing, and consistent within informative bounds for changing staffing.
 
+### 5.7 Appointments mixed with walk-ins (E6)
+
+A share f of expected daily demand moves to appointments. Walk-in rates become λᵢ(1 − f), and n = f·Λ/(1 − p) slots are booked, so no-shows (probability p) are offset by overbooking. That keeps expected arrivals constant and makes cells comparable. Booked citizens arrive at their slot time plus Normal(0, 5 min) and are served FIFO with walk-ins.
+
+Placement options, for the expected shows per hour:
+- *proportional*: the same shape as demand;
+- *flat*: evenly across the day;
+- *counter-cyclical*: water-filled into the quiet hours, so walk-ins plus shows are as flat as possible.
+
+Within each hour, bookings are evenly spaced. Two offices are studied: the office (1.5 Erlangs, S = 8) and an 8-Erlang office with S = 16 and A = 0.6. For each cell we find:
+- the hourly optimum (SGS-UCB);
+- the standard-menu roster (integrated search from the fewest feasible full-day shifts, via the same `roster.py` code the tool uses).
+
+Both are scored on the separate evaluation days. The simulator's appointment feature leaves walk-in-only output byte-identical. With perfectly spaced bookings and fixed service it gives zero waits, and the measured show rates match 1 − p to within 0.005.
+
+![Appointments](figures/fig8_appointments.png)
+
+8-Erlang office, p = 0.15 (hourly optimum / roster, in paid hours):
+
+| Share booked | Proportional | Flat | Counter-cyclical |
+|---|---|---|---|
+| 0% | 77 / 100 | 77 / 100 | 77 / 100 |
+| 25% | 76 / 96 | 76 / 96 | 77 / **84** |
+| 50% | 74 / 96 | 74 / 88 | 75 / **80** |
+| 75% | 72 / 96 | 73 / 80 | 73 / **76** |
+
+1. **The hour-by-hour need barely moves.** With 75% of demand booked it falls at most 6.5% (77 → 72 h). Hourly staffing can already follow the demand curve, and evenly spaced bookings are only somewhat more regular than Poisson walk-ins.
+2. **The roster moves a lot, and only if the bookings smooth the day.** Counter-cyclical booking cuts the roster by 16%, 20% and 24% at 25%, 50% and 75% booked. Proportional booking cuts it by 4% at every share. The rosters show why: at 50% counter-cyclical, 10 full-day shifts cover the whole day, whereas proportional booking still needs 12. Smoothing removes most of the "price of shifts" from §5.5: roster paid hours fall from 30% to 4% above the hourly optimum at 75% booked.
+3. **The small office sees no change.** All 14 cells need the same roster (3 full days, 24 h), although the hourly optimum drops by up to 2 h. There is no slack for smoothing to release.
+4. **Appointment holders wait less than walk-ins in all 26 cells**, including proportional placement: for example 2.6% vs 3.0% late at 50% booked. Evenly spaced bookings avoid the random clusters that make walk-ins wait.
+5. **No-show rates of 5–30% barely matter** once bookings are adjusted for them: at most 2 h on the hourly optimum and no change to any roster.
+6. **Trade-off:** counter-cyclical booking adds about 4–5 minutes of end-of-day overtime (41 → 46 min at the 8-Erlang office), because more bookings land in the quiet late afternoon.
+
+**H8: supported, with a qualification.** Counter-cyclical placement saves far more than proportional placement (24% vs 4% of the roster). But this happens through shift feasibility; the hourly need barely changes, and there counter-cyclical placement is no better than proportional (73 vs 72 h).
+
+**H9: supported.** The small office saved 0% of roster hours in every cell.
+
+**H10: rejected.** Appointment holders fared better than walk-ins under every placement.
+
 ## 6. Threats to validity
 - **Synthetic demand.** Arrival rates follow a stylized double-peak profile. There are no public arrival-count data for walk-in offices; the CA DMV data contain only waits.
 - **Exponential service in E1.** This favours the Erlang-C rules, which assume it. With CV < 1, as is typical for lognormal service, the analytic rules would overstaff even more (E2).
 - **Fixed service threshold.** T = 15 min is the same for every S. The same target is harder to meet with S = 32 than with S = 4.
 - **Fixed schedule structure.** One-hour blocks. §5.5 adds shifts, but without lunch breaks, part-time limits or labor rules. There is no abandonment, no appointments and a single service type.
+- **Appointments are simplified.** They are served FIFO, with no priority for booked citizens. No-shows are independent with a fixed rate, bookings are evenly spaced within each hour, and there are no walk-in balking or booking-lead-time effects.
 - **Integrated search is a local search.** It is multi-started and never worse than its two-step start, but it is not proven optimal for large offices.
 - **The Ciw bounds test is weak for long-service, large offices** (§5.6); the strict constant-staffing test is the main evidence.
 - **SGS optimality** is shown only for small instances, and relies on the monotonicity assumption used to derive the lower bounds.
@@ -274,18 +320,22 @@ When the count really changes, CivicQ's closing window finishes its customer *as
 5. **Choose the service-level definition deliberately.** It moves the answer by more than any modelling refinement studied here.
 6. **For larger offices, measure how much daily demand varies.** At 20% day-to-day variation it costs 19–22% more staff.
 7. **Plan shifts, not hours, and plan them with simulation.** Converting an hourly requirement into shifts wastes up to 15% of paid hours in medium and large offices. Searching over shift schedules directly avoids it, and helps more than adding new shift types.
-8. **If you use Ciw for time-varying staffing, merge consecutive equal shifts.** Otherwise each shift boundary adds phantom overtime capacity.
+8. **If you offer appointments, fill the quiet hours first.** Booking against the demand curve lets full-day shifts fit the day, saving up to about a quarter of paid hours at 8 Erlangs. Booking in proportion to demand saves almost nothing. Adjust for no-shows by overbooking.
+9. **If you use Ciw for time-varying staffing, merge consecutive equal shifts.** Otherwise each shift boundary adds phantom overtime capacity.
 
 ## 8. Reproducing
 ```bash
 g++ -std=c++17 -O2 -static -Icpp/include -o cpp/build/queue_sim.exe cpp/src/simulation.cpp cpp/src/main.cpp
 pip install -r research/requirements.txt   # numpy, matplotlib, scipy, ciw
 python research/test_research.py
-python research/experiments.py --all     # about 20 minutes on 8 cores
+python research/experiments.py --all     # about 25 minutes on 8 cores
 python research/figures.py
 ```
 
 ## References
+- Cayirli, T., & Veral, E. (2003). Outpatient scheduling in health care: A review of literature. *Production and Operations Management*, 12(4), 519–549.
+- Hassin, R., & Mendel, S. (2008). Scheduling arrivals to queues: A single-server model with no-shows. *Management Science*, 54(3), 565–572.
+- Staffing a service system with appointment-based customer arrivals (2014). *Journal of the Operational Research Society*, 65(10). doi:10.1057/jors.2013.110
 - Brown, L., Gans, N., Mandelbaum, A., Sakov, A., Shen, H., Zeltyn, S., & Zhao, L. (2005). Statistical analysis of a telephone call center: A queueing-science perspective. *JASA*, 100(469), 36–50.
 - Atlason, J., Epelman, M. A., & Henderson, S. G. (2004). Call center staffing with simulation and cutting plane methods. *Annals of Operations Research*, 127, 333–358.
 - Ingolfsson, A., Haque, M. A., & Umnikov, A. (2002). Accounting for time-varying queueing effects in workforce scheduling. *European Journal of Operational Research*, 139(3), 585–597.
