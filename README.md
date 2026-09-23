@@ -1,10 +1,12 @@
 # Public-Sector Queue Resource Allocation Simulator
 
+[![CI](https://github.com/KassaSana/CivicQ/actions/workflows/ci.yml/badge.svg)](https://github.com/KassaSana/CivicQ/actions/workflows/ci.yml)
+
 A discrete-event simulation (C++) coupled with parameter optimization (Python) to support staffing decisions at a government service center.
 
 ## Overview
 
-This project models a municipal permit and licensing office with multiple service windows, heterogeneous service types, and time-varying citizen demand. It enables decision-makers to balance wait-time targets against labor costs through quantitative analysis.
+This project models a municipal permit and licensing office with multiple identical service windows and time-varying citizen demand. It enables decision-makers to balance wait-time targets against labor costs through quantitative analysis.
 
 ### Why This Matters
 - Citizens experience long, unpredictable wait times during peak periods
@@ -19,36 +21,41 @@ This project models a municipal permit and licensing office with multiple servic
 | **Entities** | Citizens (arrivals), Service Windows (servers) |
 | **Resources** | N service windows, each staffed or unstaffed per time slot |
 | **Arrival Process** | Non-homogeneous Poisson process; λ(t) varies by hour |
-| **Service Process** | Exponential service times; mean μ = 8 minutes |
+| **Service Process** | Exponential service times; mean 1/μ = 8 minutes |
 | **Queue Discipline** | Single FIFO queue feeding all open windows |
-| **Time Horizon** | One 8-hour operating day (480 minutes) |
+| **Time Horizon** | One 8-hour operating day; doors close at 480 minutes |
 
 ### Key Assumptions
 - No appointments
 - No balking/reneging (citizens wait indefinitely)
 - All service windows are identical
 - Citizens are served to completion
+- **Closing time:** no one enters after 480 minutes, but everyone already inside is served. The time needed to clear the queue is reported as *overtime*.
+- **Staffing changes on the hour:** windows that open at a slot boundary immediately serve the queue. A window that closes finishes its current citizen first. Because of that, utilization in the slot right after a staffing cut can slightly exceed 1.
 
 ## Mathematical Model
 
-**Decision Variables:** Number of open windows per hourly slot: **s** = (s₁, s₂, ..., s₈) where sᵢ ∈ {1, ..., 5}
+**Decision Variables:** Number of open windows per hourly slot: **s** = (s₁, s₂, ..., s₈) where sᵢ ∈ {2, 3, 4} and Σsᵢ ≤ 28.
+
+The lower bound is 2 because the offered load λᵢ/μ is 1.07–2.0 in every hour, so a single window is unstable in all slots. That leaves 6,404 feasible plans.
 
 **Objective Function:** Minimize weighted cost:
 ```
 Cost = w₁ · W̄ + w₂ · Σsᵢ
 ```
-where W̄ = mean wait time, w₁, w₂ are policy weights.
+where W̄ = mean wait time, and w₁, w₂ are policy weights (defaults 1.0 and 0.5). The optimized scenario adds the constraint that the mean 90th-percentile wait is at most 15 minutes.
 
 **Performance Metrics:**
 - Mean wait time
-- 90th-percentile wait time
+- 90th-percentile wait time (nearest-rank)
 - Throughput (citizens served)
 - Window utilization per slot
+- Overtime (minutes past closing to serve everyone inside)
 
 ## Project Structure
 
 ```
-queue-simulator/
+CivicQ/
 ├── cpp/
 │   ├── CMakeLists.txt
 │   ├── include/
@@ -57,42 +64,39 @@ queue-simulator/
 │       ├── simulation.cpp
 │       └── main.cpp
 ├── python/
-│   └── optimizer.py
+│   ├── optimizer.py
+│   └── test_validation.py
+├── outputs/
+│   └── staffing_analysis.png
 └── README.md
 ```
 
 ## Building the C++ Simulator
 
 ### Requirements
-- CMake 3.16+
-- C++17 compatible compiler (MSVC, GCC, or Clang)
+- A C++17 compiler (MSVC, GCC, or Clang)
+- CMake 3.16+ (optional for MinGW)
 
 ### Windows (MinGW/g++)
 ```powershell
 cd cpp
 mkdir build
-cd build
-g++ -std=c++17 -O2 -Wall -I../include -o queue_sim.exe ../src/simulation.cpp ../src/main.cpp
+g++ -std=c++17 -O2 -Wall -static -Iinclude -o build/queue_sim.exe src/simulation.cpp src/main.cpp
 ```
+`-static` bundles the MinGW runtime, so the executable runs without MinGW on `PATH`.
 
 ### Windows (MSVC with CMake)
 ```powershell
-cd cpp
-mkdir build
-cd build
-cmake ..
-cmake --build . --config Release
+cmake -S cpp -B cpp/build
+cmake --build cpp/build --config Release
 ```
+The executable is written to `cpp/build/Release/queue_sim.exe`. The optimizer checks there automatically.
 
 ### Linux/macOS
 ```bash
-cd cpp
-mkdir build && cd build
-cmake -DCMAKE_BUILD_TYPE=Release ..
-make
+cmake -S cpp -B cpp/build -DCMAKE_BUILD_TYPE=Release
+cmake --build cpp/build
 ```
-
-The executable `queue_sim` (or `queue_sim.exe`) will be in the build directory.
 
 ## Using the C++ Simulator
 
@@ -109,24 +113,33 @@ The executable `queue_sim` (or `queue_sim.exe`) will be in the build directory.
 # Multiple replications for statistical validity
 ./queue_sim --replications 30 --seed 42
 
+# One CSV row per replication (used by the optimizer for confidence intervals)
+./queue_sim --replications 30 --per-replication
+
 # Full options
 ./queue_sim --help
 ```
 
 ### Output Format
-CSV with metrics:
+CSV averaged over replications:
 ```
 metric,value
-mean_wait_time,12.34
-p90_wait_time,22.50
-avg_served,45.0
+mean_wait_time,3.76779
+p90_wait_time,13.4909
+avg_served,90.2
+avg_arrived,90.2
+avg_overtime,11.2267
+replications,30
+utilization_slot_0,0.573644
 ...
 ```
+With `--per-replication`, the output has one row per run with the columns `rep,mean_wait,p90_wait,served,arrived,overtime,util_0..util_7`.
 
+## Results Chart
 
-## Vis 
+![Staffing analysis: service levels, staffing heatmap, and cost vs service trade-off](outputs/staffing_analysis.png)
 
-<img width="2473" height="1363" alt="image" src="https://github.com/user-attachments/assets/ef4877bd-b010-4188-8908-7c84fa62b085" />
+Generated by `python python/optimizer.py --scenario-analysis --frontier --save-plot outputs/staffing_analysis.png`.
 
 
 ## Python Optimizer
@@ -134,34 +147,46 @@ avg_served,45.0
 ### Requirements
 - Python 3.10+
 - No external packages required (standard library only)
- - Optional for plotting: matplotlib (`pip install matplotlib`)
+- Optional for plotting: matplotlib (`pip install matplotlib`)
 
 ### Running Scenario Analysis
 ```bash
 cd python
-python optimizer.py --scenario-analysis --simulator ../cpp/build/queue_sim.exe
+python optimizer.py --scenario-analysis
 # With visualization (requires matplotlib)
-python optimizer.py --scenario-analysis --plot --simulator ../cpp/build/queue_sim.exe
-# Save a portfolio figure without opening a window
-python optimizer.py --scenario-analysis --save-plot ../outputs/staffing_analysis.png --simulator ../cpp/build/queue_sim.exe
+python optimizer.py --scenario-analysis --plot
+# Add the staff-hours vs P90 trade-off table and chart panel
+python optimizer.py --scenario-analysis --frontier --save-plot ../outputs/staffing_analysis.png
 ```
-#
+Use `--simulator PATH` if the executable is somewhere other than `cpp/build`. A full scenario analysis, including the exhaustive search, stress test, and trade-off curve, takes under a minute on a typical laptop.
 
 ### Running Grid Search Optimization
 ```bash
-python optimizer.py --optimize --export results.csv
+python optimizer.py --optimize --p90-target 15 --frontier --export results.csv
+# Faster, approximate: evaluate a random sample of plans
+python optimizer.py --optimize --sample-size 500
 ```
 
 ### Programmatic Usage
 ```python
-from optimizer import run_simulation, grid_search_optimize, run_scenario_analysis
+from optimizer import (run_simulation, grid_search_optimize, run_scenario_analysis,
+                       sipp_staffing, stress_test, pareto_frontier)
 
 # Single simulation
 result = run_simulation(staffing=[2, 3, 2, 2, 2, 3, 3, 2])
 print(f"Mean wait: {result.mean_wait:.1f} min")
 
-# Full scenario comparison
-scenarios = run_scenario_analysis()
+# Textbook per-hour Erlang-C staffing
+print(sipp_staffing())
+
+# Full scenario comparison (also returns every screened plan)
+scenarios, all_results = run_scenario_analysis()
+
+# P90 if demand runs 10% / 20% above forecast
+stress = stress_test(scenarios['optimized'].staffing, factors=(1.1, 1.2))
+
+# Best P90 for each staff-hour budget
+frontier = pareto_frontier(all_results, known=list(scenarios.values()))
 
 # Grid search with constraint
 best, all_results = grid_search_optimize(
@@ -178,40 +203,106 @@ The optimizer compares three staffing policies:
 | Scenario | Description |
 |----------|-------------|
 | **A. Flat** | Uniform staffing (3 windows all slots) |
-| **B. Demand-Matched** | Staff proportional to arrival rate |
-| **C. Optimized** | Cost-minimized under 15-min P90 constraint |
+| **B. SIPP / Erlang-C** | Each hour is treated as its own steady-state M/M/c queue, using the fewest windows with P(wait > 15 min) ≤ 10% (the textbook "stationary independent period-by-period" method) |
+| **C. Optimized** | Cost-minimized under the 15-minute P90 constraint, found by simulation |
 
 ### Example Output
+Real output from `python optimizer.py --scenario-analysis`, with default arrival rates, 30 replications, and seeds 42–71:
 ```
 [A] Flat Staffing (3 windows/slot)
-    Mean wait: 8.5 min, P90 wait: 18.2 min, Staff-hours: 24
+    Staffing: [3, 3, 3, 3, 3, 3, 3, 3]
+    Mean wait: 1.50 min  (95% CI: 0.97-2.03)
+    P90 wait:  5.88 min  (95% CI: 3.84-7.91)
+    Staff-hours: 24  |  Overtime: 8.1 min  |  n=30 replications
 
-[B] Demand-Matched Staffing
-    Mean wait: 5.2 min, P90 wait: 12.1 min, Staff-hours: 26
+[B] SIPP / Erlang-C (steady-state P90 <= 15 min each hour)
+    Staffing: [3, 3, 3, 2, 2, 3, 3, 3]
+    Mean wait: 2.20 min  (95% CI: 1.35-3.04)
+    P90 wait:  7.97 min  (95% CI: 5.05-10.90)
+    Staff-hours: 22  |  Overtime: 8.1 min  |  n=30 replications
 
 [C] Optimized (P90 <= 15 min target)
-    Mean wait: 6.1 min, P90 wait: 14.8 min, Staff-hours: 22
+    Staffing: [2, 3, 3, 2, 2, 3, 3, 2]
+    Mean wait: 3.10 min  (95% CI: 1.97-4.22)
+    P90 wait:  10.96 min  (95% CI: 7.42-14.49)
+    Staff-hours: 20  |  Overtime: 11.2 min  |  n=30 replications
+
+============================================================
+ROBUSTNESS: P90 wait (min) if demand differs from forecast
+============================================================
+  Scenario      90% demand   100% demand   110% demand   120% demand
+  Flat              4.8 ok        5.9 ok        7.0 ok        9.6 ok
+  Sipp              6.1 ok        8.0 ok        9.2 ok       11.8 ok
+  Optimized         8.4 ok       11.0 ok       12.5 ok     15.2 MISS
 
 >>> RECOMMENDATION:
-    Shifting two staff-hours from midday to 8-10 AM reduces 
-    90th-percentile wait from 22 to 14 minutes with no 
-    change in labor cost.
+    Adopt optimized staffing schedule: [2, 3, 3, 2, 2, 3, 3, 2]
+    Peak staffing periods: 9-10AM, 10-11AM, 1-2PM, 2-3PM
+    Expected P90 wait: 11.0 minutes (95% CI 7.4-14.5)
+    Total daily staff-hours: 20
+    Meets the P90 target up to 110% of forecast demand
+    If demand runs +20%: add one window at 3-4PM (P90 13.4 min)
 ```
+
+### Reading the Results
+- **Staffing should lag demand.** Demand falls at 10AM (15 → 10 citizens/hour), but the optimized plan keeps 3 windows until 11AM to clear the backlog from the 9AM peak. Per-hour formulas like SIPP can't see this carryover between hours (Green, Kolesar & Soares, 2001).
+- **The office opens empty.** SIPP assumes each hour is already at steady state, so it staffs 8AM as if a queue were waiting. Simulation knows the day starts with no queue, so 2 windows are enough there.
+- **The trade-off:** relative to SIPP, the optimized plan saves 2 staff-hours per day for about 3 extra minutes of P90 wait. It stays within the 15-minute target, though the upper end of its 95% CI (14.5 min) is close to the limit.
+- **Forecast risk:** the optimized plan still meets the target if demand runs 10% above forecast, but not at +20%. In that case, one extra window at 3–4PM restores it. SIPP and Flat both absorb +20% because they carry 2–4 more staff-hours. Staffing to a single point forecast is a known weakness (Whitt, 2006), so the stress test is part of every scenario run.
+
+### Cost vs Service Trade-off
+The weighted cost picks one plan, but the real decision is how many staff-hours to fund. `--frontier` shows the best plan found for each budget. The top 10 plans per budget from screening are re-run with 30 replications, and the scenario plans compete too:
+
+| Staff-hours | P90 wait (95% CI) | Mean wait | Staffing |
+|---|---|---|---|
+| 18 | 15.5 (11.0–20.0) | 4.7 | [2, 3, 2, 2, 2, 2, 3, 2] (misses target) |
+| 19 | 13.3 (9.0–17.6) | 4.0 | [2, 3, 3, 2, 2, 2, 3, 2] |
+| **20** | **11.0 (7.4–14.5)** | **3.1** | **[2, 3, 3, 2, 2, 3, 3, 2]** (optimized) |
+| 21 | 9.4 (6.3–12.5) | 2.6 | [3, 3, 3, 2, 2, 3, 3, 2] |
+| 22 | 8.0 (5.0–10.9) | 2.2 | [3, 3, 3, 2, 2, 3, 3, 3] (SIPP) |
+| 24 | 5.6 (3.5–7.7) | 1.5 | [3, 4, 3, 3, 2, 3, 3, 3] |
+
+19 staff-hours is the cheapest budget that meets the target on average, but its CI extends well past 15 minutes. At 20, the whole CI of the best plan found is under the target.
 
 ## Technical Details
 
 ### Simulation Engine (C++)
 - **Type:** Discrete-Event Simulation (DES)
-- **Event Queue:** Priority queue (min-heap by time)
+- **Event Queue:** Priority queue (min-heap by time), with arrival, departure, and slot-boundary staffing events
 - **Arrival Generation:** Thinning algorithm for non-homogeneous Poisson
-- **Service Times:** Inverse-transform sampling from exponential distribution
+- **Service Times:** Exponential, drawn when each citizen arrives
 - **Reproducibility:** Deterministic given seed
+- **Common random numbers:** arrivals and service times use separate random streams. With the same seed, every staffing plan sees the same citizens with the same service needs, so differences between plans reflect the staffing and not random noise (Atlason, Epelman & Henderson, 2008).
 
 ### Optimization (Python)
-- **Method:** Exhaustive grid search
-- **Constraint Space:** ~2,000 feasible configurations
-- **Statistical Handling:** 30 replications per configuration, mean ± 95% CI
-- **Variance Reduction:** Common random numbers via sequential seeding
+- **Method:** Two-stage exhaustive grid search
+  1. Screen all 6,404 feasible plans with 10 replications each.
+  2. Re-evaluate the 10 cheapest plans whose P90 confidence interval could meet the target, using 30 replications each, and pick the winner from those.
+- **Statistical Handling:** 95% confidence intervals with Student-t critical values that match the number of replications
+- **Performance:** all replications of a plan run in one simulator process, and plans are evaluated in parallel
+- **Analytical baseline:** Erlang-C (M/M/c) formulas for the SIPP scenario
+- **Robustness:** every scenario is re-simulated with arrival rates at 90–120% of forecast, on the same seeds. If the optimized plan misses the target, the single extra window that best restores it is reported.
+- **Trade-off curve:** best P90 per staff-hour budget, re-simulated with 30 replications so noisy screening winners aren't reported as the best
+
+## Validation
+
+`python/test_validation.py` checks the simulator against queueing theory. With constant demand and staffing over a long horizon, the model reduces to a steady-state M/M/c queue. The simulated mean wait must then fall inside its 95% CI around the exact Erlang-C value:
+
+| Case | Erlang-C Wq | Simulated (30 reps × 20,000 min) |
+|------|-------------|----------------------------------|
+| λ = 15/h, 3 windows (ρ = 0.67) | 3.56 min | 3.70 min (CI 3.48–3.93) |
+| λ = 12/h, 2 windows (ρ = 0.80) | 14.22 min | 14.90 min (CI 13.74–16.06) |
+
+The tests also check that:
+- everyone inside at closing gets served
+- windows opening at a slot boundary serve the existing queue
+- common random numbers give identical arrivals across staffing plans
+- the Erlang-C and confidence-interval helpers return correct values
+- the trade-off curve keeps the best plan per budget, and the stress test at 100% demand reproduces the base run
+
+```bash
+python python/test_validation.py
+```
 
 ## Scope Boundaries
 
@@ -226,6 +317,12 @@ The optimizer compares three staffing policies:
 **Constraints:**
 - Grid search only (no external solvers)
 
+## Future Work
+- **Abandonment (Erlang-A).** Walk-in offices do lose citizens who give up. Modeling this needs a patience distribution calibrated on real walk-away data, and a separate "% abandoned" limit. Without those, abandonment shortens the queue and can hide understaffing.
+- **Iterative Staffing Algorithm.** A simulation-based method for staffing time-varying queues to meet a time-stable service level (Feldman, Mandelbaum, Massey & Whitt, 2008).
+- **Multiple service types.** Different transaction types with their own service times, as in the Virginia DMV staffing study.
+- **Local search.** Replace the exhaustive search if the decision space grows, for example with more slots or larger offices.
+
 ## License
 
 Public domain - developed for government R&D demonstration purposes.
@@ -234,5 +331,9 @@ Public domain - developed for government R&D demonstration purposes.
 
 - Banks, J., Carson, J. S., Nelson, B. L., & Nicol, D. M. (2014). *Discrete-Event System Simulation*. Pearson.
 - Law, A. M. (2015). *Simulation Modeling and Analysis*. McGraw-Hill.
-
-
+- Green, L. V., Kolesar, P. J., & Soares, J. (2001). Improving the SIPP approach for staffing service systems that have cyclic demands. *Operations Research*, 49(4), 549–564.
+- Green, L. V., Kolesar, P. J., & Whitt, W. (2007). Coping with time-varying demand when setting staffing requirements for a service system. *Production and Operations Management*, 16(1), 13–39.
+- Atlason, J., Epelman, M. A., & Henderson, S. G. (2008). Optimizing call center staffing using simulation and analytic center cutting-plane methods. *Management Science*, 54(2), 295–309.
+- Whitt, W. (2006). Staffing a call center with uncertain arrival rate and absenteeism. *Production and Operations Management*, 15(1), 88–102.
+- Gans, N., Koole, G., & Mandelbaum, A. (2003). Telephone call centers: Tutorial, review, and research prospects. *Manufacturing & Service Operations Management*, 5(2), 79–141.
+- Feldman, Z., Mandelbaum, A., Massey, W. A., & Whitt, W. (2008). Staffing of time-varying queues to achieve time-stable performance. *Management Science*, 54(2), 324–338.

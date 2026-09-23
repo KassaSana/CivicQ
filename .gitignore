@@ -1,0 +1,4 @@
+cpp/build/
+__pycache__/
+*.pyc
+*.csv
