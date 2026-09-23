@@ -1,7 +1,7 @@
 /**
  * @file simulation.hpp
  * @brief Discrete-Event Simulation Engine for Government Service Center Queue
- * 
+ *
  * Public-Sector Queue Resource Allocation Simulator
  * Supports staffing optimization for municipal permit/licensing offices.
  */
@@ -17,12 +17,16 @@
 
 namespace govqueue {
 
+constexpr int NUM_SLOTS = 8;             // Hourly staffing slots
+constexpr double SLOT_LENGTH = 60.0;     // Minutes per slot
+
 /**
  * @brief Event types in the discrete-event simulation
  */
 enum class EventType {
     ARRIVAL,
-    DEPARTURE
+    DEPARTURE,
+    STAFFING_CHANGE    // Slot boundary: newly opened windows pull from the queue
 };
 
 /**
@@ -30,9 +34,9 @@ enum class EventType {
  */
 struct Event {
     double time;           // Event timestamp (minutes from start)
-    EventType type;        // ARRIVAL or DEPARTURE
-    int window_id;         // Service window ID (-1 for arrivals)
-    int citizen_id;        // Unique citizen identifier
+    EventType type;        // ARRIVAL, DEPARTURE or STAFFING_CHANGE
+    int window_id;         // Service window ID (-1 if not applicable)
+    int citizen_id;        // Unique citizen identifier (-1 if not applicable)
 
     // Min-heap comparison (earliest event first)
     bool operator>(const Event& other) const {
@@ -46,6 +50,7 @@ struct Event {
 struct Citizen {
     int id;
     double arrival_time;
+    double service_time;         // Drawn at arrival (common random numbers)
     double service_start_time;
     double departure_time;
 };
@@ -68,6 +73,7 @@ struct SimulationResults {
     double mean_service_time;
     int total_served;
     int total_arrived;
+    double overtime_minutes;                   // Minutes past closing to serve everyone inside
     std::vector<double> utilization_per_slot;  // 8 hourly slots
     std::vector<double> all_wait_times;        // For distribution analysis
 };
@@ -80,9 +86,9 @@ struct SimulationConfig {
     std::vector<double> arrival_rates;     // Lambda(t) per hour (8 slots)
     double mean_service_time;              // 1/mu in minutes
     int random_seed;
-    double simulation_duration;            // Total minutes (default 480)
+    double simulation_duration;            // Doors close at this time (default 480)
 
-    SimulationConfig() 
+    SimulationConfig()
         : mean_service_time(8.0)
         , random_seed(42)
         , simulation_duration(480.0) {}
@@ -90,16 +96,18 @@ struct SimulationConfig {
 
 /**
  * @brief Discrete-Event Simulation Engine
- * 
+ *
  * Implements a single-queue, multi-server model with:
  * - Non-homogeneous Poisson arrivals (time-varying lambda)
  * - Exponential service times
  * - FIFO queue discipline
+ * - Doors close at simulation_duration; citizens already inside are served
+ * - Separate random streams for arrivals and service (common random numbers)
  */
 class QueueSimulator {
 public:
     explicit QueueSimulator(const SimulationConfig& config);
-    
+
     /**
      * @brief Execute one complete simulation run
      * @return Aggregated performance metrics
@@ -113,14 +121,17 @@ public:
 
 private:
     SimulationConfig config_;
-    
-    // Random number generation
-    std::mt19937 rng_;
+
+    // Random number generation: independent streams so that every staffing
+    // plan sees the same citizens with the same service requirements
+    std::mt19937 arrival_rng_;
+    std::mt19937 service_rng_;
     std::exponential_distribution<double> service_dist_;
     std::uniform_real_distribution<double> uniform_dist_;
 
     // Simulation state
     double current_time_;
+    double last_departure_time_;
     int next_citizen_id_;
     std::priority_queue<Event, std::vector<Event>, std::greater<Event>> event_queue_;
     std::queue<int> waiting_queue_;  // Citizen IDs waiting for service
@@ -134,20 +145,24 @@ private:
     double get_arrival_rate(double time) const;
     int get_current_slot(double time) const;
     int get_open_windows(double time) const;
+    double slot_length(int slot) const;
     double generate_next_arrival_time();
     double generate_service_time();
-    
+
     void process_arrival(const Event& event);
     void process_departure(const Event& event);
+    void process_staffing_change();
     void start_service(int citizen_id, int window_id);
+    void serve_waiting_citizens();
+    void add_busy_time(double start, double end);
     int find_free_window();
-    
+
     SimulationResults compute_results() const;
 };
 
 /**
  * @brief Run multiple replications and aggregate statistics
- * 
+ *
  * @param config Base configuration
  * @param num_replications Number of independent runs
  * @param base_seed Starting seed (incremented per replication)

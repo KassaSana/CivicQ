@@ -2,7 +2,7 @@
  * @file main.cpp
  * @brief Command-line interface for queue simulation
  * 
- * Accepts JSON-style configuration via stdin or command-line arguments,
+ * Accepts configuration via command-line arguments and
  * outputs CSV results for Python consumption.
  */
 
@@ -23,6 +23,8 @@ void print_usage() {
               << "  --service-time MINUTES     Mean service time (default: 8.0)\n"
               << "  --seed SEED                Random seed (default: 42)\n"
               << "  --replications N           Number of runs (default: 1)\n"
+              << "  --duration MINUTES         Doors close at this time (default: 480)\n"
+              << "  --per-replication          One CSV row per replication instead of averages\n"
               << "  --output-waits             Include all wait times in output\n"
               << "  --help                     Show this help\n";
 }
@@ -51,6 +53,7 @@ int main(int argc, char* argv[]) {
     SimulationConfig config;
     int replications = 1;
     bool output_waits = false;
+    bool per_replication = false;
     
     // Default arrival rates: morning peak, midday lull, afternoon peak
     config.arrival_rates = {12.0, 15.0, 10.0, 8.0, 8.0, 12.0, 14.0, 10.0};
@@ -81,6 +84,12 @@ int main(int argc, char* argv[]) {
         else if (arg == "--replications" && i + 1 < argc) {
             replications = std::stoi(argv[++i]);
         }
+        else if (arg == "--duration" && i + 1 < argc) {
+            config.simulation_duration = std::stod(argv[++i]);
+        }
+        else if (arg == "--per-replication") {
+            per_replication = true;
+        }
         else if (arg == "--output-waits") {
             output_waits = true;
         }
@@ -95,13 +104,44 @@ int main(int argc, char* argv[]) {
         std::cerr << "Error: arrivals must have exactly 8 values\n";
         return 1;
     }
+    for (int s : config.staffing_per_slot) {
+        if (s < 1) {
+            std::cerr << "Error: every slot needs at least 1 open window\n";
+            return 1;
+        }
+    }
+    if (replications < 1) {
+        std::cerr << "Error: replications must be at least 1\n";
+        return 1;
+    }
     
     // Run simulation(s)
     auto results = run_replications(config, replications, config.random_seed);
     
+    // One row per replication (lets callers compute confidence intervals
+    // without launching a process per replication)
+    if (per_replication) {
+        std::cout << "rep,mean_wait,p90_wait,served,arrived,overtime";
+        for (int j = 0; j < 8; ++j) {
+            std::cout << ",util_" << j;
+        }
+        std::cout << "\n";
+        for (size_t r = 0; r < results.size(); ++r) {
+            const auto& res = results[r];
+            std::cout << r << "," << res.mean_wait_time << "," << res.p90_wait_time << ","
+                      << res.total_served << "," << res.total_arrived << ","
+                      << res.overtime_minutes;
+            for (int j = 0; j < 8; ++j) {
+                std::cout << "," << res.utilization_per_slot[j];
+            }
+            std::cout << "\n";
+        }
+        return 0;
+    }
+    
     // Aggregate results across replications
     double sum_mean_wait = 0.0, sum_p90_wait = 0.0;
-    double sum_served = 0.0, sum_arrived = 0.0;
+    double sum_served = 0.0, sum_arrived = 0.0, sum_overtime = 0.0;
     std::vector<double> sum_util(8, 0.0);
     std::vector<double> all_waits;
     
@@ -110,6 +150,7 @@ int main(int argc, char* argv[]) {
         sum_p90_wait += r.p90_wait_time;
         sum_served += r.total_served;
         sum_arrived += r.total_arrived;
+        sum_overtime += r.overtime_minutes;
         for (int j = 0; j < 8; ++j) {
             sum_util[j] += r.utilization_per_slot[j];
         }
@@ -128,6 +169,7 @@ int main(int argc, char* argv[]) {
     std::cout << "p90_wait_time," << (sum_p90_wait / n) << "\n";
     std::cout << "avg_served," << (sum_served / n) << "\n";
     std::cout << "avg_arrived," << (sum_arrived / n) << "\n";
+    std::cout << "avg_overtime," << (sum_overtime / n) << "\n";
     std::cout << "replications," << n << "\n";
     
     for (int j = 0; j < 8; ++j) {
