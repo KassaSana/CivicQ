@@ -11,9 +11,11 @@ Analytical "effective load" rules (all feed a per-hour Erlang-C calculation):
 
 Simulation-based rule:
     SGS       simulation greedy staffing: start from SIPP, add a window to the
-              earliest hour that misses the target, then remove windows while
-              every hour still meets it (a discrete, hourly analogue of the
-              iterative staffing algorithm of Feldman et al. 2008)
+              earliest hour that misses the target, then local search over
+              "remove one" and "remove two, add one" moves while every hour
+              still meets it (a discrete, hourly analogue of the iterative
+              staffing algorithm of Feldman et al. 2008). criterion="ucb"
+              requires each hour's upper 95% bound to meet the target.
 
 Evaluation uses a separate seed block from design, and treats days
 (replications) as the independent unit when building confidence intervals.

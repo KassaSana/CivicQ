@@ -304,6 +304,20 @@ The tests also check that:
 python python/test_validation.py
 ```
 
+## Research
+
+[`research/REPORT.md`](research/REPORT.md) is a controlled study built on this simulator: **when do textbook staffing rules fail for walk-in public offices?** It compares SIPP, Lag-SIPP and offered-load staffing against simulation-based staffing across 24 office configurations. Main findings:
+- The analytic rules never failed the service target, but overstaffed by 3.5–18.6% on average.
+- Lag corrections recover about half of SIPP's excess.
+- Daily demand uncertainty costs up to 22% more staff in large offices.
+- The service-level definition alone moves this office's answer from 18 to 22 staff-hours.
+
+The study also found that the optimizer's 30-replication confirmation stage is too noisy to separate plans 2 staff-hours apart.
+
+```bash
+python research/experiments.py --all && python research/figures.py
+```
+
 ## Scope Boundaries
 
 **Intentionally Excluded:**

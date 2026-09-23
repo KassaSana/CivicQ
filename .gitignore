@@ -2,3 +2,4 @@ cpp/build/
 __pycache__/
 *.pyc
 *.csv
+!research/results/*.csv
