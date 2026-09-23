@@ -17,6 +17,8 @@ The target is that at most 10% of each hour's arrivals wait more than 15 minutes
 - **The lag corrections recover roughly half of SIPP's excess** when service takes 8 minutes or more, but little when it takes 4 minutes. Staffing to the peak offered load within each hour (OL-max) is the most wasteful rule, at +18.6%.
 - **Demand uncertainty is a scale effect.** A 20% day-to-day uncertainty in demand costs +8% staff for a 2-window office and +22% for a 24-window office.
 - **Two methodological results.** Common random numbers cut the variance of plan-vs-plan comparisons by a median of 40×. And the choice of service-level definition alone changes the required staffing for the same office from 18 to 22 staff-hours, which is a policy decision disguised as a technical one.
+- **Shifts matter more than the staffing rule (Round 2).** Real staff work 4- and 8-hour shifts. The textbook two-step method (set an hourly requirement, then choose shifts with an integer program) costs up to **68%** more paid hours than the ideal hour-by-hour plan. Searching over shift schedules directly with simulation cuts that to **14–33%**, and is up to **15%** cheaper than the best two-step schedule. Unlike the call-center finding of Ingolfsson et al. (2002), two-step schedules here never miss the target: they are safe but expensive.
+- **Independent validation (Round 2).** An independent implementation in the open-source Ciw library agrees with CivicQ: 0 of 54 tests reject under constant staffing, and CivicQ stays within Ciw's bounds in all 25 hours tested under changing staffing. Along the way we found that Ciw's hourly schedules silently add overtime capacity at every shift boundary, which halves the measured lateness if used naively.
 
 ## 1. Background and gap
 
@@ -85,6 +87,13 @@ The simulator (C++) is validated against the exact Erlang-C mean wait and per-ho
 - **H2.** Lag-SIPP and offered-load rules close most of SIPP's gap for S ≤ 16 but not for S = 32.
 - **H3.** For the studied office (S = 8, about 1.5 Erlangs), SIPP is within 1 staff-hour of the best plan.
 - **H4.** 10% day-to-day demand uncertainty costs more staff than raising the service-time CV from 1.0 to 1.5.
+
+**Round 2** (stated before running E4 and E5):
+- **H5.** Integrated simulation search over shift schedules is at least 5% cheaper than the best two-step schedule when service is long (S = 32).
+- **H6.** Unlike the call-center finding of Ingolfsson et al. (2002), SIPP-then-IP schedules do not miss the per-hour target in walk-in settings, because SIPP overstaffs. They cost more instead.
+- **H7.** CivicQ and an independent simulator (Ciw) give statistically indistinguishable per-hour late rates.
+
+*Change after pre-registration:* while testing H7 we found that Ciw cannot express CivicQ's staffing-change rule (see §5.6). H7 was therefore split into a strict test for constant staffing and a bounds test for changing staffing *before* E5 was run. This deviation is disclosed here.
 
 ## 5. Results
 
@@ -182,11 +191,78 @@ Fixing the check exposed a subtler problem. Near the optimum the cost surface is
 
 It currently recommends `[3,3,3,2,2,3,3,2]` (21 h), with five 20–21 h plans tied.
 
+### 5.5 Shift-feasible staffing (E4)
+
+Everything above assumed any number of windows in any hour. In reality staff work shifts. We compare two shift menus on 7 settings: the office, plus offices of 2, 8 and 24 Erlangs with S = 8 or 32 and A = 0.6.
+- **Standard menu:** full days (8–4) and 4-hour half days starting at 8, 9, 10, 11 or 12.
+- **Flexible menu:** the standard shifts plus 6-hour shifts.
+
+Cost is paid hours.
+- **Two-step** schedules convert an hourly requirement (from SIPP, OL-avg or SGS-UCB) into the cheapest covering shift set, using an exact integer program (`scipy.optimize.milp`).
+- **Integrated search (ISS)** starts from the cheapest feasible two-step schedule and runs a local search directly over shift counts. Each candidate schedule is judged by simulation (SGS-UCB criterion, 400 design days). The moves are:
+  - drop a shift;
+  - swap a shift for a shorter or equal one;
+  - replace two shifts with one.
+
+  The flexible-menu search also starts from the standard-menu optimum; without that multi-start, local search once ended 2 h worse on the richer menu.
+
+All numbers below are scored on the separate evaluation days.
+
+![Price of shifts](figures/fig6_shifts.png)
+
+| Setting | Hour-by-hour optimum (window-hours) | Standard: best two-step | Standard: ISS | Saving | Flexible: best two-step | Flexible: ISS | Saving |
+|---|---|---|---|---|---|---|---|
+| Office | 21 | 24 | 24 | 0% | 24 | 24 | 0% |
+| 2 E, S8 | 24 | 32 | 32 | 0% | 30 | 30 | 0% |
+| 2 E, S32 | 31 | 40 | 40 | 0% | 38 | 38 | 0% |
+| 8 E, S8 | 72 | 108 | 92 | **14.8%** | 98 | 90 | 8.2% |
+| 8 E, S32 | 80 | 108 | 104 | 3.7% | 106 | 102 | 3.8% |
+| 24 E, S8 | 198 | 292 | 248 | **15.1%** | 268 | 246 | 8.2% |
+| 24 E, S32 | 193 | 276 | 256 | 7.2% | 268 | 254 | 5.2% |
+
+1. **The price of shifts is the largest effect in this study.**
+   - Even the best schedule found costs 14–33% more paid hours than the hour-by-hour optimum.
+   - SIPP-then-IP costs up to 68% more.
+   - Demand peaks at 9AM and 2PM, and half-day shifts can't cover both peaks. So covering every hour's peak requirement leaves 68–115 surplus window-hours in the quiet midday hours at scale.
+2. **Integrated search pays off in medium and large offices** (4–15%). In small ones (≤ 2 Erlangs) every method lands on the same few full-day shifts.
+   - The mechanism is carryover. A schedule has surplus windows right after each peak anyway, and that surplus clears the peak's backlog. So the peak hours themselves can run leaner than their stand-alone requirement.
+   - A per-hour requirement cannot see this. As a result, the per-hour-optimal requirement (SGS-UCB) often converts into *more* paid hours than the cruder OL-avg requirement.
+3. **Better planning beats more shift types.** In offices of 8 Erlangs or more, the flexible menu helps two-step methods by up to 9% but integrated search by at most 2%. In the smallest offices it helps both equally (5–6%), since there is nothing to integrate. Integrated search on the *standard* menu (248 h at 24 E, S8) beats the best two-step schedule on the *flexible* menu (268 h).
+4. **No two-step schedule missed the target significantly in any setting.** Their worst hour was at most 7% late, and at scale typically under 1%. This is the opposite of the call-center result.
+
+**H5: rejected as stated.** The savings are real but are not driven by long service: 15% at S = 8 against 4–7% at S = 32. They grow with office size, because larger offices have more room to rearrange shifts.
+
+**H6: supported.** SIPP-then-IP never missed. It cost 0–17% more than the best two-step schedule on the standard menu, and 14–68% more than the hour-by-hour optimum.
+
+### 5.6 Independent validation against Ciw (E5)
+
+We re-implemented the office model in [Ciw](https://github.com/CiwPython/Ciw) (Palmer et al. 2019), an independent open-source queueing simulator:
+- arrivals from `PoissonIntervals`, which gives exact piecewise-constant Poisson arrivals;
+- the same three service families;
+- staffing from `Schedule`.
+
+It passes the same Erlang-C check as CivicQ (a late rate of 0.066 ± 0.005 against a theoretical 0.068).
+
+**A pitfall worth reporting.** Hourly shifts with an *unchanged* count initially halved Ciw's late rate: 0.106 against 0.228 for two windows at 11.1 arrivals/hour, where Erlang-C and CivicQ both give about 0.23. Ciw staffs every shift with a fresh set of servers, and without preemption the previous shift's busy servers finish their customers in overtime alongside them. That is documented behaviour, but it means splitting a schedule into hourly blocks silently adds capacity at every boundary. Merging consecutive equal shifts removes the artefact.
+
+When the count really changes, CivicQ's closing window finishes its customer *as part of* the new count. Ciw cannot express that, but its two nearest options bracket it:
+- no preemption adds overtime capacity, a lower bound on lateness;
+- `resume` interrupts service, an upper bound.
+
+![Cross-validation](figures/fig7_crossval.png)
+
+- **Strict test (constant staffing, 6 cases, 2,000 independent days per simulator):** 48 per-hour late-rate comparisons and 6 mean-wait comparisons. **0 of 54 reject** at 5% before correction (about 2.7 expected by chance), and 0 after Holm correction. Mean waits agree within 1% (every |z| < 0.8). The cases include lognormal and deterministic service and a 31-window office.
+- **Bounds test (changing staffing, 4 cases):** CivicQ lies inside Ciw's bounds in **25 of 25** hours. The bounds are tight for the office plans (median width 1–4 percentage points), so there the test is informative. For the 24-Erlang, S = 32 plan they are about 48 points wide, because long services interrupted at every staffing change inflate the upper bound. That case is only weakly tested.
+
+**H7: supported** for constant staffing, and consistent within informative bounds for changing staffing.
+
 ## 6. Threats to validity
 - **Synthetic demand.** Arrival rates follow a stylized double-peak profile. There are no public arrival-count data for walk-in offices; the CA DMV data contain only waits.
 - **Exponential service in E1.** This favours the Erlang-C rules, which assume it. With CV < 1, as is typical for lognormal service, the analytic rules would overstaff even more (E2).
 - **Fixed service threshold.** T = 15 min is the same for every S. The same target is harder to meet with S = 32 than with S = 4.
-- **Fixed schedule structure.** One-hour blocks only. No shift constraints, breaks, abandonment, appointments or multiple service types.
+- **Fixed schedule structure.** One-hour blocks. §5.5 adds shifts, but without lunch breaks, part-time limits or labor rules. There is no abandonment, no appointments and a single service type.
+- **Integrated search is a local search.** It is multi-started and never worse than its two-step start, but it is not proven optimal for large offices.
+- **The Ciw bounds test is weak for long-service, large offices** (§5.6); the strict constant-staffing test is the main evidence.
 - **SGS optimality** is shown only for small instances, and relies on the monotonicity assumption used to derive the lower bounds.
 - **Rate uncertainty** is modelled as a single daily multiplier. Correlated within-day forecast errors could matter more.
 
@@ -197,17 +273,23 @@ It currently recommends `[3,3,3,2,2,3,3,2]` (21 h), with five 20–21 h plans ti
 4. **Validate by simulation with enough days** (hundreds, not 30), with common random numbers, and on seeds separate from the ones used to design the plan.
 5. **Choose the service-level definition deliberately.** It moves the answer by more than any modelling refinement studied here.
 6. **For larger offices, measure how much daily demand varies.** At 20% day-to-day variation it costs 19–22% more staff.
+7. **Plan shifts, not hours, and plan them with simulation.** Converting an hourly requirement into shifts wastes up to 15% of paid hours in medium and large offices. Searching over shift schedules directly avoids it, and helps more than adding new shift types.
+8. **If you use Ciw for time-varying staffing, merge consecutive equal shifts.** Otherwise each shift boundary adds phantom overtime capacity.
 
 ## 8. Reproducing
 ```bash
 g++ -std=c++17 -O2 -static -Icpp/include -o cpp/build/queue_sim.exe cpp/src/simulation.cpp cpp/src/main.cpp
+pip install -r research/requirements.txt   # numpy, matplotlib, scipy, ciw
 python research/test_research.py
-python research/experiments.py --all     # about 15 minutes on 8 cores
+python research/experiments.py --all     # about 20 minutes on 8 cores
 python research/figures.py
 ```
 
 ## References
 - Brown, L., Gans, N., Mandelbaum, A., Sakov, A., Shen, H., Zeltyn, S., & Zhao, L. (2005). Statistical analysis of a telephone call center: A queueing-science perspective. *JASA*, 100(469), 36–50.
+- Atlason, J., Epelman, M. A., & Henderson, S. G. (2004). Call center staffing with simulation and cutting plane methods. *Annals of Operations Research*, 127, 333–358.
+- Ingolfsson, A., Haque, M. A., & Umnikov, A. (2002). Accounting for time-varying queueing effects in workforce scheduling. *European Journal of Operational Research*, 139(3), 585–597.
+- Palmer, G. I., Knight, V. A., Harper, P. R., & Hawa, A. L. (2019). Ciw: An open-source discrete event simulation library. *Journal of Simulation*, 13(1), 68–82.
 - Feldman, Z., Mandelbaum, A., Massey, W. A., & Whitt, W. (2008). Staffing of time-varying queues to achieve time-stable performance. *Management Science*, 54(2), 324–338.
 - Green, L. V., Kolesar, P. J., & Soares, J. (2001). Improving the SIPP approach for staffing service systems that have cyclic demands. *Operations Research*, 49(4), 549–564.
 - Green, L. V., Kolesar, P. J., & Whitt, W. (2007). Coping with time-varying demand when setting staffing requirements for a service system. *Production and Operations Management*, 16(1), 13–39.

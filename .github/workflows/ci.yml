@@ -25,5 +25,5 @@ jobs:
 
       - name: Research tests
         run: |
-          pip install numpy
+          pip install -r research/requirements.txt
           python research/test_research.py

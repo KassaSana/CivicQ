@@ -243,9 +243,92 @@ def fig_methodology():
     save(fig, "fig5_methodology.png")
 
 
+# ----------------------------------------------------------------------------
+def fig_shifts():
+    rows = load("e4_shifts.csv")
+    methods = [("SIPP-IP", "SIPP"), ("OL-avg-IP", "OL-avg"), ("SGS-UCB-IP", "SGS-UCB"),
+               ("ISS", None)]
+    iss_color, iss_marker = "#4a3aa7", "X"   # categorical slot 7: its own entity
+    settings = list(dict.fromkeys(r["setting"] for r in rows))
+    labels = ["office" if s == "office" else
+              s.replace("_A0.6", "").replace("R", "").replace("_S", " E, S") for s in settings]
+    fig, axes = plt.subplots(1, 2, figsize=(13, 4.2), sharey=True)
+    for ax, menu in zip(axes, ("standard", "flexible")):
+        x = np.arange(len(settings))
+        for k, (m, color_key) in enumerate(methods):
+            vals = []
+            for s in settings:
+                r = next(r for r in rows if r["setting"] == s and r["menu"] == menu
+                         and r["method"] == m)
+                bench = int(next(q["requirement_hours"] for q in rows if q["setting"] == s
+                                 and q["method"] == "SGS-UCB-IP"))
+                vals.append(100.0 * (int(r["paid_hours"]) / bench - 1))
+            color = iss_color if color_key is None else METHOD_COLOR[color_key]
+            label = "Integrated search (ISS)" if color_key is None else f"{color_key} -> shift IP"
+            ax.bar(x + (k - 1.5) * 0.2, vals, 0.18, color=color, label=label)
+        ax.set_xticks(x)
+        ax.set_xticklabels(labels, fontsize=8.5)
+        ax.set_title(f"{menu.capitalize()} shift menu"
+                     + (" (8h + 4h)" if menu == "standard" else " (8h + 6h + 4h)"))
+        ax.axhline(0, color=AXIS, lw=1)
+        ax.grid(axis="x", visible=False)
+    axes[0].set_ylabel("Paid hours above hour-by-hour optimum (%)")
+    axes[0].legend(loc="upper left", fontsize=8.5)
+    fig.suptitle("The price of shifts: +14-33% paid hours even with integrated search; "
+                 "SIPP-then-IP up to +68%", x=0.02, ha="left", fontsize=12,
+                 fontweight="bold", y=1.02)
+    fig.tight_layout()
+    save(fig, "fig6_shifts.png")
+
+
+# ----------------------------------------------------------------------------
+def fig_crossval():
+    rows = load("e5_crossval.csv")
+    strict = [r for r in rows if r["kind"] == "strict" and r["metric"].startswith("late")]
+    bracket = [r for r in rows if r["kind"] == "bracket"]
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4.2),
+                                   gridspec_kw={"width_ratios": [1, 1.4]})
+    c = np.array([float(r["civicq"]) for r in strict]) * 100
+    w = np.array([float(r["ciw"]) for r in strict]) * 100
+    ec = np.array([float(r["se_civicq"]) for r in strict]) * 196
+    ew = np.array([float(r["se_ciw"]) for r in strict]) * 196
+    ax1.errorbar(w, c, xerr=ew, yerr=ec, fmt="o", ms=5, color=METHOD_COLOR["SIPP"],
+                 ecolor=MUTED, elinewidth=0.8, capsize=0)
+    lim = max(c.max(), w.max()) * 1.08
+    ax1.plot([0, lim], [0, lim], color=INK_2, ls="--", lw=1)
+    ax1.set_xlim(0, lim)
+    ax1.set_ylim(0, lim)
+    ax1.set_xlabel("Ciw: arrivals waiting > 15 min (%)")
+    ax1.set_ylabel("CivicQ (%)")
+    ax1.set_title(f"Constant staffing: {len(strict)} hour-level tests, 0 rejections")
+
+    x = np.arange(len(bracket))
+    lo = np.array([float(r["ciw"]) for r in bracket]) * 100
+    hi = np.array([float(r["ciw_upper"]) for r in bracket]) * 100
+    cv = np.array([float(r["civicq"]) for r in bracket]) * 100
+    ax2.vlines(x, lo, hi, color="#86b6ef", lw=6, label="Ciw bounds (non-preemptive to resume)")
+    ax2.scatter(x, cv, color=METHOD_COLOR["SIPP"], s=28, zorder=3, label="CivicQ")
+    cases = list(dict.fromkeys(r["case"] for r in bracket))
+    for case in cases[1:]:
+        ax2.axvline(next(i for i, r in enumerate(bracket) if r["case"] == case) - 0.5,
+                    color=GRID, lw=1)
+    ax2.set_xticks([np.mean([i for i, r in enumerate(bracket) if r["case"] == cs])
+                    for cs in cases])
+    ax2.set_xticklabels([cs.split(" [")[0].replace(", SGS-UCB plan", "") for cs in cases],
+                        fontsize=8.5)
+    ax2.set_ylabel("Arrivals waiting > 15 min (%)")
+    ax2.set_title("Changing staffing: CivicQ inside Ciw's bounds in 25/25 hours")
+    ax2.legend(loc="upper left", fontsize=8.5)
+    ax2.grid(axis="x", visible=False)
+    fig.tight_layout()
+    save(fig, "fig7_crossval.png")
+
+
 if __name__ == "__main__":
     fig_gap_heatmap()
     fig_hourly()
     fig_offered_load()
     fig_sensitivity()
     fig_methodology()
+    fig_shifts()
+    fig_crossval()
