@@ -905,6 +905,134 @@ def plot_scenarios(scenarios: dict, save_path: Optional[Path] = None, show: bool
 
 
 # ============================================================================
+# Shift Rosters
+# ============================================================================
+
+ROSTER_VALIDATION_SEED = 50042   # Independent block that re-checks the chosen roster
+HOURLY_LATE_TARGET = 0.10        # "hourly" target: <= 10% of each hour's arrivals late
+
+
+def hourly_late_upper(result: SimulationResult) -> list:
+    """
+    Upper 95% bound of each arrival hour's late rate (waits > 15 min).
+
+    Ratio estimator over days with a delta-method standard error, so days,
+    not citizens, are the independent unit.
+    """
+    upper = []
+    n = len(result.daily_arrivals)
+    for i in range(8):
+        arrivals = [day[i] for day in result.daily_arrivals]
+        late = [day[i] for day in result.daily_late]
+        total = sum(arrivals)
+        if total == 0 or n < 2:
+            upper.append(0.0)
+            continue
+        p = sum(late) / total
+        resid = [l - p * a for l, a in zip(late, arrivals)]
+        se = math.sqrt(sum(r * r for r in resid) / (n * (n - 1))) / (total / n)
+        upper.append(min(1.0, p + 1.96 * se))
+    return upper
+
+
+def _meets_target(result: SimulationResult, target: str) -> tuple:
+    """(feasible, score) for a simulated profile; both targets use upper bounds."""
+    if target == "hourly":
+        return (max(hourly_late_upper(result)) <= HOURLY_LATE_TARGET,
+                max(result.late_prob_per_slot))
+    return result.p90_wait_ci[1] <= P90_TARGET, result.p90_wait
+
+
+def roster_search(menu: str = "standard", target: str = "p90",
+                  simulator_path: Path = None,
+                  replications: int = CONFIRM_REPLICATIONS) -> dict:
+    """
+    Cheapest shift roster meeting the service target, found by local search
+    over shift counts with every candidate judged by simulation.
+
+    Rosters are compared on common seeds (42..), then the winner is re-checked
+    on an independent block; if it fails there, the search steps back along
+    its accepted path to the cheapest roster that passes.
+    """
+    from roster import MENUS, Roster
+    roster = Roster(MENUS[menu])
+    if simulator_path is None:
+        simulator_path = find_simulator()
+
+    def simulate(profile, seed=42):
+        return run_simulation(profile, replications=replications, seed=seed,
+                              simulator_path=simulator_path)
+
+    def check(x):
+        return _meets_target(simulate(roster.profile(x)), target)
+
+    # Start from the fewest full-day shifts that meet the target
+    k = 1
+    while not check(roster.full_days(k))[0]:
+        k += 1
+        if k > 50:
+            raise RuntimeError("no feasible roster with up to 50 full-day shifts")
+
+    best, path, calls = roster.local_search(roster.full_days(k), check)
+
+    stepped_back = 0
+    for x in reversed(path):
+        validation = simulate(roster.profile(x), seed=ROSTER_VALIDATION_SEED)
+        if _meets_target(validation, target)[0]:
+            break
+        stepped_back += 1
+    else:
+        raise RuntimeError("no roster on the search path passed validation")
+
+    # For comparison: trim windows from the roster's own hourly profile while
+    # the target still holds, giving an hourly plan with the same service
+    hourly = roster.profile(x)
+    while True:
+        trials = [hourly[:i] + [hourly[i] - 1] + hourly[i + 1:]
+                  for i in range(8) if hourly[i] > 1]
+        with ThreadPoolExecutor() as pool:
+            checks = list(pool.map(lambda p: _meets_target(simulate(p), target), trials))
+        ok = [(score, p) for p, (good, score) in zip(trials, checks) if good]
+        if not ok:
+            break
+        hourly = min(ok)[1]
+
+    return {"roster": roster, "shifts": x, "profile": roster.profile(x),
+            "paid_hours": roster.paid_hours(x), "validation": validation,
+            "stepped_back": stepped_back, "calls": calls, "menu": menu,
+            "target": target, "hourly_plan": hourly}
+
+
+def format_roster_report(report: dict) -> str:
+    r = report["validation"]
+    roster, x = report["roster"], report["shifts"]
+    target = ("mean daily P90 <= 15 min (upper 95% bound)" if report["target"] == "p90"
+              else "every hour <= 10% of arrivals waiting > 15 min (upper 95% bound)")
+    hourly_hours = sum(report["hourly_plan"])
+    lines = [
+        "\n" + "=" * 60,
+        f"SHIFT ROSTER ({report['menu']} menu)",
+        "=" * 60,
+        f"    Target: {target}",
+        f"    Roster: {roster.format(x)}",
+        f"    Windows open by hour: {report['profile']}",
+        f"    Paid staff-hours: {report['paid_hours']}",
+        f"    P90 wait: {r.p90_wait:.1f} min (95% CI {r.p90_wait_ci[0]:.1f}-{r.p90_wait_ci[1]:.1f})",
+        "    Late (> 15 min) by hour: "
+        + "  ".join(f"{h} {p * 100:.0f}%" for h, p in
+                    zip(["8", "9", "10", "11", "12", "1", "2", "3"], r.late_prob_per_slot)),
+        f"    Validated on {r.n_replications} independent days"
+        + ("" if report["stepped_back"] == 0
+           else f" (the cheapest roster failed; stepped back {report['stepped_back']})"),
+        f"    Price of shifts: an hourly plan {report['hourly_plan']} meets the same "
+        f"target with {hourly_hours} window-hours; the roster pays "
+        f"{report['paid_hours'] - hourly_hours:+d} h "
+        f"({100 * (report['paid_hours'] / hourly_hours - 1):+.0f}%)",
+    ]
+    return "\n".join(lines)
+
+
+# ============================================================================
 # Main Entry Point
 # ============================================================================
 
@@ -966,6 +1094,19 @@ def main():
         help="Save scenario comparison figure to a file (e.g., outputs/fig.png)"
     )
 
+    parser.add_argument(
+        "--shifts",
+        choices=["standard", "flexible"],
+        default=None,
+        help="Recommend a shift roster: standard (8h + 4h shifts) or flexible (+ 6h)"
+    )
+    parser.add_argument(
+        "--target",
+        choices=["p90", "hourly"],
+        default="p90",
+        help="Roster target: mean daily P90 <= 15 min, or every hour <= 10%% late"
+    )
+
     args = parser.parse_args()
     sim_path = args.simulator or find_simulator()
 
@@ -994,6 +1135,8 @@ def main():
             print_frontier(frontier)
 
         print(generate_recommendation(scenarios, stress, contingency))
+        if args.shifts:
+            print(format_roster_report(roster_search(args.shifts, args.target, sim_path)))
         if args.plot or args.save_plot is not None:
             plot_scenarios(scenarios, save_path=args.save_plot, show=args.plot,
                            frontier=frontier)
@@ -1020,6 +1163,10 @@ def main():
 
         if args.export:
             export_results_csv(all_results, args.export)
+
+    elif args.shifts:
+        print(f"Searching {args.shifts} shift rosters...")
+        print(format_roster_report(roster_search(args.shifts, args.target, sim_path)))
 
     else:
         # Default: single simulation demo

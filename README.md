@@ -273,6 +273,34 @@ The weighted cost picks among plans, but the real decision is how many staff-hou
 
 An earlier version of this table used 30 replications. That gave CIs of ±4 minutes and wrongly showed the 18-hour plan missing the target (15.5 minutes). That version also shortlisted only 10 finalists, which missed the tied 21-hour optimum.
 
+### Shift Rosters
+Real staff work shifts, so the hourly plans above can't be staffed literally. `--shifts` recommends an actual roster. It searches over shift counts directly, judges every candidate by simulation, and re-checks the winner on an independent block of simulated days. This is the integrated search from [research/REPORT.md](research/REPORT.md) §5.5, which was up to 15% cheaper than turning an hourly plan into shifts.
+
+```bash
+python optimizer.py --shifts standard                  # full days (8-4) and 4-hour half days
+python optimizer.py --shifts flexible                  # also 6-hour shifts
+python optimizer.py --shifts flexible --target hourly  # every hour <= 10% of arrivals late
+```
+
+Real output:
+```
+SHIFT ROSTER (flexible menu)
+============================================================
+    Target: mean daily P90 <= 15 min (upper 95% bound)
+    Roster: 2 x 8-4, 1 x 9-3
+    Windows open by hour: [2, 3, 3, 3, 3, 3, 3, 2]
+    Paid staff-hours: 22
+    P90 wait: 9.4 min (95% CI 8.6-10.2)
+    Late (> 15 min) by hour: 8 10%  9 6%  10 3%  11 1%  12 0%  1 2%  2 3%  3 13%
+    Validated on 300 independent days
+    Price of shifts: an hourly plan [2, 3, 2, 2, 2, 2, 3, 2] meets the same target with 18 window-hours; the roster pays +4 h (+22%)
+```
+
+- **Shift options change the answer.** With only full days and half days, the cheapest roster is 3 full days (24 paid hours). Half-day shifts can't cover both the 9AM and the 2PM peaks. A single 9–3 shift covers both, which saves 2 hours.
+- **The "price of shifts" line** shows what hourly flexibility would be worth: 4 paid hours a day here.
+- **The P90 target is a daily average.** This roster passes it, but its 8AM and 3PM hours are 10–13% late. Use `--target hourly` if every hour must meet the target. The report covers why the choice of target matters (§5.4).
+- **Combining with scenario analysis.** `--scenario-analysis --shifts flexible` adds the roster after the scenario comparison.
+
 ## Technical Details
 
 ### Simulation Engine (C++)

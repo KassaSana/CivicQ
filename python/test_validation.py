@@ -52,6 +52,36 @@ class TestErlangC(unittest.TestCase):
             self.assertLessEqual(s, optimizer.MAX_WINDOWS_PER_SLOT)
 
 
+class TestRoster(unittest.TestCase):
+    def setUp(self):
+        from roster import FLEXIBLE, STANDARD, Roster
+        self.std, self.flex = Roster(STANDARD), Roster(FLEXIBLE)
+
+    def test_profile_and_hours(self):
+        x = [1, 0, 1, 0, 0, 1]      # 8-4, 9-1, 12-4
+        self.assertEqual(self.std.profile(x), [1, 2, 2, 2, 3, 2, 2, 2])
+        self.assertEqual(self.std.paid_hours(x), 16)
+        self.assertEqual(self.std.format(x), "1 x 8-4, 1 x 9-1, 1 x 12-4")
+
+    def test_neighbors_never_add_hours_or_go_negative(self):
+        x = [2, 1, 0, 1, 0, 0]
+        for y in self.std.neighbors(x):
+            self.assertGreaterEqual(min(y), 0)
+            self.assertLess(self.std.paid_hours(y), self.std.paid_hours(x) + 1)
+
+    def test_flexible_menu_contains_standard(self):
+        self.assertTrue({n for n, _, _ in self.std.shifts} <= {n for n, _, _ in self.flex.shifts})
+
+    @unittest.skipUnless(find_simulator().exists(), "simulator not built")
+    def test_roster_search_is_validated_and_no_worse_than_full_days(self):
+        report = optimizer.roster_search("flexible", "p90")
+        ok, _ = optimizer._meets_target(report["validation"], "p90")
+        self.assertTrue(ok)
+        self.assertLessEqual(report["paid_hours"], 24)   # 3 full days also meet the target
+        self.assertEqual(sum(report["profile"]),
+                         sum(report["roster"].profile(report["shifts"])))
+
+
 class TestOptimizerSampleSizes(unittest.TestCase):
     def test_confirmation_is_large_enough(self):
         # 30 days gave P90 CIs of about +/-4 min and misreported plans near the
