@@ -324,6 +324,55 @@ def fig_crossval():
     save(fig, "fig7_crossval.png")
 
 
+# ----------------------------------------------------------------------------
+def fig_appointments():
+    rows = [r for r in load("e6_appointments.csv") if float(r["no_show"]) == 0.15]
+    colors = {"proportional": "#2a78d6", "flat": "#eb6834", "counter": "#1baf7a"}
+    markers = {"proportional": "o", "flat": "s", "counter": "^"}
+    names = {"proportional": "proportional to demand", "flat": "flat across the day",
+             "counter": "counter-cyclical (quiet hours)"}
+    big = [r for r in rows if r["office"] == "R8_S16_A0.6"]
+    base = next(r for r in big if float(r["share"]) == 0)
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4.2),
+                                   gridspec_kw={"width_ratios": [1.3, 1]})
+    for pl in ("proportional", "flat", "counter"):
+        pts = [base] + sorted((r for r in big if r["placement"] == pl),
+                              key=lambda r: float(r["share"]))
+        x = [100 * float(r["share"]) for r in pts]
+        ax1.plot(x, [int(r["roster_paid_hours"]) for r in pts], color=colors[pl],
+                 marker=markers[pl], lw=2, ms=7, label=f"roster, {names[pl]}")
+        ax1.plot(x, [int(r["hourly_window_hours"]) for r in pts], color=colors[pl],
+                 lw=1, ls="--", alpha=0.8)
+    ax1.text(76, 72, "hour-by-hour optimum\n(dashed, all placements)", fontsize=8.5,
+             color=INK_2, va="top", ha="right")
+    ax1.set_xticks([0, 25, 50, 75])
+    ax1.set_xlabel("Share of demand booked as appointments (%)")
+    ax1.set_ylabel("Staff-hours per day")
+    ax1.set_ylim(60, 105)
+    ax1.set_title("8-Erlang office: booking quiet hours shrinks the shift roster",
+                  loc="left")
+    ax1.legend(loc="lower left", fontsize=8.5)
+
+    appt = [r for r in load("e6_appointments.csv") if r["appt_late"]]
+    for pl in ("proportional", "flat", "counter"):
+        pts = [r for r in appt if r["placement"] == pl]
+        ax2.scatter([100 * float(r["walkin_late"]) for r in pts],
+                    [100 * float(r["appt_late"]) for r in pts], color=colors[pl],
+                    marker=markers[pl], s=45, edgecolors=SURFACE, linewidths=1,
+                    label=names[pl])
+    lim = 5
+    ax2.plot([0, lim], [0, lim], color=INK_2, ls="--", lw=1)
+    ax2.text(lim * 0.97, lim * 0.93, "equal", ha="right", fontsize=8.5, color=INK_2)
+    ax2.set_xlim(0, lim)
+    ax2.set_ylim(0, lim)
+    ax2.set_xlabel("Walk-ins waiting > 15 min (%)")
+    ax2.set_ylabel("Appointment holders waiting > 15 min (%)")
+    ax2.set_title("Appointment holders wait less in all 26 settings", loc="left")
+    ax2.legend(loc="upper left", fontsize=8.5)
+    fig.tight_layout()
+    save(fig, "fig8_appointments.png")
+
+
 if __name__ == "__main__":
     fig_gap_heatmap()
     fig_hourly()
@@ -332,3 +381,4 @@ if __name__ == "__main__":
     fig_methodology()
     fig_shifts()
     fig_crossval()
+    fig_appointments()
