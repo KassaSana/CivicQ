@@ -28,6 +28,9 @@ void print_usage() {
               << "  --service-cv CV            Service-time CV for lognormal (default: 1.0)\n"
               << "  --rate-cv CV               CV of a random daily demand multiplier (default: 0)\n"
               << "  --wait-threshold MINUTES   Late-wait threshold for per-hour counts (default: 15)\n"
+              << "  --appointments t1,t2,...   Booked arrival times in minutes from opening\n"
+              << "  --no-show P                Probability a booked citizen does not come (default: 0)\n"
+              << "  --punctuality-sd MINUTES   SD of arrival around the booked time (default: 0)\n"
               << "  --per-replication          One CSV row per replication instead of averages\n"
               << "  --output-waits             Include all wait times in output\n"
               << "  --help                     Show this help\n";
@@ -113,6 +116,15 @@ int main(int argc, char* argv[]) {
         else if (arg == "--wait-threshold" && i + 1 < argc) {
             config.wait_threshold = std::stod(argv[++i]);
         }
+        else if (arg == "--appointments" && i + 1 < argc) {
+            config.appointment_times = parse_double_list(argv[++i]);
+        }
+        else if (arg == "--no-show" && i + 1 < argc) {
+            config.no_show = std::stod(argv[++i]);
+        }
+        else if (arg == "--punctuality-sd" && i + 1 < argc) {
+            config.punctuality_sd = std::stod(argv[++i]);
+        }
         else if (arg == "--per-replication") {
             per_replication = true;
         }
@@ -140,6 +152,10 @@ int main(int argc, char* argv[]) {
         std::cerr << "Error: service time and CVs must be positive\n";
         return 1;
     }
+    if (config.no_show < 0.0 || config.no_show >= 1.0 || config.punctuality_sd < 0.0) {
+        std::cerr << "Error: no-show must be in [0, 1) and punctuality SD non-negative\n";
+        return 1;
+    }
     if (replications < 1) {
         std::cerr << "Error: replications must be at least 1\n";
         return 1;
@@ -163,6 +179,7 @@ int main(int argc, char* argv[]) {
         for (int j = 0; j < 8; ++j) {
             std::cout << ",late_" << j;
         }
+        std::cout << ",appt_arrived,appt_late,appt_wait_sum";
         std::cout << "\n";
         for (size_t r = 0; r < results.size(); ++r) {
             const auto& res = results[r];
@@ -179,6 +196,8 @@ int main(int argc, char* argv[]) {
             for (int j = 0; j < 8; ++j) {
                 std::cout << "," << res.late_per_slot[j];
             }
+            std::cout << "," << res.appointments_arrived << "," << res.appointments_late
+                      << "," << res.appointment_wait_sum;
             std::cout << "\n";
         }
         return 0;

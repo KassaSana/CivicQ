@@ -26,7 +26,8 @@ constexpr double SLOT_LENGTH = 60.0;     // Minutes per slot
 enum class EventType {
     ARRIVAL,
     DEPARTURE,
-    STAFFING_CHANGE    // Slot boundary: newly opened windows pull from the queue
+    STAFFING_CHANGE,   // Slot boundary: newly opened windows pull from the queue
+    APPOINTMENT        // A booked citizen arrives (does not schedule further arrivals)
 };
 
 /**
@@ -60,6 +61,7 @@ struct Citizen {
     int id;
     double arrival_time;
     double service_time;         // Drawn at arrival (common random numbers)
+    bool is_appointment;         // Booked arrival rather than walk-in
     double service_start_time;
     double departure_time;
 };
@@ -86,6 +88,9 @@ struct SimulationResults {
     double rate_multiplier;                    // Day-level demand multiplier (1 unless rate_cv > 0)
     std::vector<int> arrivals_per_slot;        // Citizens arriving in each hourly slot
     std::vector<int> late_per_slot;            // Of those, how many waited > wait_threshold
+    int appointments_arrived;                  // Booked citizens who showed up
+    int appointments_late;                     // Of those, how many waited > wait_threshold
+    double appointment_wait_sum;               // Total wait of booked citizens (minutes)
     std::vector<double> utilization_per_slot;  // 8 hourly slots
     std::vector<double> all_wait_times;        // For distribution analysis
 };
@@ -103,6 +108,9 @@ struct SimulationConfig {
     double service_cv;                     // Coefficient of variation (lognormal only)
     double rate_cv;                        // CV of the day-level demand multiplier (0 = pure NHPP)
     double wait_threshold;                 // Minutes; waits above this count as late
+    std::vector<double> appointment_times; // Booked arrival times (minutes from opening)
+    double no_show;                        // Probability a booked citizen does not come
+    double punctuality_sd;                 // SD (minutes) of arrival around the booked time
 
     SimulationConfig()
         : mean_service_time(8.0)
@@ -111,7 +119,9 @@ struct SimulationConfig {
         , service_dist(ServiceDist::EXPONENTIAL)
         , service_cv(1.0)
         , rate_cv(0.0)
-        , wait_threshold(15.0) {}
+        , wait_threshold(15.0)
+        , no_show(0.0)
+        , punctuality_sd(0.0) {}
 };
 
 /**
@@ -125,6 +135,8 @@ struct SimulationConfig {
  * - Separate random streams for arrivals and service (common random numbers)
  * - Optional lognormal/deterministic service and a random day-level demand
  *   multiplier (a gamma-mixed Poisson process, which is overdispersed)
+ * - Optional appointments: booked times with no-shows and punctuality noise,
+ *   served FIFO alongside walk-ins
  */
 class QueueSimulator {
 public:
@@ -149,6 +161,7 @@ private:
     std::mt19937 arrival_rng_;
     std::mt19937 service_rng_;
     std::mt19937 rate_rng_;
+    std::mt19937 appointment_rng_;
     std::exponential_distribution<double> service_dist_;
     std::lognormal_distribution<double> lognormal_dist_;
     std::uniform_real_distribution<double> uniform_dist_;
@@ -175,6 +188,7 @@ private:
     double generate_service_time();
 
     void process_arrival(const Event& event);
+    void admit_citizen(bool is_appointment);
     void process_departure(const Event& event);
     void process_staffing_change();
     void start_service(int citizen_id, int window_id);

@@ -78,9 +78,11 @@ void QueueSimulator::reset() {
     std::seed_seq arrival_seed{static_cast<unsigned>(config_.random_seed), 1u};
     std::seed_seq service_seed{static_cast<unsigned>(config_.random_seed), 2u};
     std::seed_seq rate_seed{static_cast<unsigned>(config_.random_seed), 3u};
+    std::seed_seq appointment_seed{static_cast<unsigned>(config_.random_seed), 4u};
     arrival_rng_.seed(arrival_seed);
     service_rng_.seed(service_seed);
     rate_rng_.seed(rate_seed);
+    appointment_rng_.seed(appointment_seed);
     service_dist_.reset();
     lognormal_dist_.reset();
     uniform_dist_.reset();
@@ -100,6 +102,22 @@ void QueueSimulator::reset() {
         if (t < config_.simulation_duration) {
             event_queue_.push({t, EventType::STAFFING_CHANGE, -1, -1});
         }
+    }
+
+    // Booked citizens: each shows with probability 1 - no_show and arrives at
+    // the booked time plus Normal(0, punctuality_sd), clipped to opening hours.
+    // Both draws are always taken so the stream stays aligned across settings.
+    std::uniform_real_distribution<double> show_draw(0.0, 1.0);
+    std::normal_distribution<double> punctuality(0.0, 1.0);
+    for (double booked : config_.appointment_times) {
+        double u = show_draw(appointment_rng_);
+        double z = punctuality(appointment_rng_);
+        if (u < config_.no_show) {
+            continue;
+        }
+        double t = std::min(std::max(booked + config_.punctuality_sd * z, 0.0),
+                            config_.simulation_duration);
+        event_queue_.push({t, EventType::APPOINTMENT, -1, -1});
     }
 
     // Schedule first arrival
@@ -225,20 +243,26 @@ void QueueSimulator::add_busy_time(double start, double end) {
     }
 }
 
-void QueueSimulator::process_arrival(const Event& event) {
-    // Create citizen record; service requirement is drawn now so that
-    // citizen k needs the same work under every staffing plan
+void QueueSimulator::admit_citizen(bool is_appointment) {
+    // Citizen ids are assigned in arrival order and index citizens_. The
+    // service requirement is drawn now so that, for given arrivals, citizen k
+    // needs the same work under every staffing plan
     Citizen citizen;
-    citizen.id = event.citizen_id;
+    citizen.id = static_cast<int>(citizens_.size());
     citizen.arrival_time = current_time_;
     citizen.service_time = generate_service_time();
+    citizen.is_appointment = is_appointment;
     citizen.service_start_time = -1.0;
     citizen.departure_time = -1.0;
     citizens_.push_back(citizen);
 
     // Join the back of the queue, then serve in FIFO order
-    waiting_queue_.push(event.citizen_id);
+    waiting_queue_.push(citizen.id);
     serve_waiting_citizens();
+}
+
+void QueueSimulator::process_arrival(const Event& /*event*/) {
+    admit_citizen(false);
 
     // Schedule next arrival (doors close at simulation_duration)
     double next_arrival = generate_next_arrival_time();
@@ -292,6 +316,9 @@ SimulationResults QueueSimulator::run() {
             case EventType::STAFFING_CHANGE:
                 process_staffing_change();
                 break;
+            case EventType::APPOINTMENT:
+                admit_citizen(true);
+                break;
         }
     }
 
@@ -306,6 +333,9 @@ SimulationResults QueueSimulator::compute_results() const {
     results.rate_multiplier = rate_multiplier_;
     results.arrivals_per_slot.assign(NUM_SLOTS, 0);
     results.late_per_slot.assign(NUM_SLOTS, 0);
+    results.appointments_arrived = 0;
+    results.appointments_late = 0;
+    results.appointment_wait_sum = 0.0;
 
     std::vector<double> wait_times;
     std::vector<double> service_times;
@@ -323,6 +353,13 @@ SimulationResults QueueSimulator::compute_results() const {
             results.arrivals_per_slot[slot]++;
             if (wait > config_.wait_threshold) {
                 results.late_per_slot[slot]++;
+            }
+            if (citizen.is_appointment) {
+                results.appointments_arrived++;
+                results.appointment_wait_sum += wait;
+                if (wait > config_.wait_threshold) {
+                    results.appointments_late++;
+                }
             }
         }
     }

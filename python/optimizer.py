@@ -117,6 +117,9 @@ class SimulationResult:
     daily_mean_waits: list = field(default_factory=list)    # One mean wait per replication
     daily_arrivals: list = field(default_factory=list)      # [rep][slot] arrival counts
     daily_late: list = field(default_factory=list)          # [rep][slot] late counts
+    daily_appt_arrived: list = field(default_factory=list)  # Booked citizens who came, per day
+    daily_appt_late: list = field(default_factory=list)     # Of those, waited > threshold
+    daily_appt_wait_sum: list = field(default_factory=list) # Their total wait, per day
     mean_service: float = 0.0
     # (result, mean cost difference, 95% CI) for finalists statistically tied with this one
     tied_alternatives: list = field(default_factory=list)
@@ -137,7 +140,10 @@ def run_simulation(
     service_dist: str = "exp",
     service_cv: float = 1.0,
     rate_cv: float = 0.0,
-    wait_threshold: float = 15.0
+    wait_threshold: float = 15.0,
+    appointments: Optional[list] = None,
+    no_show: float = 0.0,
+    punctuality_sd: float = 0.0
 ) -> SimulationResult:
     """
     Execute C++ simulator with given staffing configuration.
@@ -159,6 +165,9 @@ def run_simulation(
         service_cv: Service-time CV (lognormal only)
         rate_cv: CV of a random day-level demand multiplier (0 = Poisson)
         wait_threshold: Minutes; per-hour late probability counts waits above it
+        appointments: Booked arrival times in minutes from opening (served FIFO)
+        no_show: Probability a booked citizen does not come
+        punctuality_sd: SD in minutes of arrival around the booked time
 
     Returns:
         SimulationResult with aggregated metrics and 95% CIs
@@ -186,6 +195,9 @@ def run_simulation(
         cmd += ["--rate-cv", str(rate_cv)]
     if wait_threshold != 15.0:
         cmd += ["--wait-threshold", str(wait_threshold)]
+    if appointments:
+        cmd += ["--appointments", ",".join(f"{t:.4f}" for t in appointments),
+                "--no-show", str(no_show), "--punctuality-sd", str(punctuality_sd)]
 
     try:
         result = subprocess.run(
@@ -236,6 +248,9 @@ def run_simulation(
         daily_mean_waits=mean_waits,
         daily_arrivals=[[int(row[f'arr_{i}']) for i in range(8)] for row in rows],
         daily_late=[[int(row[f'late_{i}']) for i in range(8)] for row in rows],
+        daily_appt_arrived=[int(row['appt_arrived']) for row in rows],
+        daily_appt_late=[int(row['appt_late']) for row in rows],
+        daily_appt_wait_sum=[row['appt_wait_sum'] for row in rows],
         mean_service=mean(column('mean_service'))
     )
 

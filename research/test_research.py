@@ -120,6 +120,30 @@ class TestCiwCrossValidation(unittest.TestCase):
 
 
 @unittest.skipUnless(SIMULATOR.exists(), f"simulator not built at {SIMULATOR}")
+class TestAppointments(unittest.TestCase):
+    def test_perfectly_spaced_appointments_never_wait(self):
+        # One window, 8-minute fixed service, a booking every 10 minutes
+        r = run_simulation([1] * 8, [0.0] * 8, replications=5, service_dist="det",
+                           appointments=[10.0 * i for i in range(48)])
+        self.assertEqual(r.daily_appt_arrived, [48] * 5)
+        self.assertEqual(r.mean_wait, 0.0)
+
+    def test_no_show_rate_and_arrival_counts(self):
+        booked = [10.0 * i + 5 for i in range(40)]
+        r = run_simulation([3] * 8, [6.0] * 8, replications=2000, appointments=booked,
+                           no_show=0.15, punctuality_sd=5.0)
+        self.assertAlmostEqual(np.mean(r.daily_appt_arrived) / 40, 0.85, delta=0.01)
+        self.assertAlmostEqual(r.avg_arrived, 48 + 34, delta=0.6)
+
+    def test_no_appointments_leaves_walk_in_results_unchanged(self):
+        a = run_simulation([2, 3, 3, 2, 2, 3, 3, 2], replications=50)
+        b = run_simulation([2, 3, 3, 2, 2, 3, 3, 2], replications=50, appointments=[],
+                           no_show=0.3, punctuality_sd=9.0)
+        self.assertEqual(a.daily_mean_waits, b.daily_mean_waits)
+        self.assertEqual(a.daily_appt_arrived, [0] * 50)
+
+
+@unittest.skipUnless(SIMULATOR.exists(), f"simulator not built at {SIMULATOR}")
 class TestSimulatorExtensions(unittest.TestCase):
     def test_lognormal_and_det_preserve_mean(self):
         for dist, cv in [("lognormal", 0.5), ("lognormal", 1.5), ("det", 1.0)]:
