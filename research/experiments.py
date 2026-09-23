@@ -3,7 +3,7 @@ Experiments for the CivicQ staffing study. Every result is written to
 research/results/*.csv and is reproducible from fixed seeds.
 
     python research/experiments.py --all
-    python research/experiments.py e1b e1      # or any subset: e1b e1 e2 e2b e3a e3b
+    python research/experiments.py e1b e1      # or any subset: e1b e1 e2 e2b e3a e3b e4 e5
 
 Design seeds (DESIGN_SEED..) choose plans; evaluation seeds (EVAL_SEED..) score
 them, so no reported number is biased by the search that produced the plan.
@@ -13,6 +13,7 @@ import argparse
 import csv
 import itertools
 import json
+import math
 import random
 import sys
 import time
@@ -302,8 +303,170 @@ def run_e3b(reps=200):
     write_csv("e3b_definitions.csv", rows)
 
 
+# ============================================================================
+# E4: shift-feasible staffing, two-step vs integrated simulation search
+# ============================================================================
+
+def run_e4():
+    from shifts import FLEXIBLE, STANDARD, Menu
+    from staffing_methods import _feasible
+    print("E4: two-step (requirement -> shift IP) vs integrated simulation search, "
+          "standard and flexible shift menus")
+    settings = [("office", OFFICE_RATES, OFFICE_S)]
+    for load in MEAN_LOADS:
+        for s in (8.0, 32.0):
+            settings.append((f"R{load:g}_S{s:g}_A0.6", arrival_profile(load, s, 0.6), s))
+    rows = []
+    for name, rates, s in settings:
+        reqs = {k: v for k, v in analytic_plans(rates, s, THRESHOLD, ALPHA).items()
+                if k in ("SIPP", "OL-avg")}
+        reqs["SGS-UCB"], _ = simulation_staffing(rates, s, THRESHOLD, ALPHA, criterion="ucb")
+        standard_iss = None
+        for menu_name, shifts in (("standard", STANDARD), ("flexible", FLEXIBLE)):
+            menu = Menu(shifts)
+            schedules = {f"{k}-IP": menu.cover_ip(r) for k, r in reqs.items()}
+
+            # Integrated search starts from the cheapest two-step schedule that
+            # is feasible on the design seeds. The flexible menu contains every
+            # standard shift, so it also starts from the standard menu's result
+            # (multi-start: local search alone can end above that point)
+            starts = dict(schedules)
+            if standard_iss is not None:
+                names = [n for n, _, _ in shifts]
+                starts["standard ISS"] = [0] * len(shifts)
+                for shift_name, count in standard_iss.items():
+                    starts["standard ISS"][names.index(shift_name)] = count
+            feasible_starts = [
+                (menu.paid_hours(x), k) for k, x in starts.items()
+                if _feasible(menu.profile(x), rates, s, THRESHOLD, ALPHA,
+                             DESIGN_REPS, DESIGN_SEED, "ucb")[0]
+            ]
+            start_name = min(feasible_starts)[1]
+            schedules["ISS"], calls = menu.integrated_search(rates, s, THRESHOLD, ALPHA,
+                                                             starts[start_name])
+            if menu_name == "standard":
+                standard_iss = menu.describe(schedules["ISS"])
+            evals = pmap(lambda k: evaluate(menu.profile(schedules[k]), rates, s, THRESHOLD),
+                         list(schedules))
+            best_two_step = min(menu.paid_hours(x) for k, x in schedules.items() if k != "ISS")
+            for (k, x), ev in zip(schedules.items(), evals):
+                req = reqs.get(k.replace("-IP", ""))
+                profile = menu.profile(x)
+                rows.append({
+                    "setting": name, "service_time": s, "menu": menu_name, "method": k,
+                    "shifts": json.dumps(menu.describe(x)),
+                    "profile": json.dumps(profile), "paid_hours": menu.paid_hours(x),
+                    "requirement_hours": sum(req) if req else "",
+                    "surplus_window_hours": sum(p - r for p, r in zip(profile, req)) if req else "",
+                    "saving_vs_best_two_step_pct": round(
+                        100 * (best_two_step - menu.paid_hours(x)) / best_two_step, 1),
+                    "worst_late": round(max(ev.late_prob), 4),
+                    "hours_significantly_over": ev.hours_missing(ALPHA),
+                    "iss_start": start_name if k == "ISS" else "",
+                    "simulator_calls": calls if k == "ISS" else "",
+                })
+            print(f"  {name:<14} {menu_name:<9}" + ", ".join(
+                f"{k} {menu.paid_hours(x)}h/{max(e.late_prob):.2f}"
+                for (k, x), e in zip(schedules.items(), evals))
+                + f"  (ISS from {start_name}, {calls} calls)")
+    write_csv("e4_shifts.csv", rows)
+
+
+# ============================================================================
+# E5: cross-validation against an independent simulator (Ciw)
+# ============================================================================
+
+def _civicq_days(plan, rates, s, reps, dist="exp", cv=1.0):
+    r = run_simulation(plan, rates, replications=reps, seed=EVAL_SEED, mean_service=s,
+                       wait_threshold=THRESHOLD, service_dist=dist, service_cv=cv)
+    return (np.array(r.daily_arrivals, float), np.array(r.daily_late, float),
+            np.array(r.daily_mean_waits))
+
+
+def run_e5(reps=2000):
+    from scipy.stats import norm
+    from crossval_ciw import ciw_days, ratio_and_se
+    print(f"E5: CivicQ vs Ciw, {reps} independent days per simulator and case")
+    big_rates = arrival_profile(24.0, 32.0, 0.6)
+    big_plan = next(json.loads(r["plan"]) for r in csv.DictReader(open(RESULTS / "e1_methods.csv"))
+                    if r["method"] == "SGS-UCB" and float(r["mean_load"]) == 24.0
+                    and float(r["service_time"]) == 32.0 and float(r["amplitude"]) == 0.6)
+    strict = [  # Constant staffing: the two models are exactly equivalent
+        ("flat rates, 2 windows", [2] * 8, [11.125] * 8, 8.0, "exp", 1.0),
+        ("office rates, 3 windows", [3] * 8, OFFICE_RATES, 8.0, "exp", 1.0),
+        ("office, lognormal CV 0.5", [3] * 8, OFFICE_RATES, 8.0, "lognormal", 0.5),
+        ("office, lognormal CV 1.5", [3] * 8, OFFICE_RATES, 8.0, "lognormal", 1.5),
+        ("office, deterministic", [3] * 8, OFFICE_RATES, 8.0, "det", 1.0),
+        ("24 Erlangs, S=32, 31 windows", [31] * 8, big_rates, 32.0, "exp", 1.0),
+    ]
+    bracket = [  # Staffing changes: Ciw's options bound CivicQ's semantics
+        ("office plan [2,3,3,2,2,3,3,2]", RECOMMENDED, OFFICE_RATES, 8.0),
+        ("office SIPP [3,3,3,2,2,3,3,3]", [3, 3, 3, 2, 2, 3, 3, 3], OFFICE_RATES, 8.0),
+        ("burst [1,4,4,...] 30/h then 0", [1, 4, 4, 4, 4, 4, 4, 4], [30] + [0] * 7, 8.0),
+        ("24 Erlangs, S=32, SGS-UCB plan", big_plan, big_rates, 32.0),
+    ]
+    rows = []
+    for name, plan, rates, s, dist, cv in strict:
+        a1, l1, w1 = _civicq_days(plan, rates, s, reps, dist, cv)
+        a2, l2, w2 = ciw_days(plan, rates, s, THRESHOLD, reps, dist=dist, cv=cv)
+        for i in range(SLOTS):
+            if a1[:, i].sum() == 0:
+                continue
+            p1, se1 = ratio_and_se(l1[:, i], a1[:, i])
+            p2, se2 = ratio_and_se(l2[:, i], a2[:, i])
+            z = (p1 - p2) / math.hypot(se1, se2) if se1 + se2 > 0 else 0.0
+            rows.append({"case": name, "kind": "strict", "metric": f"late_hour_{i}",
+                         "civicq": round(p1, 5), "ciw": round(p2, 5), "ciw_upper": "",
+                         "se_civicq": round(se1, 5), "se_ciw": round(se2, 5),
+                         "z": round(z, 3), "p": 2 * norm.sf(abs(z))})
+        se = math.sqrt(w1.var(ddof=1) / reps + w2.var(ddof=1) / reps)
+        z = (w1.mean() - w2.mean()) / se
+        rows.append({"case": name, "kind": "strict", "metric": "mean_wait",
+                     "civicq": round(w1.mean(), 4), "ciw": round(w2.mean(), 4), "ciw_upper": "",
+                     "se_civicq": round(w1.std(ddof=1) / math.sqrt(reps), 4),
+                     "se_ciw": round(w2.std(ddof=1) / math.sqrt(reps), 4),
+                     "z": round(z, 3), "p": 2 * norm.sf(abs(z))})
+
+    # Holm step-down over the strict family
+    strict_rows = sorted((r for r in rows if r["kind"] == "strict"), key=lambda r: r["p"])
+    m = len(strict_rows)
+    running = 0.0
+    for k, r in enumerate(strict_rows):
+        running = max(running, min(1.0, (m - k) * r["p"]))
+        r["p_holm"] = round(running, 4)
+        r["p"] = round(r["p"], 4)
+    raw_rej = sum(r["p"] < 0.05 for r in strict_rows)
+    holm_rej = sum(r["p_holm"] < 0.05 for r in strict_rows)
+    print(f"  strict: {m} tests, {raw_rej} reject at 5% unadjusted "
+          f"(expected by chance ~{0.05 * m:.1f}), {holm_rej} after Holm")
+
+    inside = total = 0
+    for name, plan, rates, s in bracket:
+        a1, l1, _ = _civicq_days(plan, rates, s, reps)
+        a2, l2, _ = ciw_days(plan, rates, s, THRESHOLD, reps, preemption=False)
+        a3, l3, _ = ciw_days(plan, rates, s, THRESHOLD, reps, seed=700_000, preemption="resume")
+        for i in range(SLOTS):
+            if a1[:, i].sum() == 0:
+                continue
+            p1, se1 = ratio_and_se(l1[:, i], a1[:, i])
+            lo, se_lo = ratio_and_se(l2[:, i], a2[:, i])
+            hi, se_hi = ratio_and_se(l3[:, i], a3[:, i])
+            ok = (lo - 1.96 * math.hypot(se1, se_lo) <= p1 <= hi + 1.96 * math.hypot(se1, se_hi))
+            inside += ok
+            total += 1
+            rows.append({"case": name, "kind": "bracket", "metric": f"late_hour_{i}",
+                         "civicq": round(p1, 5), "ciw": round(lo, 5), "ciw_upper": round(hi, 5),
+                         "se_civicq": round(se1, 5), "se_ciw": round(se_lo, 5),
+                         "z": "", "p": "", "p_holm": "", "within_bracket": ok})
+    print(f"  bracket: CivicQ inside [Ciw non-preemptive, Ciw resume] in {inside}/{total} hours")
+    for r in rows:
+        r.setdefault("p_holm", "")
+        r.setdefault("within_bracket", "")
+    write_csv("e5_crossval.csv", rows)
+
+
 EXPERIMENTS = {"e1b": run_e1b, "e1": run_e1, "e2": run_e2, "e2b": run_e2b,
-               "e3a": run_e3a, "e3b": run_e3b}
+               "e3a": run_e3a, "e3b": run_e3b, "e4": run_e4, "e5": run_e5}
 
 
 def main():

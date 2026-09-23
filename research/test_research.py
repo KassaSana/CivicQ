@@ -65,6 +65,60 @@ class TestRatioCI(unittest.TestCase):
         self.assertAlmostEqual(hi, 0.1)
 
 
+class TestShifts(unittest.TestCase):
+    def setUp(self):
+        from shifts import FLEXIBLE, STANDARD, Menu
+        self.std, self.flex = Menu(STANDARD), Menu(FLEXIBLE)
+
+    def test_cover_ip_hand_checked(self):
+        self.assertEqual(self.std.describe(self.std.cover_ip([1] * 8)), {"8-4": 1})
+        self.assertEqual(self.std.describe(self.std.cover_ip([1, 1, 1, 1, 0, 0, 0, 0])),
+                         {"8-12": 1})
+        # Six hours of need: a 6h shift only exists on the flexible menu
+        self.assertEqual(self.flex.paid_hours(self.flex.cover_ip([1] * 6 + [0, 0])), 6)
+        self.assertEqual(self.std.paid_hours(self.std.cover_ip([1] * 6 + [0, 0])), 8)
+
+    def test_profile_and_hours(self):
+        x = [1, 0, 1, 0, 0, 1]      # 8-4, 9-1, 12-4
+        self.assertEqual(self.std.profile(x), [1, 2, 2, 2, 3, 2, 2, 2])
+        self.assertEqual(self.std.paid_hours(x), 16)
+
+    def test_flexible_menu_contains_standard(self):
+        std_names = {n for n, _, _ in self.std.shifts}
+        self.assertTrue(std_names <= {n for n, _, _ in self.flex.shifts})
+
+    @unittest.skipUnless(SIMULATOR.exists(), "simulator not built")
+    def test_integrated_search_never_worse_and_feasible(self):
+        from staffing_methods import _feasible
+        start = self.std.cover_ip([3] * 8)
+        x, _ = self.std.integrated_search(OFFICE_RATES, 8.0, 15.0, 0.10, start)
+        self.assertLessEqual(self.std.paid_hours(x), self.std.paid_hours(start))
+        ok, _ = _feasible(self.std.profile(x), OFFICE_RATES, 8.0, 15.0, 0.10, 400, 1, "ucb")
+        self.assertTrue(ok)
+
+
+class TestCiwCrossValidation(unittest.TestCase):
+    def test_ciw_matches_erlang_c(self):
+        try:
+            from crossval_ciw import ciw_days, ratio_and_se
+        except ImportError:
+            self.skipTest("ciw not installed")
+        a, l, _ = ciw_days([3] * 8, [15.0] * 8, 8.0, reps=40, duration=20000)
+        p, se = ratio_and_se(l[:, 7], a[:, 7])
+        expected = prob_wait_exceeds(3, 2.0, 8.0, 15.0)
+        self.assertLess(abs(p - expected), 1.96 * se + 0.002)
+
+    def test_equal_shifts_are_merged(self):
+        # Hourly shifts with an unchanged count must not add Ciw overtime capacity
+        try:
+            from crossval_ciw import ciw_days, ratio_and_se
+        except ImportError:
+            self.skipTest("ciw not installed")
+        a, l, _ = ciw_days([2] * 8, [11.125] * 8, 8.0, reps=400)
+        p, _ = ratio_and_se(l[:, 7], a[:, 7])
+        self.assertGreater(p, 0.18)     # 0.23 when merged; about 0.11 if not
+
+
 @unittest.skipUnless(SIMULATOR.exists(), f"simulator not built at {SIMULATOR}")
 class TestSimulatorExtensions(unittest.TestCase):
     def test_lognormal_and_det_preserve_mean(self):
