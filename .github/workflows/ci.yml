@@ -27,3 +27,17 @@ jobs:
         run: |
           pip install -r research/requirements.txt
           python research/test_research.py
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      # Runs after the C++ build so the TS simulator is cross-checked against it
+      - name: Web visualizer tests and build
+        working-directory: web
+        run: |
+          npm ci
+          npm test
+          npm run build
