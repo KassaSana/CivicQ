@@ -22,6 +22,10 @@ from abandonment import (  # noqa: E402
     required_windows, required_windows_with_returns, return_rates, score,
 )
 from fluid import fluid_day, fluid_staffing  # noqa: E402
+from tipping import (  # noqa: E402
+    classify_roots, fluid_day_renege, fluid_fixed_point, fluid_return_curve,
+    simulate_return_chain, stationary_return_roots,
+)
 
 SIMULATOR = find_simulator()
 
@@ -369,6 +373,54 @@ class TestFluid(unittest.TestCase):
         self.assertLessEqual(mip["cost"], lp["cost"] + 1e-6)
         day = fluid_day(mip["plan"], self.RATES, 8.0, 15.0, dt=0.25)
         self.assertLessEqual(max(day["late"]), 0.10 + 0.05)
+
+
+class TestTipping(unittest.TestCase):
+    """Round 9: steady states of mandatory services."""
+
+    RATES = [30.0, 45.0, 30.0, 20.0, 20.0, 30.0, 40.0, 25.0]
+
+    def test_stationary_model_has_at_most_one_root(self):
+        rng = np.random.default_rng(7)
+        for _ in range(25):
+            c = int(rng.integers(1, 12))
+            rho = float(rng.uniform(0.3, 1.8))
+            r = float(rng.choice([0.3, 0.8, 1.0]))
+            roots = stationary_return_roots(c, rho * c * 60 / 8.0, 8.0, 30.0, r)
+            self.assertLessEqual(len(roots), 1)
+            if r < 1.0 or rho < 0.95:
+                self.assertEqual(len(roots), 1)
+
+    def test_fluid_conserves_citizens(self):
+        plan = [3, 4, 3, 2, 2, 3, 4, 3]
+        day = fluid_day_renege(plan, self.RATES, 8.0, 30.0)
+        self.assertAlmostEqual(day["served"] + day["losses"], sum(self.RATES), delta=0.05)
+
+    def test_fluid_loses_nobody_with_ample_windows(self):
+        day = fluid_day_renege([20] * 8, self.RATES, 8.0, 30.0)
+        self.assertLess(day["losses"], 1e-9)
+
+    def test_fluid_return_curve_never_rises(self):
+        plan = [5, 7, 5, 4, 4, 5, 6, 4]                       # 40 h for 32 h of work
+        grid = np.linspace(0.0, 3 * sum(self.RATES), 31)
+        for timing in ("profile", "opening"):
+            h = fluid_return_curve(plan, self.RATES, 8.0, 30.0, 1.0, timing, grid)
+            self.assertLess(max(np.diff(h)), 0.0)
+            fp = fluid_fixed_point(plan, self.RATES, 8.0, 30.0, 1.0, timing)
+            self.assertLess(fp["slope"], 1.0)
+
+    def test_classify_roots_finds_bistability(self):
+        grid = np.linspace(0.0, 10.0, 101)
+        h = (2.0 - grid) * (5.0 - grid) * (8.0 - grid)      # +, -, +, -
+        cls = classify_roots(grid, h)
+        self.assertEqual(len(cls["roots"]), 3)
+        self.assertEqual(cls["stable"], [True, False, True])
+        self.assertTrue(cls["bistable"])
+
+    def test_chain_without_returns_stays_empty(self):
+        path = simulate_return_chain([3, 4, 3, 2, 2, 3, 4, 3], self.RATES, 8.0, 0.0,
+                                     "profile", 5, abandonment="renege", patience=30.0)
+        self.assertTrue(all(p["returns"] == 0 for p in path))
 
 
 if __name__ == "__main__":

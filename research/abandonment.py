@@ -373,8 +373,9 @@ def return_fixed_point(staffing: list, rates: list, mean_service: float,
     later day with probability `return_prob`, so daily returns R solve
     R = r * L(R), where L(R) is the expected number who leave on a day with R
     returners. L is increasing in R, so h(R) = r L(R) - R has at most one
-    stable root, found by bisection on common random numbers. If no root lies
-    below `max_factor` x fresh demand, the backlog grows without bound.
+    stable root (checked in Round 9, section 5.13), found by bisection on
+    common random numbers. If no root lies below `max_factor` x fresh demand,
+    the backlog grows without bound.
     """
     fresh = sum(rates)
 

@@ -24,6 +24,7 @@ The target is that at most 10% of each hour's arrivals wait more than 15 minutes
 - **Large offices with a fixed threshold (Round 6).** Exact models up to 10,000 windows correct Round 5's scaling. The crossover slack grows like (S/2T)·ln c, not like √c. Abandonment can raise a large office's staffing only when the target α is below K₁/√c, a closed form that does not depend on the threshold. How fast the fluid saving is reached depends on where α sits against G(T): within one window above it, O(√R) extra windows below it, and O(√(R ln R)) exactly at it. Convergence is slow for patient citizens facing short thresholds, where two of the pre-registered tolerances failed.
 - **A fluid model of the whole day (Round 7).** A deterministic fluid of the finite day shows that a large office needs *less* than its raw workload (0.93 of it for the studied demand at S = 8). Only the two ends of the day explain this: the backlog absorbed by unpaid service after closing, net of the idle time from opening empty. Simulation sits about 3√R windows above that fluid, confirmed out of sample at 256 Erlangs. The same boundary effect, not lag or threshold stringency, is why SIPP's excess grows with service time: holding T/S fixed, it still rises from 1.5% to 33%. Three of the five registered tests failed, two because the first fluid ignored that a closing window finishes its citizen. Against the corrected fluid, integrated shift search leaves no measurable slack.
 - **Paying for unpaid work (Round 8).** When service after closing and at closing windows is paid, a large office needs its full workload plus a small constant slack, about 8·(S/T)·ln(1/α) window-hours. Round 7's below-workload result and its √R correction both came from that free work. SIPP's excess still grows with service time, but now through threshold stringency and lag. Who stays after closing (staff leaving when idle, or everyone waiting for the last citizen) moves paid costs by up to 16%, more than a time-and-a-half premium does.
+- **Mandatory services fade, they do not tip (Round 9).** When every citizen who leaves must come back, the office has one steady state at every staffing level, both in theory (the fluid and stationary models) and in 12 simulated return curves. There is no second state for a bad day to push it into. What grows near collapse is recovery time: after one closure day, 5 days at the citizen-optimal plan and 47 days with 21% fewer window-hours, while the daily numbers still look calm. With returners at opening, cutting 5% of window-hours raises the steady state from 30 to 142 repeat visits per 100. The fluid's error on the steady state is a fixed number of citizens, about 30–65 a day, at both 8 and 32 Erlangs.
 - **Independent validation (Round 2).** An independent implementation in the open-source Ciw library agrees with CivicQ: 0 of 54 tests reject under constant staffing, and CivicQ stays within Ciw's bounds in all 25 hours tested under changing staffing. Along the way we found that Ciw's hourly schedules silently add overtime capacity at every shift boundary, which halves the measured lateness if used naively.
 
 ## 1. Background and gap
@@ -204,6 +205,39 @@ Staff are assumed to leave once nobody is left for them, so the unpaid work is e
 *Round 8b* (stated after E11d, before running E11e). H29 failed. With paid overtime the excess of the paid optimum over the paid fluid was 10.1, 11.0 and 9.5 window-hours at R = 8, 32 and 128. That is flat, and close to 8·(S/T)·ln(1/α) = 9.8, the stationary slack of Round 6. So once all work is paid, the √R correction of Round 7 appears to go away.
 
 - **H31 (confirmatory; with paid work the correction is Round 6's stationary slack).** At R = 256 (same office, κ = 1), the paid optimum exceeds 2048·f₁ by E(256) ∈ [5.9, 13.7] (9.8 ± 40%). Growth like √R from R = 128 would give about 13.4–15, so the band's upper edge is set below 15, the value at which the reading would be rejected.
+
+**Round 9** (stated after the theory runs E12a and E12b and before the simulations E12c and E12d). The question asks whether a mandatory service can *tip*. Every citizen who leaves returns on a later day (r = 1). With R returners a day and L(R) the day's losses, steady states solve R = L(R). If more than one of them is stable, a single closure day could move an office that works into a permanent backlog.
+
+The theory says it cannot, in two models:
+- **Stationary Erlang-A.** The abandonment flow x − served(x) is convex, so x = λ + r·x·P_ab(c, x) has at most one root. E12a found 0 or 1 root in all 756 cases, and 0 only when r = 1 and ρ ≥ 1.
+- **The fluid of the day with reneging (`research/tipping.py`).** More input never lowers the work served, by an ODE comparison argument, so L′ ≤ 1. The fixed point is therefore unique. E12b shows h = L(R) − R strictly decreasing for every plan and timing (8 E, S = 16, exponential patience with mean 30, the E7 fail plan scaled by φ, and E7c's collapsed plan).
+
+What the fluid predicts instead is **critical slowing down**. As staffing falls, L′(R\*) rises toward 1. R\* grows roughly exponentially, and recovery from one closure day slows accordingly:
+
+| Plan | Returns spread over the day: R\*/100, days to recover | Returns at opening: R\*/100, days to recover |
+|---|---|---|
+| φ = 1.00 (71 h) | 0.3, 5 | 0.4, 19 |
+| φ = 0.95 (69 h) | 1.2, 7 | 1.6, 30 |
+| φ = 0.90 (64 h) | 3.5, 12 | 20.1, 93 |
+| φ = 0.85 (61 h) | 14.3, 28 | 3,802, over 2,000 |
+| φ = 0.80 (56 h) | 220, 133 | none below 200× |
+| E7c late plan (57 h) | 146, 102 | none below 200× |
+
+Here "days to recover" is the time for the fluid map to come back within 10% of fresh demand of R\*.
+
+- **H32 (no tipping in the stochastic day).** In E12c (12 curves of simulated h(R), 400 days each on common random numbers, R from 0 to 3× fresh demand at 11 points), no curve has a step where h rises significantly (paired 95% CI of Δh entirely above 0), and no curve changes sign more than once. A sign pattern +, −, + would reject it.
+- **H33 (the fluid locates the collapse).**
+  - (a) Where the fluid R\* is at least 100 per 100 but finite (spread returns, φ = 0.80 and the late plan), the simulated R\* is 1.0–2.0 times the fluid's.
+  - (b) Where the fluid has no root below 3× fresh demand (returns at opening, φ ≤ 0.85 and the late plan), the simulated h is still positive at 3× fresh.
+- **H34 (critical slowing down without hysteresis).** In E12d (20 chains per case, 30 days at the steady state, one closure day, then up to 400 days):
+  - (a) every chain in a case with fluid R\* ≤ 3× fresh returns to within 10% of fresh demand of its pre-shock level;
+  - (b) across those cases, median recovery days rank-correlate with the fluid's (Spearman ≥ 0.8);
+  - (c) recovery at spread-returns φ = 0.80 takes at least 10 times as long as at φ = 1.00;
+  - (d) every chain in a case with fluid R\* > 3× fresh, started with no returners, either passes 5× fresh demand or ends above 1× fresh.
+
+*Round 9b* (stated after E12c and E12d, before running E12e). There was no fold, so there is none to confirm. What E12c did show is that the simulated R\* exceeds the fluid's, by much more where L′ is close to 1. The proposed mechanism: stochastic losses δ = O(√R) a day, amplified by 1/(1 − L′). Relative to fresh demand this excess should then fall like 1/√R.
+
+- **H35 (confirmatory; the fluid's error shrinks like 1/√R).** Take the same office at 32 E: rates ×4, and the φ-plans ×4, which is exact for the fluid. For spread-over-the-day returns at φ = 0.95, 0.90 and 0.85, the excess (simulated R\* − fluid R\*) per 100 fresh citizens is 0.25–0.75 of its 8 E value in each case (13.0, 19.4 and 26.4 at 8 E; √R scaling predicts 0.5). A ratio of 0.75 or more would mean the error does not shrink with size; 0.25 or less would mean it is not a √R effect.
 
 *Change after pre-registration (Round 2):* while testing H7 we found that Ciw cannot express CivicQ's staffing-change rule (see §5.6). H7 was therefore split into a strict test for constant staffing and a bounds test for changing staffing *before* E5 was run. This deviation is disclosed here.
 
@@ -725,6 +759,62 @@ With all work paid, the office needs the fluid plus a correction that **does not
 3. **SIPP's excess over service time has three sources.** Threshold stringency sets the trend at fixed T; with T/S fixed and all work paid, what remains is lag; and a free drain roughly doubles it when T is long.
 4. **Optimizing staffed hours is nearly optimal for paid cost when overtime is paid at the regular rate.** It is not when overtime carries a premium and the threshold is long. The rule for who stays after closing matters more than either.
 
+### 5.13 Can a mandatory service tip? (E12)
+
+Round 9 asks whether an office providing a mandatory service can have two steady states. If it could, one closure day would move it for good from a working state to a permanent backlog. The office is the E7 8-Erlang office (S = 16, hidden queue, exponential patience with mean 30, r = 1), staffed with its citizen-optimal plan scaled by φ, and with E7c's collapsed 57 h plan. Returners come back either spread over the day or all at opening. Everything is computed by `research/tipping.py`.
+
+![Tipping](figures/fig15_tipping.png)
+
+**Theory (E12a, E12b; before registration).** Neither the stationary model nor the fluid of the day can tip. Adding citizens never lowers the work served, so L′(R) ≤ 1, and R = L(R) has one steady state. E12a found 0 or 1 root in all 756 stationary cases. In E12b, h = L(R) − R falls strictly on every curve.
+
+What the fluid does predict is a smooth divergence. As staffing falls, R\* grows roughly exponentially and L′(R\*) → 1, so the office takes longer and longer to recover from a single disturbance.
+
+**H32: supported.** None of the 12 simulated curves (Fig. 15a) rises significantly between grid points (paired 95% CIs), and none changes sign more than once. There is no +, −, + pattern anywhere, so no tipping point.
+
+**H33: supported.** Steady-state repeat visits per 100 fresh citizens:
+
+| Plan | Spread returns: simulated | Spread returns: fluid | At opening: simulated | At opening: fluid |
+|---|---|---|---|---|
+| φ = 1.00 (71 h) | 10.0 | 0.3 | 30 | 0.4 |
+| φ = 0.95 (69 h) | 14.2 | 1.2 | 142 | 1.6 |
+| φ = 0.90 (64 h) | 22.9 | 3.5 | none ≤ 300 | 20 |
+| φ = 0.85 (61 h) | 40.7 | 14.3 | none ≤ 300 | 3,802 |
+| φ = 0.80 (56 h) | **268** | **220** | none ≤ 300 | none ≤ 20,000 |
+| E7c late plan (57 h) | **173** | **146** | none ≤ 300 | none ≤ 20,000 |
+
+- **(a)** In deep collapse the fluid is 1.22 and 1.19 times too low (band 1.0–2.0).
+- **(b)** Every case the fluid calls unbounded is still growing at 3× fresh demand.
+- These agree with E7c's bisection (9.5, 31 and 158 per 100 for the same three settings).
+- E7c's "no steady state" for the late plan with returns at opening is a single state that is unbounded or far away, not a second state.
+
+Outside deep collapse the fluid is badly optimistic, most of all for returns at opening. There the simulated curve is almost flat (L′ ≈ 1 across R), so small stochastic losses move the fixed point a long way: 142 per 100 simulated against 1.6 in the fluid at φ = 0.95.
+
+**H34: partly supported.** One closure day on day 30, with 20 chains per case (Fig. 16; recovery = the 7-day mean back within 10% of fresh demand of the pre-shock level):
+
+| Plan | Spread returns: recovered | Median days (fluid) | At opening: recovered | Median days (fluid) |
+|---|---|---|---|---|
+| φ = 1.00 | 20/20 | 5 (5) | 12/20 | 40 (19) |
+| φ = 0.95 | 20/20 | 6 (7) | 2/20 | 66 (30) |
+| φ = 0.90 | 20/20 | 10 (12) | 0/20 (all passed 5×) | (93) |
+| φ = 0.85 | 20/20 | 20.5 (28) | 0/20 (all passed 5×) | (over 2,000) |
+| φ = 0.80 | 20/20 | 47 (133) | 0/20 (all passed 5×) | none |
+| Late plan | 20/20 | 48.5 (102) | 0/20 (all passed 5×) | none |
+
+- **(a) Rejected.** Three cases with returns at opening did not come back. *Post-hoc reading:* this is not hysteresis. Those chains started at the fluid's R\*, which E12c shows is far below the simulated one, and they were still rising before the shock: at φ = 0.95 the 5-day means went 0.09 → 0.59 × fresh demand over the 30 days. A chain cannot recover to a baseline that was never a steady state. At φ = 0.90 the simulated office has no steady state below 3× fresh demand at all.
+- **(b) Supported.** The rank correlation of simulated and fluid recovery times is 0.88 across the eight cases with a median (0.94 for spread returns).
+- **(c) Rejected narrowly.** Recovery at φ = 0.80 took 9.4 times as long as at φ = 1.00, against at least 10 predicted. The fluid over-predicts the slowest recoveries (133 days against 47), because noise kicks chains down as well as up.
+- **(d) Supported.** Every chain in the three cases the fluid calls unbounded passed 5× fresh demand.
+
+**H35 (confirmatory): rejected, with a sharper answer.** At 32 E the fluid's error on R\* per 100 fresh citizens is 0.249, 0.256 and 0.254 of its 8 E value for φ = 0.95, 0.90 and 0.85, at the band's lower edge and once just below it. Registered reading: the error does not scale like √R. It scales like 1/R. In absolute numbers the excess is the same at both sizes: 31, 47 and 64 extra returners a day at 8 E, against 31, 48 and 64 at 32 E. Like the paid-overtime correction of Round 8, the stochastic correction to the steady state is O(1) in citizens, not O(√R). Why it is constant has not been tested.
+
+![Day-to-day returners](figures/fig16_return_chains.png)
+
+**What changes.**
+1. **Mandatory services do not tip; they fade slowly.** There is one steady state at every staffing level (proved in the stationary and fluid models, found in every simulated curve). It rises smoothly and very steeply as staff are cut: near collapse each 5% of window-hours cuts repeat visits several-fold (fluid about 4×; simulated 41 → 268 per 100 from 61 h to 56 h).
+2. **The warning sign is recovery time, not the daily numbers.** An office at φ = 0.85 looks almost as calm as one at φ = 1.00 (Fig. 16). After one closure day it needs 20 days to recover instead of 5, and near collapse it needs 47. How slowly an office recovers from a disturbance says how close it is to collapse.
+3. **Returns at opening are far more fragile than the fluid says.** With returners concentrated at 8AM, even the citizen-optimal plan (71 h) settles at 30 repeat visits per 100 and wanders widely around it. Cutting 5% of window-hours takes it to 142.
+4. **The correction to the fluid is a fixed number of citizens** (tens a day here), independent of size. For a large office the fluid is the right planning tool; for this 8-Erlang office it is not.
+
 ## 6. Threats to validity
 - **Synthetic demand.** Arrival rates follow a stylized double-peak profile. There are no public arrival-count data for walk-in offices; the CA DMV data contain only waits.
 - **Exponential service in E1.** This favours the Erlang-C rules, which assume it. With CV < 1, as is typical for lognormal service, the analytic rules would overstaff even more (E2).
@@ -737,6 +827,7 @@ With all work paid, the office needs the fluid plus a correction that **does not
 - **The Ciw bounds test is weak for long-service, large offices** (§5.6); the strict constant-staffing test is the main evidence.
 - **SGS optimality** is shown only for small instances, and relies on the monotonicity assumption used to derive the lower bounds.
 - **Overtime is free (all rounds).** Staff-hours count only the eight open hours, while service after closing continues at the last hour's staffing without cost. The fluid shows this is a first-order modelling choice: it supplies 4% of the workload at S = 8 and T = 15, and up to 40% when T = 60 (§5.11). Charging overtime would raise every plan's last hour and cut the savings attributed to a long threshold. *Round 8 (§5.12) tests this:* paid, the below-workload effect vanishes, the ranking of rules is unchanged, and SIPP's excess falls by up to half at long thresholds. The paid search is local and starts from the staffed-hours plan. The rule for who stays after closing is itself an assumption that moves costs by up to 16%.
+- **Return dynamics (§5.13)** use one office, exponential patience, r = 1 and a next-day return, and treat the day's returners as Poisson at their expected rate. Real returners may wait several days, which would smooth the chain but not change the unique steady state. H34(a)'s failure was explained after the fact (a pre-shock baseline that was not at steady state), and unshocked chains were not run as a control. The constant-in-citizens correction of H35 rests on two sizes.
 - **The fluid (§5.11)** covers exponential service only. Its corrected version and the √R reading were fixed after the registered tests failed, and were confirmed at one new load only. Five α-programs were not solved to optimality, and the comparison of shift rosters with the corrected fluid was not pre-registered.
 - **Rate uncertainty** is modelled as a single daily multiplier. Correlated within-day forecast errors could matter more.
 
@@ -751,6 +842,7 @@ With all work paid, the office needs the fluid plus a correction that **does not
 8. **If you offer appointments, fill the quiet hours first.** Booking against the demand curve lets full-day shifts fit the day, saving up to about a quarter of paid hours at 8 Erlangs. Booking in proportion to demand saves almost nothing. Adjust for no-shows by overbooking.
 9. **Count the citizens who leave, not only those you serve.** A late rate computed from served tickets improves as people give up. Log walk-outs and abandoned tickets, and set the target on "late or left". For a mandatory service, every walk-out is a repeat visit, often at opening the next day, so staff the first hour for returners.
 10. **Don't assume walk-outs save staff.** They do only in larger offices with lenient targets, by at most the target share α and at most the share of citizens who would give up within the threshold. With strict targets or in small offices they cost staff, and for a mandatory service the long-run saving is zero. For an office with c windows, "strict" means α < K₁/√c (§5.10): about 0.03 at 100 windows when service takes 8 min and patience averages 30.
+11. **Watch recovery time for mandatory services.** An office close to collapse does not look different on a normal day; it takes weeks instead of days to recover from a closure or a system outage (§5.13). If a one-day disruption is still visible in repeat visits two weeks later, add staff, first-hour staff especially when returners come at opening.
 11. **Don't pick Erlang-A's patience model by habit.** Its exponential assumption can understaff when few people leave early. If the line is visible, a balking model with a realistic patience distribution is exact and was safe here.
 12. **If you use Ciw for time-varying staffing, merge consecutive equal shifts.** Otherwise each shift boundary adds phantom overtime capacity.
 
@@ -759,7 +851,7 @@ With all work paid, the office needs the fluid plus a correction that **does not
 g++ -std=c++17 -O2 -static -Icpp/include -o cpp/build/queue_sim.exe cpp/src/simulation.cpp cpp/src/main.cpp
 pip install -r research/requirements.txt   # numpy, matplotlib, scipy, ciw
 python research/test_research.py
-python research/experiments.py --all     # about 2.5 hours on 8 cores (E7 takes 25, E8a 3, E8b 5, E9 5, E10 60, E11 20)
+python research/experiments.py --all     # about 2.5 hours on 8 cores (E7 takes 25, E8a 3, E8b 5, E9 5, E10 60, E11 20, E12 3)
 python research/figures.py
 ```
 

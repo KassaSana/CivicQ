@@ -3,7 +3,7 @@ Experiments for the CivicQ staffing study. Every result is written to
 research/results/*.csv and is reproducible from fixed seeds.
 
     python research/experiments.py --all
-    python research/experiments.py e1b e1      # or any subset: e1b e1 e2 e2b e3a e3b e4 e5 e6 e7a e7 e7c e8a e8b e9a e9b e10a-h e11a-e
+    python research/experiments.py e1b e1      # or any subset: e1b e1 e2 e2b e3a e3b e4 e5 e6 e7a e7 e7c e8a e8b e9a e9b e10a-h e11a-e e12a-e
     (run e10b before e10a, e10c, e10d and e10e: they read its fluid constants)
 
 Design seeds (DESIGN_SEED..) choose plans; evaluation seeds (EVAL_SEED..) score
@@ -1402,6 +1402,185 @@ def run_e11e():
     write_csv("e11e_paid_confirm.csv", rows)
 
 
+# ============================================================================
+# Round 9: tipping points of mandatory services (REPORT section 5.13)
+# ============================================================================
+
+E12_RATES = arrival_profile(8.0, 16.0, 0.6)
+E12_S = 16.0
+E12_PATIENCE = 30.0
+E12_FAIL_PLAN = [8, 13, 9, 6, 5, 9, 12, 9]     # E7 SGS-UCB (fail), renege, exp 30
+E12_LATE_PLAN = [6, 10, 8, 5, 4, 7, 10, 7]     # E7 SGS-UCB (late): collapsed in E7c
+E12_PHIS = [1.0, 0.95, 0.9, 0.85, 0.8]
+E12_TIMINGS = ["profile", "opening"]
+E12_KW = {"abandonment": "renege", "patience": E12_PATIENCE,
+          "patience_dist": "exp", "patience_cv": 1.0}
+
+
+def _e12_plans():
+    """The fail plan scaled by phi (rounded half up), plus E7c's collapsed plan."""
+    plans = [(f"phi={phi:.2f}", [int(math.floor(phi * c + 0.5)) for c in E12_FAIL_PLAN])
+             for phi in E12_PHIS]
+    return plans + [("late plan", E12_LATE_PLAN)]
+
+
+def run_e12a():
+    """H32: the stationary Erlang-A return model has at most one fixed point."""
+    from tipping import stationary_return_roots
+    print("E12a: stationary return fixed points")
+    rows = []
+    for c, rho, s, pat, r in itertools.product([1, 2, 4, 8, 16, 32],
+                                               [0.5, 0.8, 0.95, 1.0, 1.1, 1.5, 2.0],
+                                               [4.0, 16.0], [10.0, 30.0, 120.0],
+                                               [0.5, 0.9, 1.0]):
+        rate = rho * c * 60.0 / s
+        roots = stationary_return_roots(c, rate, s, pat, r)
+        rows.append({"c": c, "rho_fresh": rho, "S": s, "patience": pat, "r": r,
+                     "n_roots": len(roots),
+                     "total_rate_per_hour": round(roots[0] * 60.0, 4) if roots else ""})
+    counts = {k: sum(1 for x in rows if x["n_roots"] == k) for k in (0, 1, 2, 3)}
+    print(f"  {len(rows)} cases, roots: {counts}")
+    write_csv("e12a_stationary_roots.csv", rows)
+
+
+def run_e12b():
+    """Fluid of the day with returns: steady state, slope, recovery after a closure."""
+    from tipping import (classify_roots, fluid_fixed_point, fluid_recovery_days,
+                         fluid_return_curve)
+    print("E12b: fluid return dynamics (8 E, S = 16, exp patience 30, r = 1)")
+    fresh = sum(E12_RATES)
+    grid = np.concatenate([np.linspace(0.0, fresh, 41),
+                           np.geomspace(1.05 * fresh, 30 * fresh, 40)])
+    rows = []
+    for (name, plan), timing in itertools.product(_e12_plans(), E12_TIMINGS):
+        h = np.array(fluid_return_curve(plan, E12_RATES, E12_S, E12_PATIENCE, 1.0,
+                                        timing, grid))
+        cls = classify_roots(grid, h)
+        fp = fluid_fixed_point(plan, E12_RATES, E12_S, E12_PATIENCE, 1.0, timing)
+        rec = (fluid_recovery_days(plan, E12_RATES, E12_S, E12_PATIENCE, 1.0, timing,
+                                   fp["R"]) if math.isfinite(fp["R"]) else "")
+        rows.append({"plan_name": name, "plan": json.dumps(plan), "window_hours": sum(plan),
+                     "timing": timing, "fluid_R": round(fp["R"], 3),
+                     "repeat_per_100": round(100 * fp["R"] / fresh, 2),
+                     "slope": round(fp["slope"], 4), "relax_days": round(fp["relax_days"], 2),
+                     "recovery_days": rec, "max_dh_step": round(float(np.max(np.diff(h))), 4),
+                     "n_roots_grid": len(cls["roots"]), "bistable": cls["bistable"]})
+        print(f"  {name:<10} {sum(plan):>3} h {timing:<8} "
+              f"R*/100 = {rows[-1]['repeat_per_100']:>8} slope {rows[-1]['slope']:.3f} "
+              f"recovery {rec} days; max dh {rows[-1]['max_dh_step']}")
+    write_csv("e12b_fluid_returns.csv", rows)
+
+
+E12_R_FACTORS = [0.0, 0.05, 0.1, 0.2, 0.35, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0]
+
+
+def run_e12c(reps=400):
+    """H33, H34: simulated h(R) = L(R) - R on common random numbers."""
+    from tipping import return_curve, sign_changes
+    print("E12c: simulated return curves")
+    fresh = sum(E12_RATES)
+    grid = [f * fresh for f in E12_R_FACTORS]
+    jobs = list(itertools.product(_e12_plans(), E12_TIMINGS))
+    curves = pmap(lambda job: return_curve(job[0][1], E12_RATES, E12_S, 1.0, job[1], grid,
+                                           THRESHOLD, reps, EVAL_SEED, **E12_KW), jobs)
+    rows = []
+    for ((name, plan), timing), curve in zip(jobs, curves):
+        roots = sign_changes([p["R"] for p in curve], [p["h"] for p in curve])
+        rises = sum(1 for p in curve[1:] if p["dh_low"] > 0)
+        for p in curve:
+            rows.append({"plan_name": name, "plan": json.dumps(plan), "window_hours": sum(plan),
+                         "timing": timing, "R": round(p["R"], 3), "L": round(p["L"], 3),
+                         "h": round(p["h"], 3), "h_low": round(p["h_low"], 3),
+                         "h_high": round(p["h_high"], 3),
+                         "dh": round(p.get("dh", math.nan), 4),
+                         "dh_low": round(p.get("dh_low", math.nan), 4),
+                         "dh_high": round(p.get("dh_high", math.nan), 4),
+                         "sim_R": round(roots[0], 3) if roots else "",
+                         "n_roots": len(roots), "significant_rises": rises})
+        star = 100 * roots[0] / fresh if roots else math.inf
+        print(f"  {name:<10} {timing:<8} roots {[round(x, 1) for x in roots]} "
+              f"(R*/100 {star:.1f}), significant rises {rises}")
+    write_csv("e12c_return_curves.csv", rows)
+
+
+def run_e12d(chains=20, burn_in=30, max_after=400):
+    """H35: day-to-day chains with one closure day; recovery time vs the fluid."""
+    from tipping import simulate_return_chain
+    print("E12d: day-to-day chains with a closure day")
+    fresh = sum(E12_RATES)
+    fluid = {(r["plan_name"], r["timing"]): r for r in load_results("e12b_fluid_returns.csv")}
+    jobs = []
+    for (name, plan), timing in itertools.product(_e12_plans(), E12_TIMINGS):
+        fr = fluid[(name, timing)]
+        R0 = float(fr["fluid_R"])
+        if not math.isfinite(R0) or R0 > 3 * fresh:
+            R0 = 0.0
+        after = max_after if fr["recovery_days"] == "" else \
+            min(max_after, max(60, 3 * int(fr["recovery_days"])))
+        for k in range(chains):
+            jobs.append((name, plan, timing, R0, burn_in + 1 + after, k))
+    paths = pmap(lambda j: simulate_return_chain(
+        j[1], E12_RATES, E12_S, 1.0, j[2], j[4], shock_day=burn_in, start_returns=j[3],
+        seed=300_000 + 10_000 * j[5], threshold=THRESHOLD, **E12_KW), jobs)
+    rows = []
+    for (name, plan, timing, R0, days, k), path in zip(jobs, paths):
+        before = [p["returns"] for p in path[10:burn_in]]
+        base = float(np.mean(before)) if before else math.nan
+        after = [p["returns"] for p in path[burn_in + 1:]]
+        collapsed = len(path) < days
+        recovery = ""
+        if not collapsed:
+            for d in range(len(after) - 6):
+                if np.mean(after[d:d + 7]) <= base + 0.1 * fresh:
+                    recovery = d + 1
+                    break
+        rows.append({"plan_name": name, "window_hours": sum(plan), "timing": timing,
+                     "chain": k, "pre_shock_mean_R": round(base, 2),
+                     "collapsed": collapsed, "recovery_days": recovery,
+                     "final_R": round(path[-1]["returns"], 1),
+                     "path": json.dumps([round(p["returns"], 1) for p in path])})
+    for (name, plan), timing in itertools.product(_e12_plans(), E12_TIMINGS):
+        sub = [r for r in rows if r["plan_name"] == name and r["timing"] == timing]
+        rec = [r["recovery_days"] for r in sub if r["recovery_days"] != ""]
+        med = float(np.median(rec)) if rec else math.nan
+        print(f"  {name:<10} {timing:<8} recovered {len(rec)}/{len(sub)}, median {med:.0f} "
+              f"days (fluid {fluid[(name, timing)]['recovery_days']})")
+    write_csv("e12d_chains.csv", rows)
+
+
+def run_e12e(reps=200):
+    """H35 (confirmatory): the fluid's error on R* at 32 E, spread returns."""
+    from tipping import fluid_fixed_point, return_curve, sign_changes
+    print("E12e: steady state at 32 E vs the fluid")
+    rates = arrival_profile(32.0, E12_S, 0.6)
+    fresh = sum(rates)
+    grid = [f * fresh for f in np.arange(0.0, 1.001, 0.025)]
+    base = {r["plan_name"]: r for r in load_results("e12c_return_curves.csv")
+            if r["timing"] == "profile"}
+    fl8 = {r["plan_name"]: r for r in load_results("e12b_fluid_returns.csv")
+           if r["timing"] == "profile"}
+    rows = []
+    for name, plan in _e12_plans():
+        if name not in ("phi=0.95", "phi=0.90", "phi=0.85"):
+            continue
+        plan32 = [4 * c for c in plan]
+        curve = return_curve(plan32, rates, E12_S, 1.0, "profile", grid, THRESHOLD, reps,
+                             EVAL_SEED, **E12_KW)
+        roots = sign_changes([p["R"] for p in curve], [p["h"] for p in curve])
+        fp = fluid_fixed_point(plan32, rates, E12_S, E12_PATIENCE, 1.0, "profile")
+        sim100 = 100 * roots[0] / fresh if roots else math.inf
+        fl100 = 100 * fp["R"] / fresh
+        ex8 = 100 * float(base[name]["sim_R"]) / sum(E12_RATES) - float(fl8[name]["repeat_per_100"])
+        rows.append({"plan_name": name, "plan": json.dumps(plan32), "window_hours": sum(plan32),
+                     "sim_per_100": round(sim100, 2), "fluid_per_100": round(fl100, 2),
+                     "excess_32": round(sim100 - fl100, 2), "excess_8": round(ex8, 2),
+                     "ratio": round((sim100 - fl100) / ex8, 3),
+                     "significant_rises": sum(1 for p in curve[1:] if p["dh_low"] > 0)})
+        print(f"  {name}: R*/100 sim {sim100:.1f}, fluid {fl100:.1f}; excess {sim100 - fl100:.1f} "
+              f"vs {ex8:.1f} at 8 E (ratio {rows[-1]['ratio']})")
+    write_csv("e12e_scaling_confirm.csv", rows)
+
+
 EXPERIMENTS = {"e1b": run_e1b, "e1": run_e1, "e2": run_e2, "e2b": run_e2b,
                "e3a": run_e3a, "e3b": run_e3b, "e4": run_e4, "e5": run_e5, "e6": run_e6,
                "e7a": run_e7a, "e7": run_e7, "e7c": run_e7c, "e8a": run_e8a, "e8b": run_e8b,
@@ -1409,7 +1588,8 @@ EXPERIMENTS = {"e1b": run_e1b, "e1": run_e1, "e2": run_e2, "e2b": run_e2b,
                "e10b": run_e10b, "e10a": run_e10a, "e10c": run_e10c, "e10d": run_e10d,
                "e10e": run_e10e, "e10f": run_e10f, "e10g": run_e10g, "e10h": run_e10h,
                "e11a": run_e11a, "e11b": run_e11b, "e11c": run_e11c, "e11d": run_e11d,
-               "e11e": run_e11e}
+               "e11e": run_e11e, "e12a": run_e12a, "e12b": run_e12b, "e12c": run_e12c,
+               "e12d": run_e12d, "e12e": run_e12e}
 
 
 def main():

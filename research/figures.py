@@ -804,6 +804,123 @@ def fig_paid_overtime():
     save(fig, "fig14_paid_overtime.png")
 
 
+# ----------------------------------------------------------------------------
+def fig_tipping():
+    """Round 9: return curves, steady states and recovery times (fluid vs simulation)."""
+    from experiments import E12_PATIENCE, E12_RATES, E12_S
+    from tipping import fluid_return_curve
+    fresh = sum(E12_RATES)
+    curves = load("e12c_return_curves.csv")
+    fl = load("e12b_fluid_returns.csv")
+    chains = load("e12d_chains.csv")
+    fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(15, 4.3))
+
+    # (a) h(R) = L(R) - R, simulated (band) vs fluid (line), returns spread over the day
+    colors = {"phi=1.00": "#2a78d6", "phi=0.90": "#1baf7a", "phi=0.85": "#eda100",
+              "phi=0.80": "#e34948"}
+    grid = np.linspace(0.0, 3 * fresh, 61)
+    for name, color in colors.items():
+        sub = [r for r in curves if r["plan_name"] == name and r["timing"] == "profile"]
+        R = np.array([float(r["R"]) for r in sub]) / fresh
+        ax1.fill_between(R, [float(r["h_low"]) / fresh for r in sub],
+                         [float(r["h_high"]) / fresh for r in sub], color=color, alpha=0.25, lw=0)
+        ax1.plot(R, [float(r["h"]) / fresh for r in sub], color=color, marker="o", ms=3, lw=1.5,
+                 label=f"{name.replace('phi', 'φ')} ({sub[0]['window_hours']} h)")
+        plan = json.loads(sub[0]["plan"])
+        h = fluid_return_curve(plan, E12_RATES, E12_S, E12_PATIENCE, 1.0, "profile", grid)
+        ax1.plot(grid / fresh, np.array(h) / fresh, color=color, ls="--", lw=1)
+    ax1.axhline(0.0, color=INK_2, lw=0.8)
+    ax1.set_xlabel("Returners per day R / fresh demand")
+    ax1.set_ylabel("h(R) = L(R) − R, per fresh citizen")
+    ax1.set_title("One crossing: no tipping point", loc="left")
+    ax1.legend(fontsize=8, title="simulated (dots), fluid (dashed)", title_fontsize=8)
+
+    # (b) Steady state R* against staffing
+    for timing, color, marker in [("profile", INK, "o"), ("opening", "#e34948", "s")]:
+        fsub = sorted([r for r in fl if r["timing"] == timing and r["plan_name"] != "late plan"],
+                      key=lambda r: int(r["window_hours"]))
+        xs = [int(r["window_hours"]) for r in fsub]
+        ys = [min(float(r["repeat_per_100"]), 1e4) for r in fsub]
+        ax2.plot(xs, ys, color=color, ls="--", lw=1.2)
+        pts = {}
+        for r in curves:
+            if r["timing"] == timing and r["plan_name"] != "late plan":
+                pts[int(r["window_hours"])] = (100 * float(r["sim_R"]) / fresh
+                                               if r["sim_R"] else None)
+        xs2 = sorted(pts)
+        ax2.plot([x for x in xs2 if pts[x]], [pts[x] for x in xs2 if pts[x]], color=color,
+                 marker=marker, lw=0, ms=6,
+                 label=f"returns {'spread over the day' if timing == 'profile' else 'at opening'}")
+        for x in xs2:
+            if pts[x] is None:
+                ax2.annotate("none ≤ 3×", (x, 300), color=color, fontsize=7, ha="center",
+                             xytext=(0, 4), textcoords="offset points")
+                ax2.plot([x], [300], color=color, marker="^", ms=6)
+    ax2.set_yscale("log")
+    ax2.set_xlabel("Window-hours (E7 fail plan × φ)")
+    ax2.set_ylabel("Steady-state repeat visits per 100")
+    ax2.set_title("The steady state diverges smoothly", loc="left")
+    ax2.legend(fontsize=8, title="simulated (markers), fluid (dashed)", title_fontsize=8)
+
+    # (c) Recovery after one closure day: critical slowing down
+    for timing, color, marker in [("profile", INK, "o"), ("opening", "#e34948", "s")]:
+        fsub = sorted([r for r in fl if r["timing"] == timing and r["plan_name"] != "late plan"
+                       and r["recovery_days"] not in ("", "2000")],
+                      key=lambda r: int(r["window_hours"]))
+        ax3.plot([int(r["window_hours"]) for r in fsub],
+                 [float(r["recovery_days"]) for r in fsub], color=color, ls="--", lw=1.2)
+        xs, med, lo, hi = [], [], [], []
+        for name in sorted({r["plan_name"] for r in chains if r["plan_name"] != "late plan"}):
+            sub = [r for r in chains if r["plan_name"] == name and r["timing"] == timing]
+            rec = [float(r["recovery_days"]) for r in sub if r["recovery_days"] != ""]
+            if len(rec) == len(sub) and rec:
+                xs.append(int(sub[0]["window_hours"]))
+                med.append(np.median(rec))
+                lo.append(np.percentile(rec, 10))
+                hi.append(np.percentile(rec, 90))
+        if not xs:              # no case where every chain recovered
+            continue
+        order = np.argsort(xs)
+        xs, med = np.array(xs)[order], np.array(med)[order]
+        lo, hi = np.array(lo)[order], np.array(hi)[order]
+        ax3.errorbar(xs, med, yerr=[med - lo, hi - med], color=color, marker=marker, lw=0,
+                     elinewidth=1, capsize=3, ms=6,
+                     label=f"returns {'spread over the day' if timing == 'profile' else 'at opening'}")
+    ax3.set_yscale("log")
+    ax3.set_xlabel("Window-hours (E7 fail plan × φ)")
+    ax3.set_ylabel("Days to recover from one closure day")
+    ax3.set_title("Critical slowing down near collapse", loc="left")
+    ax3.legend(fontsize=8, title="simulated median, 10–90% (markers); fluid (dashed)",
+               title_fontsize=8)
+    fig.tight_layout()
+    save(fig, "fig15_tipping.png")
+
+
+def fig_return_chains():
+    """Round 9: day-to-day returners around one closure day (day 30)."""
+    from experiments import E12_RATES
+    fresh = sum(E12_RATES)
+    chains = load("e12d_chains.csv")
+    fig, axes = plt.subplots(1, 3, figsize=(15, 3.8), sharey=True)
+    for ax, name, color in zip(axes, ["phi=1.00", "phi=0.90", "phi=0.80"],
+                               ["#2a78d6", "#1baf7a", "#e34948"]):
+        sub = [r for r in chains if r["plan_name"] == name and r["timing"] == "profile"]
+        paths = [np.array(json.loads(r["path"])) / fresh for r in sub]
+        n = min(len(p) for p in paths)
+        for p in paths:
+            ax.plot(np.arange(len(p)), p, color=color, alpha=0.15, lw=0.8)
+        ax.plot(np.arange(n), np.median([p[:n] for p in paths], axis=0), color=INK, lw=1.6,
+                label="median of 20 chains")
+        ax.axvline(30, color=MUTED, ls=":", lw=1)
+        ax.set_title(f"{name.replace('phi', 'φ')} ({sub[0]['window_hours']} h)", loc="left")
+        ax.set_xlabel("Day (office closed on day 30)")
+        ax.set_xlim(0, min(n, 250))
+    axes[0].set_ylabel("Returners / fresh demand")
+    axes[0].legend(fontsize=8)
+    fig.tight_layout()
+    save(fig, "fig16_return_chains.png")
+
+
 if __name__ == "__main__":
     fig_gap_heatmap()
     fig_hourly()
@@ -819,3 +936,5 @@ if __name__ == "__main__":
     fig_fluid_day()
     fig_fluid_scaling()
     fig_paid_overtime()
+    fig_tipping()
+    fig_return_chains()
