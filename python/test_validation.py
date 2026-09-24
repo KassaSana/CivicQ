@@ -129,6 +129,32 @@ class TestParetoFrontier(unittest.TestCase):
 
 
 @unittest.skipUnless(SIMULATOR.exists(), f"simulator not built at {SIMULATOR}")
+class TestPaidOvertime(unittest.TestCase):
+    def test_paid_hours_add_work_outside_open_windows(self):
+        r = _fake_result([2] * 8, 10.0)
+        r.daily_mean_waits = [1.0, 3.0]
+        r.daily_spill = [6.0, 12.0]            # minutes
+        r.daily_overtime_busy = [30.0, 42.0]
+        self.assertEqual(r.daily_paid_hours(0.0), [16.0, 16.0])
+        self.assertAlmostEqual(r.paid_staff_hours(1.0), 16.0 + 0.75)
+        self.assertAlmostEqual(r.paid_staff_hours(1.5), 16.0 + 1.5 * 0.75)
+        self.assertAlmostEqual(r.paid_staff_hours(), r.paid_staff_hours(optimizer.OVERTIME_RATE))
+
+    def test_zero_rate_is_the_old_objective(self):
+        r = _fake_result([3] * 8, 5.0)
+        r.mean_wait = 2.0
+        r.daily_spill, r.daily_overtime_busy = [10.0], [20.0]
+        self.assertAlmostEqual(optimizer.compute_cost(r, 1.0, 0.5, 0.0), 2.0 + 0.5 * 24)
+        self.assertAlmostEqual(optimizer.compute_cost(r, 1.0, 0.5, 1.0), 2.0 + 0.5 * 24.5)
+
+    def test_simulated_paid_hours_cover_the_open_hours(self):
+        r = run_simulation([2, 3, 2, 2, 2, 3, 3, 2], replications=20, simulator_path=SIMULATOR)
+        self.assertEqual(len(r.daily_paid_hours()), 20)
+        self.assertGreater(r.paid_staff_hours(1.0), r.total_staff_hours)
+        self.assertGreater(r.paid_staff_hours(1.5), r.paid_staff_hours(1.0))
+
+
+@unittest.skipUnless(SIMULATOR.exists(), f"simulator not built at {SIMULATOR}")
 class TestStressTest(unittest.TestCase):
     def test_base_factor_matches_plain_run_and_demand_raises_waits(self):
         staffing = [2, 3, 3, 2, 2, 3, 3, 2]

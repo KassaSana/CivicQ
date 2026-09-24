@@ -52,6 +52,11 @@ NUM_REPLICATIONS = 10       # Screening replications per configuration
 CONFIRM_REPLICATIONS = 300
 CONFIRM_TOP_K = 30          # Finalists re-evaluated in the second stage (the cost
                             # surface is flat near the optimum, so shortlist widely)
+# Service after closing, and at a window finishing its citizen after its hour,
+# is paid at this multiple of the regular wage. Counting only the open hours
+# treats that work as free, which flatters plans that lean on overtime
+# (research/REPORT.md, section 5.12). 0 counts open window-hours only.
+OVERTIME_RATE = 1.0
 MEAN_SERVICE_TIME = 8.0     # minutes
 P90_TARGET = 15.0           # minutes
 STRESS_FACTORS = (0.9, 1.0, 1.1, 1.2)   # Demand multipliers for robustness checks
@@ -127,6 +132,24 @@ class SimulationResult:
     mean_service: float = 0.0
     # (result, mean cost difference, 95% CI) for finalists statistically tied with this one
     tied_alternatives: list = field(default_factory=list)
+
+    def daily_paid_hours(self, overtime_rate: float = None) -> list:
+        """
+        Paid staff-hours per day: the open windows' hours plus the service
+        work outside them (a closing window finishing its citizen, and service
+        after the doors close), paid at `overtime_rate` x the regular wage.
+        Staff leave once they have nobody left to serve.
+        """
+        kappa = OVERTIME_RATE if overtime_rate is None else overtime_rate
+        if not self.daily_spill:
+            return [float(self.total_staff_hours)] * max(1, len(self.daily_mean_waits))
+        return [self.total_staff_hours + kappa * (spill + after) / 60.0
+                for spill, after in zip(self.daily_spill, self.daily_overtime_busy)]
+
+    def paid_staff_hours(self, overtime_rate: float = None) -> float:
+        """Mean daily paid staff-hours; see daily_paid_hours."""
+        days = self.daily_paid_hours(overtime_rate)
+        return sum(days) / len(days)
 
 
 # ============================================================================
@@ -382,14 +405,18 @@ def generate_feasible_staffing(
 def compute_cost(
     result: SimulationResult,
     wait_weight: float = 1.0,
-    staff_weight: float = 0.5
+    staff_weight: float = 0.5,
+    overtime_rate: float = OVERTIME_RATE
 ) -> float:
     """
-    Compute weighted cost: w1 * mean_wait + w2 * total_staff_hours
+    Compute weighted cost: w1 * mean_wait + w2 * paid_staff_hours
 
-    Per project plan objective function.
+    Per project plan objective function, with staff-hours counting the
+    service work done after closing and at closing windows at
+    `overtime_rate` x the wage (0 counts open window-hours only).
     """
-    return wait_weight * result.mean_wait + staff_weight * result.total_staff_hours
+    return (wait_weight * result.mean_wait
+            + staff_weight * result.paid_staff_hours(overtime_rate))
 
 
 def _evaluate_all(
@@ -432,7 +459,8 @@ def grid_search_optimize(
     replications: int = NUM_REPLICATIONS,
     confirm_top_k: int = CONFIRM_TOP_K,
     confirm_replications: int = CONFIRM_REPLICATIONS,
-    workers: Optional[int] = None
+    workers: Optional[int] = None,
+    overtime_rate: float = OVERTIME_RATE
 ) -> tuple[SimulationResult, list[SimulationResult]]:
     """
     Two-stage grid search over feasible staffing configurations.
@@ -453,6 +481,7 @@ def grid_search_optimize(
         confirm_top_k: Finalists re-evaluated in stage 2
         confirm_replications: Replications per finalist
         workers: Parallel simulator processes (default: CPU count)
+        overtime_rate: Wage multiple for work outside open windows (0: unpaid)
 
     Returns:
         (best_result, all_screening_results)
@@ -465,14 +494,15 @@ def grid_search_optimize(
     if verbose:
         print(f"Grid Search: Evaluating {len(configurations)} configurations "
               f"x {replications} replications")
-        print(f"Cost function: {wait_weight}*wait + {staff_weight}*staff_hours")
+        print(f"Cost function: {wait_weight}*wait + {staff_weight}*paid_staff_hours "
+              f"(overtime paid at {overtime_rate:g}x)")
         if p90_target:
             print(f"P90 target: <= {p90_target} minutes")
 
     # Stage 1: screen everything
     results = _evaluate_all(configurations, replications, simulator_path, workers, verbose)
     for result in results:
-        result.cost_score = compute_cost(result, wait_weight, staff_weight)
+        result.cost_score = compute_cost(result, wait_weight, staff_weight, overtime_rate)
 
     # Keep anything that could plausibly meet the target given screening noise
     candidates = [
@@ -494,7 +524,7 @@ def grid_search_optimize(
     best_result = None
     best_cost = float('inf')
     for result in confirmed:
-        result.cost_score = compute_cost(result, wait_weight, staff_weight)
+        result.cost_score = compute_cost(result, wait_weight, staff_weight, overtime_rate)
         meets_constraint = (p90_target is None or result.p90_wait <= p90_target)
         if meets_constraint and result.cost_score < best_cost:
             best_cost = result.cost_score
@@ -505,8 +535,8 @@ def grid_search_optimize(
     # cannot be told apart from the winner with this many replications
     if best_result is not None:
         def daily_cost(r):
-            return [wait_weight * w + staff_weight * r.total_staff_hours
-                    for w in r.daily_mean_waits]
+            return [wait_weight * w + staff_weight * h
+                    for w, h in zip(r.daily_mean_waits, r.daily_paid_hours(overtime_rate))]
         best_daily = daily_cost(best_result)
         for result in confirmed:
             if result is best_result or not (p90_target is None or result.p90_wait <= p90_target):
@@ -531,16 +561,19 @@ def flat_staffing(windows_per_slot: int) -> list[int]:
     return [windows_per_slot] * 8
 
 
-def _print_scenario(s: SimulationResult):
+def _print_scenario(s: SimulationResult, overtime_rate: float = OVERTIME_RATE):
     print(f"    Staffing: {list(s.staffing)}")
     print(f"    Mean wait: {s.mean_wait:.2f} min  (95% CI: {s.mean_wait_ci[0]:.2f}-{s.mean_wait_ci[1]:.2f})")
     print(f"    P90 wait:  {s.p90_wait:.2f} min  (95% CI: {s.p90_wait_ci[0]:.2f}-{s.p90_wait_ci[1]:.2f})")
     print(f"    Staff-hours: {s.total_staff_hours}  |  Overtime: {s.avg_overtime:.1f} min"
           f"  |  n={s.n_replications} replications")
+    print(f"    Paid staff-hours (work after closing at {overtime_rate:g}x): "
+          f"{s.paid_staff_hours(overtime_rate):.1f}")
 
 
 def run_scenario_analysis(simulator_path: Path = None,
-                          sample_size: Optional[int] = None
+                          sample_size: Optional[int] = None,
+                          overtime_rate: float = OVERTIME_RATE
                           ) -> tuple[dict, list[SimulationResult]]:
     """
     Compare three staffing policies per project plan:
@@ -565,14 +598,14 @@ def run_scenario_analysis(simulator_path: Path = None,
     scenarios['flat'] = run_simulation(
         flat_staffing(3), replications=CONFIRM_REPLICATIONS, simulator_path=simulator_path
     )
-    _print_scenario(scenarios['flat'])
+    _print_scenario(scenarios['flat'], overtime_rate)
 
     # Scenario B: SIPP / Erlang-C
     print(f"\n[B] SIPP / Erlang-C (steady-state P90 <= {P90_TARGET:.0f} min each hour)")
     scenarios['sipp'] = run_simulation(
         sipp_staffing(), replications=CONFIRM_REPLICATIONS, simulator_path=simulator_path
     )
-    _print_scenario(scenarios['sipp'])
+    _print_scenario(scenarios['sipp'], overtime_rate)
 
     # Scenario C: Optimized with P90 <= 15 minutes
     print(f"\n[C] Optimized (P90 <= {P90_TARGET:.0f} min target)")
@@ -582,11 +615,12 @@ def run_scenario_analysis(simulator_path: Path = None,
         p90_target=P90_TARGET,
         simulator_path=simulator_path,
         verbose=False,
-        sample_size=sample_size
+        sample_size=sample_size,
+        overtime_rate=overtime_rate
     )
     if best:
         scenarios['optimized'] = best
-        _print_scenario(best)
+        _print_scenario(best, overtime_rate)
     else:
         print("    No feasible solution found")
 
@@ -718,7 +752,8 @@ def print_stress(stress: dict):
 # ============================================================================
 
 def generate_recommendation(scenarios: dict, stress: Optional[dict] = None,
-                            contingency: Optional[tuple] = None) -> str:
+                            contingency: Optional[tuple] = None,
+                            overtime_rate: float = OVERTIME_RATE) -> str:
     """
     Generate decision recommendation comparing scenarios.
 
@@ -764,7 +799,9 @@ def generate_recommendation(scenarios: dict, stress: Optional[dict] = None,
         report.append(f"    Peak staffing periods: {', '.join(peaks)}")
         report.append(f"    Expected P90 wait: {optimized.p90_wait:.1f} minutes "
                       f"(95% CI {optimized.p90_wait_ci[0]:.1f}-{optimized.p90_wait_ci[1]:.1f})")
-        report.append(f"    Total daily staff-hours: {optimized.total_staff_hours}")
+        report.append(f"    Total daily staff-hours: {optimized.total_staff_hours} "
+                      f"({optimized.paid_staff_hours(overtime_rate):.1f} paid, work after closing "
+                      f"at {overtime_rate:g}x)")
         for alt, diff, (low, high) in optimized.tied_alternatives:
             report.append(f"    Statistically tied: {list(alt.staffing)} "
                           f"({alt.total_staff_hours} h, cost {diff:+.2f}, "
@@ -796,7 +833,7 @@ def export_results_csv(results: list[SimulationResult], filename: str):
             'slot_0', 'slot_1', 'slot_2', 'slot_3',
             'slot_4', 'slot_5', 'slot_6', 'slot_7',
             'total_staff_hours', 'mean_wait', 'p90_wait',
-            'avg_served', 'avg_overtime', 'cost_score'
+            'avg_served', 'avg_overtime', 'paid_staff_hours', 'cost_score'
         ])
         for r in results:
             writer.writerow([
@@ -806,6 +843,7 @@ def export_results_csv(results: list[SimulationResult], filename: str):
                 f"{r.p90_wait:.2f}",
                 f"{r.avg_served:.1f}",
                 f"{r.avg_overtime:.1f}",
+                f"{r.paid_staff_hours():.2f}",
                 f"{r.cost_score:.2f}"
             ])
     print(f"Results exported to {filename}")
@@ -1130,6 +1168,13 @@ def main():
     )
 
     parser.add_argument(
+        "--overtime-rate",
+        type=float,
+        default=OVERTIME_RATE,
+        help="Wage multiple for service after closing and at closing windows "
+             "(default: %(default)s; 1.5 = time and a half; 0 = count open hours only)"
+    )
+    parser.add_argument(
         "--shifts",
         choices=["standard", "flexible"],
         default=None,
@@ -1147,7 +1192,8 @@ def main():
 
     if args.scenario_analysis:
         scenarios, all_results = run_scenario_analysis(simulator_path=sim_path,
-                                                       sample_size=args.sample_size)
+                                                       sample_size=args.sample_size,
+                                                       overtime_rate=args.overtime_rate)
 
         # Robustness to forecast error (same seeds for every plan and factor)
         stress = {
@@ -1169,7 +1215,7 @@ def main():
                                        known=list(scenarios.values()))
             print_frontier(frontier)
 
-        print(generate_recommendation(scenarios, stress, contingency))
+        print(generate_recommendation(scenarios, stress, contingency, args.overtime_rate))
         if args.shifts:
             print(format_roster_report(roster_search(args.shifts, args.target, sim_path)))
         if args.plot or args.save_plot is not None:
@@ -1182,7 +1228,8 @@ def main():
             p90_target=args.p90_target,
             simulator_path=sim_path,
             sample_size=args.sample_size,
-            verbose=True
+            verbose=True,
+            overtime_rate=args.overtime_rate
         )
 
         if best:
@@ -1190,7 +1237,8 @@ def main():
             print(f"  Staffing: {list(best.staffing)}")
             print(f"  Mean wait: {best.mean_wait:.2f} minutes")
             print(f"  P90 wait: {best.p90_wait:.2f} minutes")
-            print(f"  Staff-hours: {best.total_staff_hours}")
+            print(f"  Staff-hours: {best.total_staff_hours} "
+                  f"({best.paid_staff_hours(args.overtime_rate):.1f} paid)")
             print(f"  Cost score: {best.cost_score:.2f}")
 
         if args.frontier:
