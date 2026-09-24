@@ -1,5 +1,5 @@
 import { type Dispatch, type KeyboardEvent, useRef } from 'react';
-import { Num, SectionHead, Tile, useTip } from '../components/ui';
+import { Figure, Num, SectionHead, Tile, useTip } from '../components/ui';
 import { HOUR_LABELS, HOUR_RANGES, sum } from '../sim/model';
 import type { sippHourly } from '../sim/analytic';
 import { type Action, MAX_WINDOWS, type Params } from '../state';
@@ -37,21 +37,20 @@ export function PlanEditor({ params, dispatch, hourly, arrivals, meanWait, meanW
 
   return (
     <section id="plan" className="section">
-      <SectionHead num="02" title="Staffing plan">
-        <span className="spacer" />
-        <button className="btn sm" onClick={() => dispatch({ type: 'set', patch: { plan: [2, 3, 3, 2, 2, 3, 3, 3] } })}>Reset plan</button>
-      </SectionHead>
+      <SectionHead title="Setting the staffing plan" />
       <p className="lede">
-        Bars are open windows per hour. The line is the offered load λ/μ, the average number of windows the demand
-        keeps busy. An hour whose load reaches its windows can never catch up. Click a bar to add a window
-        (Shift-click removes one), or focus it and use the arrow keys.
+        The plan is just eight numbers: how many windows are open in each hour. The line over the bars is the
+        offered load λ/μ, the number of windows the visitors would keep busy on average. If an hour’s load reaches
+        its window count, that hour can never catch up and the line grows until the rush passes.
       </p>
-      <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-        <div className="grid4">
+      <Figure n={2} wide caption={<>Windows per hour (bars) against offered load (line). Click a bar to add a window,
+        Shift-click to remove one, or focus it and use the arrow keys. Hours drawn in red are unstable.{' '}
+        <button className="linkish" onClick={() => dispatch({ type: 'set', patch: { plan: [2, 3, 3, 2, 2, 3, 3, 3] } })}>Reset the plan</button>.</>}>
+        <div className="statline">
           <Tile variant="flat" label="Staff-hours" value={staffHours} />
-          <Tile variant="flat" label="Cost  w₁·W̄ + w₂·Σs" value={<Num value={cost} />}
-            sub={meanWaitSimulated ? 'W̄ from simulation' : 'W̄ from Erlang-C (updating…)'} />
-          <Tile variant="flat" label="Arrivals / day" value={Math.round(sum(arrivals))} />
+          <Tile variant="flat" label="Cost, w₁·W̄ + w₂·Σs" value={<Num value={cost} />}
+            sub={meanWaitSimulated ? 'W̄ simulated' : 'W̄ from Erlang-C, updating'} />
+          <Tile variant="flat" label="Visitors a day" value={Math.round(sum(arrivals))} />
           <Tile variant={unstable ? 'bad' : 'flat'} label="Unstable hours" value={unstable} />
         </div>
         <div className="rel scroll-x">
@@ -71,9 +70,9 @@ export function PlanEditor({ params, dispatch, hourly, arrivals, meanWait, meanW
                   onClick={(e) => dispatch({ type: 'step', hour: i, delta: e.shiftKey ? -1 : 1 })}
                   {...bind(cx, y(c) - 12, `${HOUR_RANGES[i]}: ${c} windows · λ ${arrivals[i].toFixed(1)}/h · load ${h.load.toFixed(2)}`)}>
                   <rect x={X0 + colW * i} y={Y0} width={colW} height={Y1 - Y0} fill="transparent" />
-                  <rect className="bar" x={cx - 28} width={56} y={y(c)} height={Y1 - y(c)} rx={4}
+                  <rect className="bar" x={cx - 28} width={56} y={y(c)} height={Y1 - y(c)}
                     fill={h.unstable ? 'var(--warn-soft)' : 'var(--accent-soft)'}
-                    stroke={h.unstable ? 'var(--warn)' : 'var(--accent)'} strokeWidth={h.unstable ? 1.5 : 1} />
+                    stroke={h.unstable ? 'var(--warn)' : 'var(--accent)'} strokeWidth={h.unstable ? 1.5 : 1} rx={1} />
                   <text className="num" x={cx} y={y(c) - 8} textAnchor="middle" fontSize="12" fill="var(--text)">{c}</text>
                   <text className="tick" x={cx} y={H - 10} textAnchor="middle">{HOUR_LABELS[i]}</text>
                 </g>
@@ -106,7 +105,7 @@ export function PlanEditor({ params, dispatch, hourly, arrivals, meanWait, meanW
             </span>
           ))}
         </div>
-      </div>
+      </Figure>
     </section>
   );
 }

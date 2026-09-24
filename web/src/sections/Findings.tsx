@@ -1,74 +1,55 @@
 import { SectionHead } from '../components/ui';
 
-interface Bar { label: string; frac: number; value: string; warn?: boolean }
-interface Finding { big: string; title: string; bars: Bar[]; body: string }
+const REPORT = 'https://github.com/KassaSana/CivicQ/blob/master/research/REPORT.md';
 
 /** Headline results from research/REPORT.md (24-setting factorial design, fixed seeds). */
-const FINDINGS: Finding[] = [
-  {
-    big: '+6.7%',
-    title: 'SIPP overstaffs; no analytic rule significantly understaffed',
-    bars: [
-      { label: 'SIPP average', frac: 6.7 / 18.6, value: '+6.7%', warn: true },
-      { label: 'SIPP worst case', frac: 14.5 / 18.6, value: '+14.5%', warn: true },
-      { label: 'OL-max average', frac: 1, value: '+18.6%', warn: true },
-    ],
-    body: 'Extra staff-hours versus the simulation-based plan. Most of the excess sits in the opening hour and the early-afternoon ramp.',
-  },
-  {
-    big: '≈ ½',
-    title: 'Lag corrections recover about half of the excess',
-    bars: [
-      { label: 'Service ≥ 8 min', frac: 0.5, value: '~half' },
-      { label: 'Service 4 min', frac: 0.1, value: 'little' },
-    ],
-    body: 'Shifting demand forward by one mean service time helps when services are long relative to the one-hour block.',
-  },
-  {
-    big: '8% → 22%',
-    title: 'Demand uncertainty is a scale effect',
-    bars: [
-      { label: '2-window office', frac: 8 / 22, value: '+8%' },
-      { label: '24-window office', frac: 1, value: '+22%' },
-    ],
-    body: 'Extra staff needed to absorb 20% day-to-day demand uncertainty. Big offices lose the most because their Poisson noise is relatively small.',
-  },
-  {
-    big: '18 vs 22 h',
-    title: 'The service-level definition is a policy choice',
-    bars: [
-      { label: 'Loosest definition', frac: 18 / 22, value: '18 h' },
-      { label: 'Strictest definition', frac: 1, value: '22 h' },
-    ],
-    body: 'Same office, same demand. Only the definition of “good service” changes the required staffing.',
-  },
-];
-
 export function Findings() {
   return (
     <section id="findings" className="section">
-      <SectionHead num="07" title="Research findings" />
-      <p className="lede">From <code>research/REPORT.md</code>. Common random numbers also cut the variance of plan-vs-plan comparisons by a median of 40×.</p>
-      <div className="grid2">
-        {FINDINGS.map((f) => (
-          <div key={f.title} className="card" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-            <div className="num accent" style={{ fontSize: 26 }}>{f.big}</div>
-            <div className="card-title">{f.title}</div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              {f.bars.map((b) => (
-                <div key={b.label} style={{ display: 'grid', gridTemplateColumns: '130px minmax(0, 1fr) 56px', alignItems: 'center', gap: 8 }}>
-                  <span className="card-sub">{b.label}</span>
-                  <div style={{ height: 8, borderRadius: 4, background: 'var(--grid)' }}>
-                    <div style={{ height: 8, borderRadius: 4, width: `${b.frac * 100}%`, background: b.warn ? 'var(--warn)' : 'var(--accent)' }} />
-                  </div>
-                  <span className="num" style={{ fontSize: 12, textAlign: 'right' }}>{b.value}</span>
-                </div>
-              ))}
-            </div>
-            <div className="card-sub" style={{ lineHeight: 1.5 }}>{f.body}</div>
-          </div>
-        ))}
-      </div>
+      <SectionHead title="What the study found" />
+      <p className="lede">
+        The <a href={REPORT}>research report</a> runs this simulator across 24 office configurations, from 2 to 24
+        windows, and asks when the textbook staffing rules go wrong. In short:
+      </p>
+      <ol className="findings">
+        <li>
+          <b>The textbook rules are safe but wasteful.</b> None of them understaffed in a statistically significant way.
+          SIPP used <span className="num">6.7%</span> more staff-hours than the simulation-based plan on average, and up
+          to <span className="num">14.5%</span> more. Staffing each hour for its peak load (OL-max) used{' '}
+          <span className="num">18.6%</span> more. Most of the excess goes into the opening hour and the early-afternoon
+          ramp, when the real line has not built up yet. (§5.2)
+        </li>
+        <li>
+          <b>Lagging demand fixes about half of it.</b> Shifting the demand curve forward by one mean service time
+          recovers roughly half of SIPP’s excess when visits take 8 minutes or more, but little when they take 4. (§5.2)
+        </li>
+        <li>
+          <b>Demand uncertainty costs big offices the most.</b> Allowing for 20% day-to-day uncertainty in demand
+          adds <span className="num">8%</span> staff for a 2-window office and <span className="num">22%</span> for a
+          24-window office, because a large office’s own random variation is relatively small. (§5.3)
+        </li>
+        <li>
+          <b>“Good service” is a policy choice.</b> The same office with the same demand needs{' '}
+          <span className="num">18</span> staff-hours under the loosest reasonable definition of the service target
+          and <span className="num">22</span> under the strictest. (§5.4)
+        </li>
+        <li>
+          <b>Shifts matter more than the staffing rule.</b> Real staff work 4- and 8-hour shifts. The usual two-step
+          method (set an hourly requirement, then fit shifts to it) costs up to <span className="num">68%</span> more
+          paid hours than the ideal hour-by-hour plan. Searching over shift schedules directly with the simulator is
+          up to <span className="num">15%</span> cheaper. (§5.5)
+        </li>
+        <li>
+          <b>Appointments help through the shifts.</b> Booking 75% of demand into the quiet hours cuts a large
+          office’s roster by <span className="num">24%</span>, but barely changes the hour-by-hour need. A small office
+          saves nothing. (§5.7)
+        </li>
+      </ol>
+      <p className="note">
+        One methodological note: giving every plan the same simulated visitors (common random numbers) cut the
+        variance of plan-against-plan comparisons by a median of 40×. Without it, the searches in the study would
+        need about 40 times as many simulated days. (§5.4)
+      </p>
     </section>
   );
 }

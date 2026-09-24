@@ -8,13 +8,16 @@ import { MathExplained } from './sections/MathExplained';
 import { PlanEditor } from './sections/PlanEditor';
 import { Results } from './sections/Results';
 import { sippHourly } from './sim/analytic';
-import { expectedRates } from './sim/model';
+import { expectedRates, sum } from './sim/model';
 import { fromUrl, reducer, toConfig, toUrl } from './state';
 import { useRun } from './useSim';
 
-const SECTIONS: [string, string][] = [
-  ['queue', 'Live queue'], ['plan', 'Staffing plan'], ['results', 'Results'], ['math', 'The math'],
-  ['compare', 'Compare plans'], ['frontier', 'Cost vs. service'], ['findings', 'Findings'],
+const REPO = 'https://github.com/KassaSana/CivicQ';
+
+const CONTENTS: [string, string][] = [
+  ['queue', 'One simulated day'], ['plan', 'Setting the staffing plan'], ['results', 'How long people wait'],
+  ['math', 'Why the textbook formula disagrees'], ['compare', 'The textbook rules, side by side'],
+  ['frontier', 'What each extra staff-hour buys'], ['findings', 'What the study found'],
 ];
 
 type Theme = 'light' | 'dark';
@@ -31,28 +34,10 @@ function useTheme(): [Theme, () => void] {
   return [theme, toggle];
 }
 
-function useActiveSection(): string {
-  const [active, setActive] = useState('queue');
-  useEffect(() => {
-    const obs = new IntersectionObserver(
-      (entries) => {
-        const vis = entries.filter((e) => e.isIntersecting).sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top);
-        if (vis[0]) setActive(vis[0].target.id);
-      },
-      { rootMargin: '-70px 0px -60% 0px' },
-    );
-    SECTIONS.forEach(([id]) => { const el = document.getElementById(id); if (el) obs.observe(el); });
-    return () => obs.disconnect();
-  }, []);
-  return active;
-}
-
 export function App() {
   const [params, dispatch] = useReducer(reducer, undefined, () => fromUrl(location.search));
   const [theme, toggleTheme] = useTheme();
   const [railOpen, setRailOpen] = useState(false);
-  const [navOpen, setNavOpen] = useState(false);
-  const active = useActiveSection();
 
   useEffect(() => { history.replaceState(null, '', toUrl(params)); }, [params]);
 
@@ -70,65 +55,82 @@ export function App() {
     return s / n;
   }, [hourly, rates]);
 
+  // Escape closes the assumptions drawer
+  useEffect(() => {
+    if (!railOpen) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setRailOpen(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [railOpen]);
+
+  const openAssumptions = () => setRailOpen(true);
+  const perDay = Math.round(sum(rates));
+
   return (
     <>
       <header className="header">
-        <button className="btn icon only-mobile" aria-label="Sections" onClick={() => setNavOpen(!navOpen)} aria-expanded={navOpen}>
-          <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" strokeWidth="1.5" /></svg>
-        </button>
-        <div className="brand">
-          <svg width="22" height="22" viewBox="0 0 22 22" aria-hidden="true">
-            <rect x="1" y="1" width="20" height="20" rx="5" fill="none" stroke="var(--accent)" strokeWidth="1.6" />
-            <circle cx="7" cy="11" r="1.8" fill="var(--accent)" /><circle cx="11" cy="11" r="1.8" fill="var(--accent)" />
-            <rect x="14" y="7" width="3.5" height="8" rx="1" fill="var(--accent)" />
-          </svg>
-          <b>CivicQ</b>
-          <span>Staffing a walk-in office, visually</span>
+        <div className="header-inner">
+          <a className="brand" href="#top">CivicQ</a>
+          <span className="spacer" />
+          <a href={`${REPO}/blob/master/research/REPORT.md`} className="only-wide">Report</a>
+          <a href={REPO}>Code</a>
+          <button className="linkish" onClick={openAssumptions} aria-expanded={railOpen}>Assumptions</button>
+          <button className="linkish" onClick={toggleTheme} aria-label="Toggle light or dark mode">
+            {theme === 'dark' ? 'Light' : 'Dark'}
+          </button>
         </div>
-        <span className="spacer" />
-        <span className="num card-sub only-wide">seed {params.seed} · {params.days.toLocaleString()} days</span>
-        <button className="btn only-narrow" onClick={() => setRailOpen(!railOpen)} aria-expanded={railOpen}>Model</button>
-        <button className="btn" onClick={toggleTheme} aria-label="Toggle light or dark mode">
-          <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
-            <circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" strokeWidth="1.4" />
-            <path d="M8 2 A6 6 0 0 1 8 14 Z" fill="currentColor" />
-          </svg>
-          <span className="only-wide">{theme === 'dark' ? 'Dark' : 'Light'}</span>
-        </button>
         {updating && <div className="progress" style={{ width: `${Math.max(4, (progress ?? 0) * 100)}%` }} />}
       </header>
 
-      <div className="shell">
-        <nav className={`nav ${navOpen ? 'open' : ''}`} aria-label="Sections">
-          <div className="nav-inner">
-            <div className="nav-title">On this page</div>
-            {SECTIONS.map(([id, label], i) => (
-              <a key={id} href={`#${id}`} className={active === id ? 'on' : ''} onClick={() => setNavOpen(false)}>
-                <span className="num">0{i + 1}</span>{label}
-              </a>
-            ))}
+      <main className="page" id="top">
+        <div className="title-block">
+          <h1>How many windows does a walk-in office need?</h1>
+          <div className="byline">
+            KassaSana · September 2026 · <a href={`${REPO}/blob/master/research/REPORT.md`}>full report</a> · <a href={REPO}>source</a>
           </div>
-        </nav>
+          <p>
+            A permit office opens at 8 and sees about <span className="num">{perDay}</span> people a day, in waves: a
+            morning rush, a lull at lunch, a second rush after 1. Each visit takes <span className="num">{params.meanService}</span> minutes
+            on average. The manager has to decide, hour by hour, how many windows to open. Too few and the line runs
+            out the door; too many and staff sit idle on the public’s money.
+          </p>
+          <p>
+            This page runs a queue simulator in your browser. Change the plan below and it replays{' '}
+            <span className="num">{params.days.toLocaleString()}</span> days to show what people would wait. The current plan
+            uses <span className="num">{sum(params.plan)}</span> staff-hours. The target is that at most{' '}
+            <span className="num">{Math.round(params.alpha * 100)}%</span> of each hour’s visitors wait more than{' '}
+            <span className="num">{params.threshold}</span> minutes. Every assumption can be changed under{' '}
+            <button className="linkish" onClick={openAssumptions}>Assumptions</button>.
+          </p>
+          <ol className="contents">
+            {CONTENTS.map(([id, label]) => <li key={id}><a href={`#${id}`}>{label}</a></li>)}
+          </ol>
+        </div>
 
-        <main className="main">
-          <LiveQueue cfg={cfg} seed={params.seed} />
-          <PlanEditor params={params} dispatch={dispatch} hourly={hourly} arrivals={rates}
-            meanWait={!updating && agg ? agg.meanWait : erlangWait} meanWaitSimulated={!updating && !!agg} />
-          <Results agg={agg} hourly={hourly} alpha={params.alpha} threshold={params.threshold} updating={updating} />
-          <MathExplained params={params} dispatch={dispatch} hourly={hourly} agg={agg} cfg={cfg} />
-          <ComparePlans params={params} dispatch={dispatch} cfg={cfg} />
-          <Frontier params={params} dispatch={dispatch} cfg={cfg} />
-          <Findings />
-          <footer className="card-sub">
-            Simulator ported from <code>cpp/src/simulation.cpp</code> and checked against it in <code>web/src/sim/sim.test.ts</code>.
-          </footer>
-        </main>
+        <LiveQueue cfg={cfg} seed={params.seed} />
+        <PlanEditor params={params} dispatch={dispatch} hourly={hourly} arrivals={rates}
+          meanWait={!updating && agg ? agg.meanWait : erlangWait} meanWaitSimulated={!updating && !!agg} />
+        <Results agg={agg} hourly={hourly} alpha={params.alpha} threshold={params.threshold} updating={updating} />
+        <MathExplained params={params} dispatch={dispatch} hourly={hourly} agg={agg} cfg={cfg} />
+        <ComparePlans params={params} dispatch={dispatch} cfg={cfg} />
+        <Frontier params={params} dispatch={dispatch} cfg={cfg} />
+        <Findings />
 
-        <aside className={`rail ${railOpen ? 'open' : ''}`} aria-label="Model controls">
-          <Controls params={params} dispatch={dispatch} />
-        </aside>
-        <div className={`backdrop ${railOpen || navOpen ? 'open' : ''}`} onClick={() => { setRailOpen(false); setNavOpen(false); }} />
-      </div>
+        <footer className="footer">
+          <p>
+            <b>Reproducing this.</b> The simulator is a TypeScript port of <code>cpp/src/simulation.cpp</code>. Its tests
+            (<code>web/src/sim/sim.test.ts</code>) check it against Erlang-C, the Python research code and the C++
+            executable. Day <i>k</i> always uses seed <span className="num">{params.seed}</span> + <i>k</i>, so every plan
+            sees the same visitors, and a copied link reproduces this exact page.
+          </p>
+          <p><a href={REPO}>github.com/KassaSana/CivicQ</a></p>
+        </footer>
+      </main>
+
+      <aside className={`rail ${railOpen ? 'open' : ''}`} aria-label="Model assumptions" aria-hidden={!railOpen}>
+        <Controls params={params} dispatch={dispatch} onClose={() => setRailOpen(false)} />
+      </aside>
+      <div className={`backdrop ${railOpen ? 'open' : ''}`} onClick={() => setRailOpen(false)} />
     </>
   );
 }

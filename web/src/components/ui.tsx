@@ -1,12 +1,23 @@
 import { type ReactNode, useEffect, useRef, useState } from 'react';
 
-export function SectionHead({ num, title, children }: { num: string; title: string; children?: ReactNode }) {
+export function SectionHead({ title, children }: { title: string; children?: ReactNode }) {
   return (
     <div className="section-head">
-      <span className="num">{num}</span>
       <h2>{title}</h2>
       {children}
     </div>
+  );
+}
+
+/** A numbered figure: content with a caption underneath. */
+export function Figure({ n, caption, wide, className, children }: {
+  n: number | string; caption: ReactNode; wide?: boolean; className?: string; children: ReactNode;
+}) {
+  return (
+    <figure className={`fig ${wide ? 'wide' : ''} ${className ?? ''}`}>
+      {children}
+      <figcaption><b>Figure {n}.</b> {caption}</figcaption>
+    </figure>
   );
 }
 

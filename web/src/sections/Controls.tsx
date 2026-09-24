@@ -14,7 +14,7 @@ function Slider({ id, label, value, min, max, step, format, onChange }: {
   );
 }
 
-export function Controls({ params, dispatch }: { params: Params; dispatch: Dispatch<Action> }) {
+export function Controls({ params, dispatch, onClose }: { params: Params; dispatch: Dispatch<Action>; onClose: () => void }) {
   const set = (patch: Partial<Params>) => dispatch({ type: 'set', patch });
   const [copied, setCopied] = useState(false);
   const copy = async () => {
@@ -28,10 +28,16 @@ export function Controls({ params, dispatch }: { params: Params; dispatch: Dispa
   };
   return (
     <div className="rail-inner">
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <span style={{ fontWeight: 600 }}>Model</span>
-        <button className="btn sm" onClick={() => dispatch({ type: 'reset' })}>Reset to defaults</button>
+      <div className="rail-head">
+        <h2>Assumptions</h2>
+        <span className="spacer" />
+        <button className="btn sm" onClick={onClose} aria-label="Close assumptions">Close</button>
       </div>
+      <p className="note">
+        Everything on the page reruns when you change these. Defaults are the office studied in the report.{' '}
+        <button className="linkish" onClick={() => dispatch({ type: 'reset' })}>Reset to defaults</button>
+      </p>
+      <span className="rail-group">Visitors and service</span>
       <Slider id="ms" label="Mean service time" value={params.meanService} min={2} max={20} step={0.5}
         format={(v) => `${v} min`} onChange={(v) => set({ meanService: v })} />
       <div className="field">
@@ -50,12 +56,13 @@ export function Controls({ params, dispatch }: { params: Params; dispatch: Dispa
         format={(v) => `${v.toFixed(2)}×`} onChange={(v) => set({ demandMult: v })} />
       <Slider id="dcv" label="Day-to-day demand CV" value={params.rateCv} min={0} max={0.4} step={0.05}
         format={(v) => v.toFixed(2)} onChange={(v) => set({ rateCv: v })} />
+      <span className="rail-group">Service target</span>
       <Slider id="thr" label="Wait threshold T" value={params.threshold} min={5} max={30} step={1}
         format={(v) => `${v} min`} onChange={(v) => set({ threshold: v })} />
       <Slider id="alpha" label="Allowed late share α" value={params.alpha} min={0.02} max={0.3} step={0.01}
         format={(v) => `${Math.round(v * 100)}%`} onChange={(v) => set({ alpha: v })} />
       <div className="divider" />
-      <span style={{ fontWeight: 600 }}>Appointments</span>
+      <span className="rail-group">Appointments</span>
       <Slider id="appt" label="Share of demand booked" value={params.apptShare} min={0} max={0.75} step={0.05}
         format={(v) => (v ? `${Math.round(v * 100)}%` : 'Walk-ins only')} onChange={(v) => set({ apptShare: v })} />
       {params.apptShare > 0 && (
@@ -72,12 +79,13 @@ export function Controls({ params, dispatch }: { params: Params; dispatch: Dispa
             format={(v) => `${Math.round(v * 100)}%`} onChange={(v) => set({ noShow: v })} />
           <Slider id="punct" label="Punctuality SD" value={params.punctualitySd} min={0} max={15} step={1}
             format={(v) => `${v} min`} onChange={(v) => set({ punctualitySd: v })} />
-          <div className="card-sub" style={{ lineHeight: 1.5 }}>
+          <div className="note">
             Slots are overbooked by 1/(1 − no-show) so expected arrivals stay the same; walk-ins shrink by the booked share.
           </div>
         </>
       )}
       <div className="divider" />
+      <span className="rail-group">Simulation</span>
       <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: 10 }}>
         <div className="field">
           <label htmlFor="seed" style={{ fontSize: 13 }}>Seed</label>
@@ -92,10 +100,10 @@ export function Controls({ params, dispatch }: { params: Params; dispatch: Dispa
         </div>
       </div>
       <button className="btn" onClick={copy}>{copied ? 'Link copied' : 'Copy link to this view'}</button>
-      <div className="card-sub" style={{ lineHeight: 1.5 }}>
-        Erlang-C numbers update as you drag. Simulated numbers rerun in the background; the thin bar under the
-        header shows progress. Seeds are shared across plans (common random numbers).
-      </div>
+      <p className="note">
+        Erlang-C numbers update as you drag. The simulation reruns in the background, and the thin line under the
+        header shows its progress. All plans share the same seeds, so they face the same visitors.
+      </p>
     </div>
   );
 }

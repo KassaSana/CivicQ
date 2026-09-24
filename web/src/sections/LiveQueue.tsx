@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { SectionHead } from '../components/ui';
+import { Figure, SectionHead } from '../components/ui';
 import { DAY_MINUTES, type SimConfig, slotOf } from '../sim/model';
 import { queueLengthAt, simulateDay } from '../sim/simulate';
 
@@ -81,15 +81,19 @@ export function LiveQueue({ cfg, seed }: { cfg: SimConfig; seed: number }) {
 
   return (
     <section id="queue" className="section">
-      <SectionHead num="01" title="Live queue" />
+      <SectionHead title="One simulated day" />
       <p className="lede">
-        One simulated day with your current plan, replayed. Citizens arrive at the door, join a single line and
-        go to the first free window. Drag the clock or press play (Space).
+        Start with a single day. Visitors arrive at random, but more often at the busy hours. They join one line
+        and go to the first free window. Each dot below is a person. Press play (or Space) to run the day, or drag
+        along the strip underneath to jump to a time.
       </p>
-      <div className="card live">
+      <Figure n={1} caption={<>One day under the current plan, seed <span className="num">{seed}</span>. The strip under the
+        clock is this day’s line length (peak <span className="num">{spark.max}</span>); the dashed mark is closing time.
+        Red dots have waited longer than {cfg.threshold} minutes.</>}>
+      <div className="live">
         <svg className="chart" viewBox={`0 0 600 ${svgH}`} role="img"
           aria-label={`At ${clockLabel(t)}: ${waiting.length} waiting, ${busyCount} of ${open} windows busy`}>
-          <rect x="8" y={midY - 25} width="40" height="50" rx="6" fill="none" stroke="var(--line)" strokeWidth="1.5" />
+          <rect x="8" y={midY - 25} width="40" height="50" rx="2" fill="none" stroke="var(--line)" strokeWidth="1.5" />
           <text x="28" y={midY + 42} className="tick" textAnchor="middle">{t >= DAY_MINUTES ? 'closed' : 'door'}</text>
           {justArrived > 0 && <circle cx="70" cy={midY} r="7" fill="var(--dot)" />}
           <line x1="110" y1={midY} x2="410" y2={midY} stroke="var(--grid)" strokeWidth="26" strokeLinecap="round" />
@@ -102,14 +106,14 @@ export function LiveQueue({ cfg, seed }: { cfg: SimConfig; seed: number }) {
           {waiting.length > MAX_DOTS && (
             <text x="110" y={midY - 20} className="tick num">+{waiting.length - MAX_DOTS} more</text>
           )}
-          <text x="260" y={midY + 36} className="tick" textAnchor="middle">queue (FIFO)</text>
+          <text x="260" y={midY + 36} className="tick" textAnchor="middle">line (first come, first served)</text>
           {Array.from({ length: maxW }, (_, w) => {
             const isOpen = w < open && t < DAY_MINUTES;
             const c = inService.find((x) => x.window === w);
             const y = winTop + w * rowH;
             return (
               <g key={w} opacity={isOpen || c ? 1 : 0.4}>
-                <rect x="450" y={y} width="140" height={rowH - 8} rx="7" fill="var(--panel)"
+                <rect x="450" y={y} width="140" height={rowH - 8} rx="2" fill="var(--panel)"
                   stroke={c ? 'var(--accent)' : 'var(--line)'} strokeWidth="1.5" strokeDasharray={isOpen || c ? undefined : '4 3'} />
                 {c && <circle cx="472" cy={y + (rowH - 8) / 2} r="7.5" fill="var(--accent)" />}
                 <text x="488" y={y + (rowH - 8) / 2 + 4} className="tick">
@@ -122,13 +126,13 @@ export function LiveQueue({ cfg, seed }: { cfg: SimConfig; seed: number }) {
         <div className="live-stats">
           <div><div className="card-sub">Clock</div><div className="num" style={{ fontSize: 24 }}>{clockLabel(t)}</div>
             {t > DAY_MINUTES && <div className="card-sub warn">overtime +{(t - DAY_MINUTES).toFixed(0)} min</div>}</div>
-          <div><div className="card-sub">In queue</div><div className="num" style={{ fontSize: 18 }}>{waiting.length}</div></div>
-          <div><div className="card-sub">Busy windows</div><div className="num" style={{ fontSize: 18 }}>{busyCount} / {open}</div></div>
-          <div><div className="card-sub">Head of line has waited</div><div className="num" style={{ fontSize: 18 }}>{headWait.toFixed(1)} min</div></div>
-          <div><div className="card-sub">Served so far</div><div className="num" style={{ fontSize: 18 }}>{served} / {day.citizens.length}</div></div>
+          <div><div className="card-sub">In line</div><div className="num">{waiting.length}</div></div>
+          <div><div className="card-sub">Busy windows</div><div className="num">{busyCount} / {open}</div></div>
+          <div><div className="card-sub">Front of the line has waited</div><div className="num">{headWait.toFixed(1)} min</div></div>
+          <div><div className="card-sub">Served so far</div><div className="num">{served} / {day.citizens.length}</div></div>
         </div>
         <div style={{ gridColumn: '1 / -1', display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-          <button className="btn primary icon" style={{ width: 44, height: 44 }} aria-label={playing ? 'Pause' : 'Play'}
+          <button className="btn primary icon" style={{ width: 40, height: 40 }} aria-label={playing ? 'Pause' : 'Play'}
             onClick={() => {
               if (!playing && t >= end) setT(0);
               setPlaying(!playing);
@@ -156,10 +160,8 @@ export function LiveQueue({ cfg, seed }: { cfg: SimConfig; seed: number }) {
             ))}
           </div>
         </div>
-        <div className="card-sub" style={{ gridColumn: '1 / -1' }}>
-          Track shows this day's queue length (peak {spark.max}); the dashed line is closing time. Orange dots have waited longer than {cfg.threshold} min.
-        </div>
       </div>
+      </Figure>
     </section>
   );
 }

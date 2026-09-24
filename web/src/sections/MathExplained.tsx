@@ -1,5 +1,5 @@
 import { type Dispatch, useMemo, useState } from 'react';
-import { SectionHead, pct, useTip } from '../components/ui';
+import { Figure, SectionHead, pct, useTip } from '../components/ui';
 import { erlangC, offeredLoad, type sippHourly } from '../sim/analytic';
 import { DAY_MINUTES, HOUR_RANGES, type SimConfig, expectedRates } from '../sim/model';
 import { type Aggregate, QUEUE_BIN } from '../sim/stats';
@@ -64,73 +64,66 @@ export function MathExplained({ params, dispatch, hourly, agg, cfg }: {
 
   return (
     <section id="math" className="section">
-      <SectionHead num="04" title="The math, explained" />
-      <div className="grid2">
-        <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-          <div className="card-title">Erlang-C: the chance you wait</div>
-          <div className="formula num">{`a = λ/μ                  (offered load)
+      <SectionHead title="Why the textbook formula disagrees" />
+      <p className="lede">
+        The standard way to staff an office like this is SIPP: treat each hour as its own steady-state queue and
+        use the Erlang-C formula to pick the smallest number of windows that meets the target. The formula gives
+        the chance that a visitor has to wait at all, C(s, a), and from it the chance of waiting longer than T:
+      </p>
+      <div className="formula">{`a = λ/μ                  (offered load)
 C(s,a) = aˢ/s!·s/(s−a) ÷ [Σₖ₌₀ˢ⁻¹ aᵏ/k! + aˢ/s!·s/(s−a)]
 P(W > T) = C(s,a) · e^(−(sμ−λ)T)`}</div>
-          <div className="seg hours" role="group" aria-label="Hour">
-            {HOUR_RANGES.map((r, i) => (
-              <button key={r} className={hour === i ? 'on' : ''} aria-pressed={hour === i} onClick={() => setHour(i)}>{r}</button>
-            ))}
-          </div>
-          <p style={{ margin: 0, lineHeight: 2 }}>
-            In the {HOUR_RANGES[hour]} hour, <span className="chip num">λ = {lam.toFixed(1)}/h</span> arrive and each takes
-            {' '}<span className="chip num">{cfg.meanService} min</span>, so the load is <span className="chip num">a = {h.load.toFixed(2)}</span>. With{' '}
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, verticalAlign: 'middle' }}>
-              <button className="btn step" aria-label="Fewer windows" onClick={() => dispatch({ type: 'step', hour, delta: -1 })}>−</button>
-              <span className="chip num">{c}</span>
-              <button className="btn step" aria-label="More windows" onClick={() => dispatch({ type: 'step', hour, delta: 1 })}>+</button>
-            </span>{' '}
-            windows, steady-state theory says <b className="num">{h.unstable ? 'everyone' : pct(h.late)}</b> wait more than {params.threshold} minutes.
-          </p>
-          <div className="grid2" style={{ gap: 10 }}>
-            <div className="tile"><div className="label">Erlang-C, steady state</div><div className="value num">{pct(h.late)}</div>
-              <div className="sub">C(s, a) = {pct(erlangC(c, h.load))} wait at all</div></div>
-            <div className="tile"><div className="label">Simulated, doors open empty</div>
-              <div className="value num accent">{sim === undefined ? '…' : pct(sim)}</div>
-              <div className="sub">{simCi ? `95% CI ${pct(simCi[0])}–${pct(simCi[1])}` : ''}</div></div>
-          </div>
-          <p className="card-sub" style={{ margin: 0 }}>{note}</p>
-        </div>
-
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-          <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            <div className="card-title">Congestion lags demand</div>
-            <div className="card-sub">
-              Mean number waiting. SIPP (dashed) assumes every hour is already in steady state; the simulated queue
-              (solid) starts at zero and carries backlog into the next hour.
-            </div>
-            <div className="rel">
-              <svg className="chart" viewBox={`0 0 ${W} ${H}`} role="img" aria-label="Mean queue length through the day, simulated versus SIPP">
-                <Axis yMax={qMax} ticks={Array.from({ length: qMax + 1 }, (_, i) => i)} label="waiting" />
-                <path d={sippPath} fill="none" stroke="var(--muted)" strokeWidth="1.5" strokeDasharray="5 3" />
-                <polyline points={qPts} fill="none" stroke="var(--accent)" strokeWidth="2.2" />
-                {lq.map((v, i) => (
-                  <rect key={i} x={xm(i * 60)} y={TOP} width={xm(60) - X0} height={BASE - TOP} fill="transparent"
-                    {...tipQ.bind(xm(i * 60 + 30), TOP + 10, `${HOUR_RANGES[i]}: SIPP ${Number.isFinite(v) ? v.toFixed(2) : '∞'} · sim ${
-                      agg ? (agg.queueCurve.slice(i * 6, i * 6 + 6).reduce((a, b) => a + b, 0) / 6).toFixed(2) : '…'}`)} />
-                ))}
-              </svg>
-              {tipQ.node}
-            </div>
-          </div>
-          <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            <div className="card-title">Offered load m(t)</div>
-            <div className="card-sub">
-              Busy servers if there were unlimited windows: m(t) = ∫ λ(t−u)·P(S &gt; u) du. It rises from zero at opening
-              and trails the hourly λ/μ steps (dashed). Grey steps are your windows.
-            </div>
-            <svg className="chart" viewBox={`0 0 ${W} ${H}`} role="img" aria-label="Offered load over the day">
-              <Axis yMax={mMax} ticks={Array.from({ length: mMax + 1 }, (_, i) => i)} label="windows" />
-              <path d={stepPath(params.plan)} fill="none" stroke="var(--dot)" strokeWidth="1.5" />
-              <path d={stepPath(hourly.map((x) => x.load))} fill="none" stroke="var(--muted)" strokeWidth="1.5" strokeDasharray="5 3" />
-              <polyline points={mPts} fill="none" stroke="var(--accent)" strokeWidth="2.2" />
+      <div className="seg hours" role="group" aria-label="Hour">
+        {HOUR_RANGES.map((r, i) => (
+          <button key={r} className={hour === i ? 'on' : ''} aria-pressed={hour === i} onClick={() => setHour(i)}>{r}</button>
+        ))}
+      </div>
+      <p style={{ lineHeight: 2 }}>
+        In the {HOUR_RANGES[hour]} hour, <span className="chip num">λ = {lam.toFixed(1)}</span> people arrive and each takes{' '}
+        <span className="chip num">{cfg.meanService}</span> minutes, so the load is <span className="chip num">a = {h.load.toFixed(2)}</span>. With{' '}
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, verticalAlign: 'middle' }}>
+          <button className="btn step" aria-label="Fewer windows" onClick={() => dispatch({ type: 'step', hour, delta: -1 })}>−</button>
+          <span className="chip num">{c}</span>
+          <button className="btn step" aria-label="More windows" onClick={() => dispatch({ type: 'step', hour, delta: 1 })}>+</button>
+        </span>{' '}
+        windows, the formula says <b className="num">{h.unstable ? 'everyone' : pct(h.late)}</b> wait more than {params.threshold} minutes.
+      </p>
+      <div className="statline">
+        <div className="tile"><div className="label">Erlang-C, steady state</div><div className="value num">{pct(h.late)}</div>
+          <div className="sub">{pct(erlangC(c, h.load))} wait at all</div></div>
+        <div className="tile"><div className="label">Simulated, office opens empty</div>
+          <div className="value num accent">{sim === undefined ? '…' : pct(sim)}</div>
+          <div className="sub">{simCi ? `95% interval ${pct(simCi[0])}–${pct(simCi[1])}` : ''}</div></div>
+      </div>
+      <p>{note}</p>
+      <div className="figs wide">
+        <Figure n={6} caption={<>Average number waiting through the day. SIPP (dashed) assumes every hour is already
+          in steady state. The simulated line (solid) starts at zero and carries each hour’s backlog into the next,
+          so congestion lags demand.</>}>
+          <div className="rel">
+            <svg className="chart" viewBox={`0 0 ${W} ${H}`} role="img" aria-label="Mean queue length through the day, simulated versus SIPP">
+              <Axis yMax={qMax} ticks={Array.from({ length: qMax + 1 }, (_, i) => i)} label="waiting" />
+              <path d={sippPath} fill="none" stroke="var(--muted)" strokeWidth="1.5" strokeDasharray="5 3" />
+              <polyline points={qPts} fill="none" stroke="var(--accent)" strokeWidth="2.2" />
+              {lq.map((v, i) => (
+                <rect key={i} x={xm(i * 60)} y={TOP} width={xm(60) - X0} height={BASE - TOP} fill="transparent"
+                  {...tipQ.bind(xm(i * 60 + 30), TOP + 10, `${HOUR_RANGES[i]}: SIPP ${Number.isFinite(v) ? v.toFixed(2) : '∞'} · sim ${
+                    agg ? (agg.queueCurve.slice(i * 6, i * 6 + 6).reduce((a, b) => a + b, 0) / 6).toFixed(2) : '…'}`)} />
+              ))}
             </svg>
+            {tipQ.node}
           </div>
-        </div>
+        </Figure>
+        <Figure n={7} caption={<>Offered load m(t) = ∫ λ(t−u)·P(S &gt; u) du: how many windows would be busy if there
+          were unlimited windows. It starts at zero when the doors open and trails the hourly λ/μ steps (dashed).
+          The grey steps are your windows.</>}>
+          <svg className="chart" viewBox={`0 0 ${W} ${H}`} role="img" aria-label="Offered load over the day">
+            <Axis yMax={mMax} ticks={Array.from({ length: mMax + 1 }, (_, i) => i)} label="windows" />
+            <path d={stepPath(params.plan)} fill="none" stroke="var(--dot)" strokeWidth="1.5" />
+            <path d={stepPath(hourly.map((x) => x.load))} fill="none" stroke="var(--muted)" strokeWidth="1.5" strokeDasharray="5 3" />
+            <polyline points={mPts} fill="none" stroke="var(--accent)" strokeWidth="2.2" />
+          </svg>
+        </Figure>
       </div>
     </section>
   );

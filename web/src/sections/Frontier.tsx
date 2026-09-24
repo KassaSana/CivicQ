@@ -1,5 +1,5 @@
 import { type Dispatch, useState } from 'react';
-import { SectionHead, useTip } from '../components/ui';
+import { Figure, SectionHead, useTip } from '../components/ui';
 import { type SimConfig, sum } from '../sim/model';
 import type { FrontierPoint } from '../sim/worker';
 import type { Action, Params } from '../state';
@@ -35,19 +35,24 @@ export function Frontier({ params, dispatch, cfg }: { params: Params; dispatch: 
 
   return (
     <section id="frontier" className="section">
-      <SectionHead num="06" title="Cost vs. service">
-        <span className="spacer" />
-        <button className="btn sm soft" disabled={progress !== null} onClick={() => setToken((t) => t + 1)}>
-          {progress !== null ? `Searching ${Math.round(progress * 100)}%` : 'Recompute for current settings'}
-        </button>
-      </SectionHead>
+      <SectionHead title="What each extra staff-hour buys" />
       <p className="lede">
-        The best P90 wait for each staff-hour budget.{' '}
-        {result
-          ? 'Searched live: all plans with 2–4 windows per hour screened on 10 days, then the best 4 per budget confirmed on 300 days.'
-          : 'Showing the README frontier (300 days per plan, default settings). Recompute to search with your current settings; it takes about 10 seconds.'}
+        For every staffing budget there is a best way to spend it. Figure 8 shows the best P90 wait that each number of
+        staff-hours can buy. The first few hours above the minimum buy a lot; after the target is met, each extra
+        hour buys less.
       </p>
-      <div className="card frontier">
+      <p className="note">
+        {result
+          ? 'Searched live for your settings: every plan with 2–4 windows per hour screened on 10 days, then the best 4 per budget confirmed on 300 days. '
+          : 'Showing the frontier from the README (300 days per plan, default settings). '}
+        <button className="btn sm soft" disabled={progress !== null} onClick={() => setToken((t) => t + 1)}>
+          {progress !== null ? `Searching, ${Math.round(progress * 100)}%` : 'Search again with the current assumptions'}
+        </button>{' '}
+        {!result && progress === null && <span>It takes about 10 seconds.</span>}
+      </p>
+      <Figure n={8} wide caption={<>Best P90 wait (minutes) for each staff-hour budget, with 95% intervals. Click a point
+        to see its plan. The dashed line is the {cfg.threshold}-minute target.</>}>
+      <div className="frontier">
         <div className="rel">
           <svg className="chart" viewBox={`0 0 ${W} ${H}`} role="img" aria-label="Best P90 wait for each staff-hour budget">
             {Array.from({ length: yMax / 5 + 1 }, (_, i) => i * 5).map((v) => (
@@ -82,18 +87,19 @@ export function Frontier({ params, dispatch, cfg }: { params: Params; dispatch: 
           </svg>
           {node}
         </div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-          <div className="card-sub">Selected budget</div>
-          <div className="num" style={{ fontSize: 28 }}>{sel.hours} h</div>
-          <div className="num" style={{ fontSize: 13 }}>[{sel.plan.join(', ')}]</div>
+        <div className="frontier-side">
+          <div className="muted">Selected budget</div>
+          <div className="num" style={{ fontSize: 22, fontFamily: 'var(--serif)' }}>{sel.hours} staff-hours</div>
+          <div className="num">Windows: {sel.plan.join(' ')}</div>
           <div className="muted">
             P90 <span className="num" style={{ color: 'var(--text)' }}>{sel.p90.toFixed(1)}</span> min
             ({sel.p90Ci[0].toFixed(1)}–{sel.p90Ci[1].toFixed(1)}), mean <span className="num" style={{ color: 'var(--text)' }}>{sel.meanWait.toFixed(1)}</span> min.
           </div>
-          {cheapestOk && <div className="muted">{cheapestOk.hours} h is the cheapest budget whose whole CI is under {cfg.threshold} min.</div>}
-          <button className="btn soft" onClick={() => dispatch({ type: 'set', patch: { plan: sel.plan } })}>Load into editor</button>
+          {cheapestOk && <div className="muted">{cheapestOk.hours} h is the cheapest budget whose whole 95% interval is under {cfg.threshold} min.</div>}
+          <button className="btn soft" style={{ alignSelf: 'flex-start' }} onClick={() => dispatch({ type: 'set', patch: { plan: sel.plan } })}>Use this plan</button>
         </div>
       </div>
+      </Figure>
     </section>
   );
 }

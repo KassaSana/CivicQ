@@ -1,4 +1,4 @@
-import { Num, SectionHead, Tile, pct, useTip } from '../components/ui';
+import { Figure, Num, SectionHead, pct, useTip } from '../components/ui';
 import type { sippHourly } from '../sim/analytic';
 import { HOUR_LABELS, HOUR_RANGES } from '../sim/model';
 import { type Aggregate, HIST_EDGES, HIST_LABELS } from '../sim/stats';
@@ -19,9 +19,8 @@ function Histogram({ agg, threshold }: { agg: Aggregate; threshold: number }) {
     return x0 + (b + 1) * (bw + gap) + frac * bw;
   };
   return (
-    <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-      <div className="card-title">How long people wait</div>
-      <div className="card-sub">Share of all citizens by wait (minutes), {agg.days.toLocaleString()} simulated days</div>
+    <Figure n={3} caption={<>Share of all visitors by wait in minutes, over {agg.days.toLocaleString()} simulated days.
+      Most are served at once. Red bars are past the {threshold}-minute target.</>}>
       <div className="rel">
         <svg className="chart" viewBox={`0 0 ${W} ${H}`} role="img" aria-label="Wait time histogram">
           {agg.histogram.map((p, i) => {
@@ -29,7 +28,7 @@ function Histogram({ agg, threshold }: { agg: Aggregate; threshold: number }) {
             const late = i > 0 && HIST_EDGES[i - 1] >= threshold;
             return (
               <g key={i} {...bind(x + bw / 2, base - h, `${HIST_LABELS[i]} min: ${pct(p)}`)}>
-                <rect className="bar" x={x} y={base - h} width={bw} height={h} rx={3}
+                <rect className="bar" x={x} y={base - h} width={bw} height={h}
                   fill={late ? 'var(--warn)' : 'var(--accent)'} opacity={i === 0 ? 0.45 : 0.8} />
                 <text className="tick num" x={x + bw / 2} y={base - h - 4} textAnchor="middle" fontSize="10">{(p * 100).toFixed(1)}</text>
                 <text className="tick" x={x + bw / 2} y={H - 8} textAnchor="middle" fontSize="10">{HIST_LABELS[i]}</text>
@@ -43,7 +42,7 @@ function Histogram({ agg, threshold }: { agg: Aggregate; threshold: number }) {
         </svg>
         {node}
       </div>
-    </div>
+    </Figure>
   );
 }
 
@@ -51,9 +50,8 @@ function Utilization({ agg, hourly }: { agg: Aggregate; hourly: Hourly }) {
   const W = 380, H = 200, base = 172, full = 130;
   const { node, bind } = useTip(W, H);
   return (
-    <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-      <div className="card-title">Window utilization</div>
-      <div className="card-sub">Bars: simulated busy share. Ticks: offered ρ = λ / (s·μ)</div>
+    <Figure n={4} caption={<>How busy the open windows are each hour. Bars are simulated; the black ticks are the
+      offered utilization ρ = λ / (s·μ). The two differ because the office opens empty and the line carries over between hours.</>}>
       <div className="rel">
         <svg className="chart" viewBox={`0 0 ${W} ${H}`} role="img" aria-label="Utilization per hour">
           <line className="target" x1={30} x2={376} y1={base - full} y2={base - full} strokeWidth={1} />
@@ -62,7 +60,7 @@ function Utilization({ agg, hourly }: { agg: Aggregate; hourly: Hourly }) {
             const x = 36 + i * 42, h = Math.min(u, 1.2) * full, r = Math.min(hourly[i].rho, 1.2) * full;
             return (
               <g key={i} {...bind(x + 15, base - h, `${HOUR_RANGES[i]}: ${pct(u)} busy (offered ${pct(hourly[i].rho, 0)})`)}>
-                <rect className="bar" x={x} y={base - h} width={30} height={h} rx={3}
+                <rect className="bar" x={x} y={base - h} width={30} height={h}
                   fill={hourly[i].unstable ? 'var(--warn)' : 'var(--accent)'} opacity={0.8} />
                 <line x1={x - 3} x2={x + 33} y1={base - r} y2={base - r} stroke="var(--text)" strokeWidth="1.5" />
                 <text className="tick num" x={x + 15} y={base - Math.max(h, r) - 5} textAnchor="middle" fontSize="10">{Math.round(u * 100)}</text>
@@ -73,7 +71,7 @@ function Utilization({ agg, hourly }: { agg: Aggregate; hourly: Hourly }) {
         </svg>
         {node}
       </div>
-    </div>
+    </Figure>
   );
 }
 
@@ -85,10 +83,10 @@ function LateByHour({ agg, hourly, alpha, threshold }: { agg: Aggregate; hourly:
   const ticks = Array.from({ length: 5 }, (_, k) => (maxP * k) / 4);
   const { node, bind } = useTip(W, H);
   return (
-    <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+    <Figure n={5} wide caption={<>Share of each hour’s visitors who wait more than {threshold} minutes. Dots are simulated,
+      with 95% intervals; squares are what the steady-state Erlang-C formula predicts for the same hour. The dashed
+      line is the {pct(alpha, 0)} allowance.</>}>
       <div style={{ display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
-        <div className="card-title">Share of each hour's arrivals waiting over {threshold} min</div>
-        <span className="spacer" />
         <div className="legend">
           <span><svg width="10" height="10"><circle cx="5" cy="5" r="4" fill="var(--accent)" /></svg>Simulated, 95% CI</span>
           <span><svg width="10" height="10"><rect x="1" y="1" width="8" height="8" fill="none" stroke="var(--muted)" strokeWidth="1.5" /></svg>Erlang-C (SIPP)</span>
@@ -125,7 +123,7 @@ function LateByHour({ agg, hourly, alpha, threshold }: { agg: Aggregate; hourly:
         </svg>
         {node}
       </div>
-    </div>
+    </Figure>
   );
 }
 
@@ -135,8 +133,8 @@ export function Results({ agg, hourly, alpha, threshold, updating }: {
   if (!agg) {
     return (
       <section id="results" className="section">
-        <SectionHead num="03" title="Wait-time results" />
-        <div className="card card-sub">Running the first simulation…</div>
+        <SectionHead title="How long people wait" />
+        <p className="status">Running the first simulation…</p>
       </section>
     );
   }
@@ -145,43 +143,35 @@ export function Results({ agg, hourly, alpha, threshold, updating }: {
   const worstP = agg.lateByHour[worst];
   return (
     <section id="results" className="section">
-      <SectionHead num="03" title="Wait-time results">
-        {updating && <span className="pill ok">updating…</span>}
+      <SectionHead title="How long people wait">
+        {updating && <span className="status">updating…</span>}
       </SectionHead>
-      <div className={`grid4 ${updating ? 'stale' : ''}`} style={{ transition: 'opacity .2s' }}>
-        <Tile label="Mean wait" value={<Num value={agg.meanWait} suffix=" min" />}
-          sub={`95% CI ${agg.meanWaitCi[0].toFixed(2)}–${agg.meanWaitCi[1].toFixed(2)}`} />
-        <Tile label="P90 wait (mean daily)" value={<Num value={agg.p90} suffix=" min" />}
-          sub={`target ≤ ${threshold} min`} variant={agg.p90 > threshold ? 'bad' : undefined} />
-        <Tile label="Days meeting P90" value={<Num value={agg.fracDaysOk * 100} digits={1} suffix="%" />}
-          sub={`of ${agg.days.toLocaleString()} simulated days`} />
-        <Tile label="Worst hour" value={<Num value={worstP * 100} digits={1} suffix="% late" />}
-          sub={`${HOUR_RANGES[worst]} · α = ${pct(alpha, 0)}`} variant={agg.lateCi[worst][0] > alpha ? 'bad' : undefined} />
-      </div>
-      <div className="grid2">
+      <p className={updating ? 'stale' : ''}>
+        Over <span className="num">{agg.days.toLocaleString()}</span> simulated days, the average visitor waits{' '}
+        <b className="num"><Num value={agg.meanWait} /> minutes</b> (95% interval{' '}
+        <span className="num">{agg.meanWaitCi[0].toFixed(2)}–{agg.meanWaitCi[1].toFixed(2)}</span>). On a typical day
+        nine in ten are served within <b className={`num ${agg.p90 > threshold ? 'warn' : ''}`}><Num value={agg.p90} digits={1} /> minutes</b>,
+        and <span className="num">{(agg.fracDaysOk * 100).toFixed(1)}%</span> of days meet the {threshold}-minute P90 target.
+        The hardest hour is {HOUR_RANGES[worst]}, when <span className={`num ${agg.lateCi[worst][0] > alpha ? 'warn' : ''}`}>{pct(worstP)}</span> of
+        visitors wait longer than {threshold} minutes, against an allowance of {pct(alpha, 0)}. Clearing the line after
+        closing takes <span className="num">{agg.overtime.toFixed(1)}</span> minutes of overtime on average, for{' '}
+        <span className="num">{agg.arrivalsPerDay.toFixed(1)}</span> visitors a day.
+      </p>
+      <div className={`figs wide ${updating ? 'stale' : ''}`}>
         <Histogram agg={agg} threshold={threshold} />
         <Utilization agg={agg} hourly={hourly} />
       </div>
       <LateByHour agg={agg} hourly={hourly} alpha={alpha} threshold={threshold} />
       {agg.apptMeanWait !== null && agg.walkinMeanWait !== null && (
-        <div className="card">
-          <div className="card-title">Booked citizens vs walk-ins</div>
-          <div className="card-sub">
-            <span className="num">{agg.apptPerDay.toFixed(1)}</span> booked citizens show up per day. Evenly spaced
-            bookings avoid the random clusters that make walk-ins wait, unless they are moved into hours this plan staffs thinly.
-          </div>
-          <div className="grid2" style={{ marginTop: 10 }}>
-            <Tile variant="flat" label="Booked · waiting over T" value={<Num value={(agg.apptLate ?? 0) * 100} digits={1} suffix="%" />}
-              sub={`mean wait ${agg.apptMeanWait.toFixed(2)} min`} />
-            <Tile variant="flat" label="Walk-ins · waiting over T" value={<Num value={(agg.walkinLate ?? 0) * 100} digits={1} suffix="%" />}
-              sub={`mean wait ${agg.walkinMeanWait.toFixed(2)} min`} />
-          </div>
-        </div>
+        <p>
+          <b>Booked visitors.</b> About <span className="num">{agg.apptPerDay.toFixed(1)}</span> people a day come with an
+          appointment. <span className="num">{pct(agg.apptLate ?? 0)}</span> of them wait over {threshold} minutes (mean{' '}
+          <span className="num">{agg.apptMeanWait.toFixed(2)}</span> min), against{' '}
+          <span className="num">{pct(agg.walkinLate ?? 0)}</span> of walk-ins (mean{' '}
+          <span className="num">{agg.walkinMeanWait.toFixed(2)}</span> min). Evenly spaced bookings avoid the random
+          clusters that make walk-ins wait, unless they are moved into hours this plan staffs thinly.
+        </p>
       )}
-      <div className="card-sub">
-        Overtime to clear the line after closing: <span className="num">{agg.overtime.toFixed(1)} min</span> on average ·
-        {' '}<span className="num">{agg.arrivalsPerDay.toFixed(1)}</span> citizens per day.
-      </div>
     </section>
   );
 }

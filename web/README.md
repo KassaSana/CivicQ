@@ -2,7 +2,7 @@
 
 **Live: [kassasana.github.io/CivicQ](https://kassasana.github.io/CivicQ/)**
 
-Interactive website for the CivicQ staffing simulator. The discrete-event simulator is ported from `cpp/src/simulation.cpp` to TypeScript and runs in a Web Worker, so every control updates in the browser without a backend. The design came from a Claude Design prompt, saved in [DESIGN_PROMPT.md](DESIGN_PROMPT.md).
+Interactive website for the CivicQ staffing simulator. The discrete-event simulator is ported from `cpp/src/simulation.cpp` to TypeScript and runs in a Web Worker, so every control updates in the browser without a backend. It is laid out as an interactive article to go with [`research/REPORT.md`](../research/REPORT.md): serif text, numbered figures with captions, and the model settings in an *Assumptions* drawer. The first version's design brief is kept in [DESIGN_PROMPT.md](DESIGN_PROMPT.md).
 
 ```bash
 cd web
