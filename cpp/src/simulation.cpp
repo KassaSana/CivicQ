@@ -32,6 +32,7 @@ QueueSimulator::QueueSimulator(const SimulationConfig& config)
     , current_time_(0.0)
     , last_departure_time_(0.0)
     , next_citizen_id_(0)
+    , waiting_count_(0)
 {
     // Validate configuration
     if (config_.staffing_per_slot.size() != NUM_SLOTS) {
@@ -49,6 +50,7 @@ void QueueSimulator::reset() {
     current_time_ = 0.0;
     last_departure_time_ = 0.0;
     next_citizen_id_ = 0;
+    waiting_count_ = 0;
 
     // Clear event queue
     while (!event_queue_.empty()) {
@@ -73,16 +75,20 @@ void QueueSimulator::reset() {
 
     citizens_.clear();
     slot_busy_time_.assign(NUM_SLOTS, 0.0);
+    spill_minutes_ = 0.0;
+    overtime_busy_minutes_ = 0.0;
 
     // Reseed independent streams (common random numbers across staffing plans)
     std::seed_seq arrival_seed{static_cast<unsigned>(config_.random_seed), 1u};
     std::seed_seq service_seed{static_cast<unsigned>(config_.random_seed), 2u};
     std::seed_seq rate_seed{static_cast<unsigned>(config_.random_seed), 3u};
     std::seed_seq appointment_seed{static_cast<unsigned>(config_.random_seed), 4u};
+    std::seed_seq patience_seed{static_cast<unsigned>(config_.random_seed), 5u};
     arrival_rng_.seed(arrival_seed);
     service_rng_.seed(service_seed);
     rate_rng_.seed(rate_seed);
     appointment_rng_.seed(appointment_seed);
+    patience_rng_.seed(patience_seed);
     service_dist_.reset();
     lognormal_dist_.reset();
     uniform_dist_.reset();
@@ -195,6 +201,24 @@ double QueueSimulator::generate_service_time() {
     }
 }
 
+double QueueSimulator::generate_patience() {
+    double mean = config_.mean_patience;
+    switch (config_.patience_dist) {
+        case ServiceDist::LOGNORMAL: {
+            double sigma2 = std::log(1.0 + config_.patience_cv * config_.patience_cv);
+            std::lognormal_distribution<double> d(std::log(mean) - 0.5 * sigma2, std::sqrt(sigma2));
+            return d(patience_rng_);
+        }
+        case ServiceDist::DETERMINISTIC:
+            return mean;
+        case ServiceDist::EXPONENTIAL:
+        default: {
+            std::exponential_distribution<double> d(1.0 / mean);
+            return d(patience_rng_);
+        }
+    }
+}
+
 int QueueSimulator::find_free_window() {
     int open_windows = get_open_windows(current_time_);
     for (int i = 0; i < open_windows && i < static_cast<int>(windows_.size()); ++i) {
@@ -210,6 +234,7 @@ void QueueSimulator::start_service(int citizen_id, int window_id) {
     windows_[window_id].current_citizen_id = citizen_id;
 
     citizens_[citizen_id].service_start_time = current_time_;
+    --waiting_count_;
 
     double departure_time = current_time_ + citizens_[citizen_id].service_time;
 
@@ -219,11 +244,15 @@ void QueueSimulator::start_service(int citizen_id, int window_id) {
 void QueueSimulator::serve_waiting_citizens() {
     // FIFO: fill every free open window from the front of the queue
     while (!waiting_queue_.empty()) {
+        int next_citizen = waiting_queue_.front();
+        if (citizens_[next_citizen].abandoned) {
+            waiting_queue_.pop();   // Reneged while in line
+            continue;
+        }
         int free_window = find_free_window();
         if (free_window < 0) {
             break;
         }
-        int next_citizen = waiting_queue_.front();
         waiting_queue_.pop();
         start_service(next_citizen, free_window);
     }
@@ -243,6 +272,22 @@ void QueueSimulator::add_busy_time(double start, double end) {
     }
 }
 
+void QueueSimulator::add_unpaid_time(int window_id, double start, double end) {
+    // Service time no staffing slot pays for: after the doors close, and on a
+    // window whose slot has closed it (open windows are indices < staffing)
+    double close = config_.simulation_duration;
+    overtime_busy_minutes_ += std::max(0.0, end - std::max(start, close));
+    end = std::min(end, close);
+    for (int slot = get_current_slot(start); slot < NUM_SLOTS && start < end; ++slot) {
+        double slot_end = (slot == NUM_SLOTS - 1) ? end
+                                                  : std::min(end, (slot + 1) * SLOT_LENGTH);
+        if (slot_end > start && window_id >= config_.staffing_per_slot[slot]) {
+            spill_minutes_ += slot_end - start;
+        }
+        start = std::max(start, slot_end);
+    }
+}
+
 void QueueSimulator::admit_citizen(bool is_appointment) {
     // Citizen ids are assigned in arrival order and index citizens_. The
     // service requirement is drawn now so that, for given arrivals, citizen k
@@ -252,13 +297,54 @@ void QueueSimulator::admit_citizen(bool is_appointment) {
     citizen.arrival_time = current_time_;
     citizen.service_time = generate_service_time();
     citizen.is_appointment = is_appointment;
+    citizen.patience = 0.0;
+    citizen.abandoned = false;
+    citizen.abandon_time = -1.0;
     citizen.service_start_time = -1.0;
     citizen.departure_time = -1.0;
+    // Drawn for every citizen, in arrival order, so patience stays aligned
+    // across staffing plans just like service requirements
+    bool may_abandon = false;
+    if (config_.abandonment != Abandonment::NONE) {
+        citizen.patience = generate_patience();
+        may_abandon = !is_appointment;
+    }
     citizens_.push_back(citizen);
+
+    if (may_abandon && config_.abandonment == Abandonment::BALK) {
+        // The citizen sees the line: q people waiting and c open windows. With
+        // every window busy they expect (q + 1) service completions at rate
+        // c / S before their turn; with a free window they are served at once
+        int open = get_open_windows(current_time_);
+        bool free_now = waiting_count_ == 0 && find_free_window() >= 0;
+        double estimate = free_now ? 0.0
+            : (waiting_count_ + 1) * config_.mean_service_time / open;
+        if (estimate > citizen.patience) {
+            citizens_.back().abandoned = true;
+            citizens_.back().abandon_time = current_time_;
+            return;
+        }
+    }
 
     // Join the back of the queue, then serve in FIFO order
     waiting_queue_.push(citizen.id);
+    ++waiting_count_;
     serve_waiting_citizens();
+
+    if (may_abandon && config_.abandonment == Abandonment::RENEGE
+            && citizens_[citizen.id].service_start_time < 0) {
+        event_queue_.push({current_time_ + citizen.patience, EventType::RENEGE, -1, citizen.id});
+    }
+}
+
+void QueueSimulator::process_renege(const Event& event) {
+    Citizen& citizen = citizens_[event.citizen_id];
+    if (citizen.service_start_time >= 0 || citizen.abandoned) {
+        return;   // Already being served
+    }
+    citizen.abandoned = true;
+    citizen.abandon_time = current_time_;
+    --waiting_count_;   // Removed lazily from waiting_queue_
 }
 
 void QueueSimulator::process_arrival(const Event& /*event*/) {
@@ -281,6 +367,7 @@ void QueueSimulator::process_departure(const Event& event) {
 
     // Track utilization, split across the slots the service spanned
     add_busy_time(citizens_[citizen_id].service_start_time, current_time_);
+    add_unpaid_time(window_id, citizens_[citizen_id].service_start_time, current_time_);
 
     // Free the window
     windows_[window_id].is_busy = false;
@@ -319,6 +406,9 @@ SimulationResults QueueSimulator::run() {
             case EventType::APPOINTMENT:
                 admit_citizen(true);
                 break;
+            case EventType::RENEGE:
+                process_renege(event);
+                break;
         }
     }
 
@@ -336,11 +426,19 @@ SimulationResults QueueSimulator::compute_results() const {
     results.appointments_arrived = 0;
     results.appointments_late = 0;
     results.appointment_wait_sum = 0.0;
+    results.abandoned_per_slot.assign(NUM_SLOTS, 0);
+    results.abandoned_wait_sum = 0.0;
+    results.spill_minutes = spill_minutes_;
+    results.overtime_busy_minutes = overtime_busy_minutes_;
 
     std::vector<double> wait_times;
     std::vector<double> service_times;
 
     for (const auto& citizen : citizens_) {
+        if (citizen.abandoned) {
+            results.abandoned_per_slot[get_current_slot(citizen.arrival_time)]++;
+            results.abandoned_wait_sum += citizen.abandon_time - citizen.arrival_time;
+        }
         if (citizen.departure_time >= 0) {
             results.total_served++;
             double wait = citizen.service_start_time - citizen.arrival_time;

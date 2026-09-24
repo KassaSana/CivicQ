@@ -3,7 +3,8 @@ Experiments for the CivicQ staffing study. Every result is written to
 research/results/*.csv and is reproducible from fixed seeds.
 
     python research/experiments.py --all
-    python research/experiments.py e1b e1      # or any subset: e1b e1 e2 e2b e3a e3b e4 e5 e6
+    python research/experiments.py e1b e1      # or any subset: e1b e1 e2 e2b e3a e3b e4 e5 e6 e7a e7 e7c e8a e8b e9a e9b e10a-h e11a-e e12a-e
+    (run e10b before e10a, e10c, e10d and e10e: they read its fluid constants)
 
 Design seeds (DESIGN_SEED..) choose plans; evaluation seeds (EVAL_SEED..) score
 them, so no reported number is biased by the search that produced the plan.
@@ -574,8 +575,1021 @@ def run_e5(reps=2000):
     write_csv("e5_crossval.csv", rows)
 
 
+# ============================================================================
+# E7: walk-in abandonment (visible vs hidden queues, ticket-log metrics,
+#     mandatory services)
+# ============================================================================
+
+PATIENCE = [("exp30", 30.0, "exp", 1.0), ("exp60", 60.0, "exp", 1.0),
+            ("logn30", 30.0, "lognormal", 0.5)]
+MODES = ["renege", "balk"]
+
+
+def _e7_offices():
+    return [("office", OFFICE_RATES, OFFICE_S),
+            ("R8_S16_A0.6", arrival_profile(8.0, 16.0, 0.6), 16.0)]
+
+
+def _patience_kw(mode, mean, dist, cv):
+    return {"abandonment": mode, "patience": mean, "patience_dist": dist, "patience_cv": cv}
+
+
+def run_e7a(reps=200):
+    """Simulator vs exact stationary models under constant demand and staffing."""
+    from abandonment import hour_metrics, score
+    print("E7a: abandonment simulator vs exact stationary models")
+    cases = [(3, 15.0, 30.0, "exp", 1.0), (2, 15.0, 30.0, "exp", 1.0),
+             (2, 12.0, 60.0, "exp", 1.0), (4, 40.0, 20.0, "exp", 1.0),
+             (2, 15.0, 30.0, "lognormal", 0.5), (3, 15.0, 30.0, "lognormal", 0.5)]
+    rows = []
+    for mode in MODES:
+        for c, lam, pat, dist, cv in cases:
+            if mode == "renege" and dist != "exp":
+                continue          # Erlang-A is exact only for exponential patience
+            exact = hour_metrics(mode, c, lam, 8.0, pat, THRESHOLD, dist, cv)
+            ev = score([c] * SLOTS, [lam] * SLOTS, 8.0, THRESHOLD, reps=reps, seed=300_000,
+                       duration=20000, **_patience_kw(mode, pat, dist, cv))
+            row = {"mode": mode, "windows": c, "rate_per_hour": lam, "patience": pat,
+                   "patience_dist": dist, "patience_cv": cv}
+            for name, sim, ci, ex in [("fail", ev.fail[7], ev.fail_ci[7], exact.fail),
+                                      ("served_late", ev.served_late[7], ev.served_late_ci[7],
+                                       exact.served_late)]:
+                se = (ci[1] - ci[0]) / (2 * 1.96)
+                row.update({f"{name}_exact": round(ex, 5), f"{name}_sim": round(sim, 5),
+                            f"{name}_ci_low": round(ci[0], 5), f"{name}_ci_high": round(ci[1], 5),
+                            f"{name}_z": round((sim - ex) / se, 2) if se > 0 else 0.0})
+            row.update({"abandon_exact": round(exact.abandon, 5),
+                        "abandon_sim": round(ev.abandon[7], 5)})
+            rows.append(row)
+            print(f"  {mode:<6} c={c} lam={lam:g} {dist}{pat:g}: fail {ev.fail[7]:.4f} vs "
+                  f"{exact.fail:.4f} (z={row['fail_z']}), served-late {ev.served_late[7]:.4f} "
+                  f"vs {exact.served_late:.4f} (z={row['served_late_z']}), abandon "
+                  f"{ev.abandon[7]:.4f} vs {exact.abandon:.4f}")
+    write_csv("e7a_validation.csv", rows)
+
+
+def _e7_exhaustive(rates, s, sgs_plan, metric, kw, cap=4):
+    """
+    Every plan in {1..cap}^8 cheaper than SGS, checked with the SGS-UCB rule.
+    No lower bounds: the served-late metric is not monotone in staffing (extra
+    windows serve impatient citizens who would otherwise have left).
+    """
+    budget = sum(sgs_plan) - 1
+    candidates = [list(p) for p in itertools.product(range(1, cap + 1), repeat=SLOTS)
+                  if sum(p) <= budget]
+
+    def ok(p):
+        ev = evaluate(p, rates, s, THRESHOLD, reps=DESIGN_REPS, seed=DESIGN_SEED,
+                      metric=metric, **kw)
+        return all(hi <= ALPHA for _, hi in ev.late_ci)
+
+    good = [p for p, g in zip(candidates, pmap(ok, candidates, workers=16)) if g]
+    return len(candidates), good
+
+
+def run_e7():
+    from abandonment import score, sipp_abandonment
+    print("E7: staffing when walk-ins leave (served-late vs failure targets)")
+    rows, exhaustive_rows = [], []
+    for office, rates, s in _e7_offices():
+        base, _ = simulation_staffing(rates, s, THRESHOLD, ALPHA, criterion="ucb")
+        sipp_c = analytic_plans(rates, s, THRESHOLD, ALPHA)["SIPP"]
+        for pname, mean, dist, cv in PATIENCE:
+            plans = {("no-abandonment SGS-UCB", "-"): base, ("SIPP (Erlang-C)", "-"): sipp_c}
+            for mode in MODES:
+                kw = _patience_kw(mode, mean, dist, cv)
+                plans[("SIPP-A (fail)", mode)] = sipp_abandonment(
+                    rates, s, THRESHOLD, ALPHA, mode, mean, "fail", dist, cv)
+                for metric in ("late", "fail"):
+                    plan, _ = simulation_staffing(rates, s, THRESHOLD, ALPHA, criterion="ucb",
+                                                  start=sipp_c, metric=metric, **kw)
+                    plans[(f"SGS-UCB ({metric})", mode)] = plan
+                    if office == "office" and pname == "exp30":
+                        n, cheaper = _e7_exhaustive(rates, s, plan, metric, kw)
+                        exhaustive_rows.append({
+                            "mode": mode, "metric": metric, "sgs_plan": json.dumps(plan),
+                            "sgs_staff_hours": sum(plan), "candidates": n,
+                            "cheaper_feasible": len(cheaper),
+                            "example": json.dumps(cheaper[0]) if cheaper else ""})
+                        print(f"    exhaustive {mode}/{metric}: SGS {sum(plan)} h, "
+                              f"{len(cheaper)} of {n} cheaper plans feasible")
+            # Score every plan under both behaviours on the evaluation days
+            unique = {tuple(p) for p in plans.values()}
+            for plan in sorted(unique):
+                labels = [f"{m}@{b}" for (m, b), p in plans.items() if tuple(p) == plan]
+                for mode in MODES:
+                    ev = score(list(plan), rates, s, THRESHOLD,
+                               **_patience_kw(mode, mean, dist, cv))
+                    rows.append({
+                        "office": office, "service_time": s, "patience": pname,
+                        "mode": mode, "plan": json.dumps(list(plan)),
+                        "staff_hours": sum(plan), "found_by": "; ".join(labels),
+                        "worst_served_late": round(ev.worst("late"), 4),
+                        "served_late_misses": ev.misses("late", ALPHA),
+                        "worst_fail": round(ev.worst("fail"), 4),
+                        "fail_misses": ev.misses("fail", ALPHA),
+                        "overall_fail": round(ev.overall_fail, 4),
+                        "overall_abandon": round(ev.overall_abandon, 4),
+                        "worst_hour_abandon": round(max(ev.abandon), 4),
+                        "abandoned_per_day": round(ev.abandoned_per_day, 2),
+                        "wasted_min_per_leaver": round(ev.wasted_minutes_per_day
+                                                       / max(ev.abandoned_per_day, 1e-9), 2),
+                        "mean_wait_served": round(ev.mean_wait_served, 3),
+                        "served_late_by_hour": json.dumps([round(x, 4) for x in ev.served_late]),
+                        "fail_by_hour": json.dumps([round(x, 4) for x in ev.fail]),
+                    })
+            found = {k: sum(v) for k, v in plans.items()}
+            print(f"  {office:<12} {pname:<7} " + ", ".join(
+                f"{m}@{b}={h}h" for (m, b), h in found.items()))
+    write_csv("e7_abandonment.csv", rows)
+    write_csv("e7_exhaustive.csv", exhaustive_rows)
+
+
+def run_e7c():
+    """Mandatory services: citizens who leave return on a later day (r = 1)."""
+    from abandonment import return_fixed_point, score
+    print("E7c: return visits (mandatory service, exponential patience, mean 30)")
+    plans = {}
+    with open(RESULTS / "e7_abandonment.csv") as f:
+        for row in csv.DictReader(f):
+            if row["patience"] != "exp30":
+                continue
+            for label in row["found_by"].split("; "):
+                method, mode = label.split("@")
+                if method.startswith("SGS-UCB") and mode == row["mode"]:
+                    plans[(row["office"], mode, method)] = json.loads(row["plan"])
+    offices = {name: (rates, s) for name, rates, s in _e7_offices()}
+    rows = []
+    for (office, mode, method), plan in sorted(plans.items()):
+        rates, s = offices[office]
+        kw = _patience_kw(mode, 30.0, "exp", 1.0)
+        none = score(plan, rates, s, THRESHOLD, **kw)
+        for timing in ("profile", "opening"):
+            st = return_fixed_point(plan, rates, s, 1.0, timing, THRESHOLD,
+                                    reps=EVAL_REPS, **kw)
+            row = {"office": office, "mode": mode, "plan_from": method,
+                   "plan": json.dumps(plan), "staff_hours": sum(plan), "timing": timing,
+                   "stable": st.stable,
+                   "no_return_abandon": round(none.overall_abandon, 4),
+                   "no_return_worst_served_late": round(none.worst("late"), 4),
+                   "no_return_fail_hour0": round(none.fail[0], 4)}
+            if st.stable:
+                ev = st.evaluation
+                row.update({
+                    "returns_per_day": round(st.returns_per_day, 2),
+                    "repeat_visits_per_100": round(st.repeat_visits_per_100, 2),
+                    "overall_abandon": round(ev.overall_abandon, 4),
+                    "worst_served_late": round(ev.worst("late"), 4),
+                    "served_late_hours_over": sum(1 for x in ev.served_late if x > ALPHA),
+                    "served_late_misses": ev.misses("late", ALPHA),
+                    "worst_fail": round(ev.worst("fail"), 4),
+                    "fail_hour0": round(ev.fail[0], 4),
+                    "fail_by_hour": json.dumps([round(x, 4) for x in ev.fail]),
+                    "served_late_by_hour": json.dumps([round(x, 4) for x in ev.served_late]),
+                })
+            rows.append(row)
+            if st.stable:
+                print(f"  {office:<12} {mode:<6} {method:<16} {timing:<8}: "
+                      f"{row['repeat_visits_per_100']:.1f} repeat visits/100, worst served-late "
+                      f"{row['worst_served_late']:.3f} (was {row['no_return_worst_served_late']:.3f}), "
+                      f"8AM fail {row['fail_hour0']:.3f} (was {row['no_return_fail_hour0']:.3f})")
+            else:
+                print(f"  {office:<12} {mode:<6} {method:<16} {timing:<8}: UNSTABLE")
+    write_csv("e7c_returns.csv", rows)
+
+
+# ============================================================================
+# E8: when does abandonment raise or lower the staffing need? (regimes)
+# ============================================================================
+
+def _crossover_utilization(c, patience, s=8.0):
+    """
+    Utilization rho* at which abandonment (Erlang-A, exponential patience)
+    stops raising the failure rate at a fixed c: below it early leavers
+    outweigh queue thinning. Found by bisection on
+    Delta(rho) = P(late or left) - Erlang-C P(W > T).
+    """
+    from abandonment import renege_metrics
+    from staffing_methods import prob_wait_exceeds
+
+    def delta(rho):
+        load = rho * c
+        return (renege_metrics(c, load / s, s, patience, THRESHOLD).fail
+                - prob_wait_exceeds(c, load, s, THRESHOLD))
+
+    lo, hi = 0.2, 0.999
+    for _ in range(30):
+        mid = (lo + hi) / 2
+        lo, hi = (mid, hi) if delta(mid) > 0 else (lo, mid)
+    return (lo + hi) / 2
+
+
+def run_e8a():
+    """Stationary per-hour regime maps (exact models, no simulation)."""
+    from abandonment import (fluid_discount, required_windows,
+                             required_windows_with_returns)
+    from staffing_methods import prob_wait_exceeds
+    print("E8a: stationary regimes of abandonment (S = 8, T = 15)")
+    s = 8.0
+
+    rows = []
+    for patience in (15.0, 30.0, 60.0, 120.0):
+        for c in (1, 2, 3, 4, 6, 8, 10, 15, 20, 30, 40, 80):
+            rho = _crossover_utilization(c, patience, s)
+            rows.append({"patience": patience, "windows": c, "rho_star": round(rho, 4),
+                         "erlang_c_late_at_rho_star": round(prob_wait_exceeds(c, rho * c, s,
+                                                                              THRESHOLD), 4),
+                         "beta_star": round((1 - rho) * math.sqrt(c), 4)})
+        print(f"  crossover, exp {patience:g}: rho* = "
+              + ", ".join(f"{r['rho_star']:.2f}@c={r['windows']}" for r in rows[-12:][::3]))
+    write_csv("e8a_crossover.csv", rows)
+
+    loads = np.round(np.arange(0.1, 16.01, 0.1), 2)
+    rows = []
+    for patience in (30.0, 60.0):
+        for alpha in (0.2, 0.1, 0.05, 0.02, 0.01):
+            c_c = [required_windows(R / s * 60, s, THRESHOLD, alpha) for R in loads]
+            c_a = [required_windows(R / s * 60, s, THRESHOLD, alpha, "renege", patience)
+                   for R in loads]
+            diff = np.array(c_a) - np.array(c_c)
+            rows.append({"patience": patience, "alpha": alpha, "loads": len(loads),
+                         "adds_window": int((diff > 0).sum()),
+                         "removes_window": int((diff < 0).sum()),
+                         "ties": int((diff == 0).sum())})
+            print(f"  exp {patience:g}, alpha {alpha}: abandonment adds a window at "
+                  f"{rows[-1]['adds_window']} loads, removes at {rows[-1]['removes_window']}")
+    write_csv("e8a_alpha_sign.csv", rows)
+
+    cases = [("renege", 30.0, "exp", 1.0), ("renege", 120.0, "exp", 1.0),
+             ("balk", 30.0, "exp", 1.0), ("balk", 30.0, "lognormal", 0.5),
+             ("balk", 60.0, "lognormal", 0.5)]
+    rows = []
+    for load in (2, 5, 10, 25, 50, 100, 200, 400):
+        rate = load / s * 60
+        row = {"load": load, "erlang_c": round(required_windows(rate, s, THRESHOLD, ALPHA) / load, 4)}
+        for mode, patience, dist, cv in cases:
+            if mode == "renege" and patience > 60 and load > 200:
+                continue
+            row[f"{mode}_{dist}{patience:g}"] = round(
+                required_windows(rate, s, THRESHOLD, ALPHA, mode, patience, dist, cv) / load, 4)
+        for r in (0.0, 0.5, 1.0):
+            if load <= 200:
+                c, _ = required_windows_with_returns(rate, s, THRESHOLD, ALPHA, 30.0, r)
+                row[f"renege_exp30_returns{r:g}"] = round(c / load, 4)
+        rows.append(row)
+        print(f"  load {load:>3}: " + ", ".join(f"{k}={v}" for k, v in row.items() if k != "load"))
+    fluid = {"load": "fluid limit", "erlang_c": 1.0}
+    for mode, patience, dist, cv in cases:
+        fluid[f"{mode}_{dist}{patience:g}"] = round(1 - fluid_discount(THRESHOLD, ALPHA, patience,
+                                                                       dist, cv), 4)
+    d = fluid_discount(THRESHOLD, ALPHA, 30.0)
+    for r in (0.0, 0.5, 1.0):
+        fluid[f"renege_exp30_returns{r:g}"] = round((1 - d) / (1 - r * d), 4)
+    rows.append(fluid)
+    write_csv("e8a_fluid.csv", rows)
+
+
+def run_e8b():
+    """Time-varying tests of the regime predictions (H15-H17)."""
+    from abandonment import score
+    print("E8b: abandonment across office sizes and targets (time-varying, hidden queue)")
+    s = 8.0
+    patience = {"none": None, "exp30": (30.0, "exp", 1.0), "logn60": (60.0, "lognormal", 0.5)}
+
+    def plan_for(rates, alpha, pname):
+        if patience[pname] is None:
+            plan, _ = simulation_staffing(rates, s, THRESHOLD, alpha, criterion="ucb")
+            return plan
+        mean, dist, cv = patience[pname]
+        plan, _ = simulation_staffing(rates, s, THRESHOLD, alpha, criterion="ucb",
+                                      metric="fail", **_patience_kw("renege", mean, dist, cv))
+        return plan
+
+    rows = []
+    cells = [(f"R{load:g}", arrival_profile(load, s, 0.6), 0.10, load)
+             for load in (1, 2, 4, 8, 16, 32)]
+    cells += [(name, rates, alpha, load)
+              for name, rates, load in (("office", OFFICE_RATES, 1.5),
+                                        ("R8", arrival_profile(8.0, s, 0.6), 8.0))
+              for alpha in (0.02, 0.20)]
+    for name, rates, alpha, load in cells:
+        base = plan_for(rates, alpha, "none")
+        for pname in ("exp30", "logn60") if alpha == 0.10 else ("exp30",):
+            plan = plan_for(rates, alpha, pname)
+            mean, dist, cv = patience[pname]
+            ev = score(plan, rates, s, THRESHOLD, **_patience_kw("renege", mean, dist, cv))
+            rows.append({"office": name, "mean_load": load, "alpha": alpha, "patience": pname,
+                         "no_abandonment_plan": json.dumps(base),
+                         "no_abandonment_hours": sum(base),
+                         "fail_target_plan": json.dumps(plan), "fail_target_hours": sum(plan),
+                         "saving": round(1 - sum(plan) / sum(base), 4),
+                         "worst_fail": round(ev.worst("fail"), 4),
+                         "fail_misses": ev.misses("fail", alpha)})
+            print(f"  {name:<7} alpha={alpha:<4} {pname:<6}: {sum(base)} h -> {sum(plan)} h "
+                  f"({100 * rows[-1]['saving']:+.1f}% saving), worst fail {ev.worst('fail'):.3f}")
+    write_csv("e8b_regimes.csv", rows)
+
+    # H17: the office's no-abandonment plan under different patience shapes
+    base = plan_for(OFFICE_RATES, 0.10, "none")
+    ref = score(base, OFFICE_RATES, s, THRESHOLD)
+    rows = [{"patience": "none", "worst_hour_rate": round(ref.worst("late"), 4), "delta": 0.0,
+             "rate_by_hour": json.dumps([round(x, 4) for x in ref.served_late])}]
+    for label, mean, dist, cv in [("exp30", 30.0, "exp", 1.0), ("exp60", 60.0, "exp", 1.0),
+                                  ("exp120", 120.0, "exp", 1.0),
+                                  ("logn30", 30.0, "lognormal", 0.5),
+                                  ("logn60", 60.0, "lognormal", 0.5),
+                                  ("logn120", 120.0, "lognormal", 0.5)]:
+        ev = score(base, OFFICE_RATES, s, THRESHOLD, **_patience_kw("renege", mean, dist, cv))
+        rows.append({"patience": label, "worst_hour_rate": round(ev.worst("fail"), 4),
+                     "delta": round(ev.worst("fail") - ref.worst("late"), 4),
+                     "rate_by_hour": json.dumps([round(x, 4) for x in ev.fail])})
+        print(f"  office plan {base}, {label:<7}: worst-hour failure {ev.worst('fail'):.4f} "
+              f"(no abandonment: late {ref.worst('late'):.4f}, delta {rows[-1]['delta']:+.4f})")
+    write_csv("e8b_patience_shape.csv", rows)
+
+
+# ============================================================================
+# E9: the fixed-threshold regime (Round 6, H19-H21; exact models, no simulation)
+# ============================================================================
+
+def k1(mean_service, mean_patience):
+    """Limit of sqrt(c) P(abandon) in a critically loaded Erlang-A queue (Round 6)."""
+    r = math.sqrt(mean_service / mean_patience)
+    return r * math.sqrt(2 / math.pi) / (1 + r)
+
+
+def crossover_slack(c, s, threshold, patience):
+    """
+    Slack delta* = c - R* at which abandonment (Erlang-A) stops raising the
+    failure rate at fixed c: below R* early leavers dominate, above it
+    queue thinning. None if no load 0 < R < c has a crossover.
+    """
+    from scipy.optimize import brentq
+    from abandonment import renege_metrics
+    from staffing_methods import prob_wait_exceeds
+
+    def diff(delta):
+        load = c - delta
+        return (renege_metrics(c, load / s, s, patience, threshold, offered=False).fail
+                - prob_wait_exceeds(c, load, s, threshold))
+
+    lo = 1e-3                      # Near critical load Erlang-C is far worse
+    cap = 0.999 * c                # Keep some load: R = c - delta > 0
+    hi = min(cap, (s / threshold) * (0.5 * math.log(c) + 3.0) + 1.0)
+    while diff(hi) < 0:
+        if hi >= cap:
+            return None
+        hi = min(cap, hi * 1.5)
+    if diff(lo) > 0:
+        return None
+    return brentq(diff, lo, hi, xtol=1e-7)
+
+
+def pmap_processes(fn, items, workers=8):
+    """Like pmap, for CPU-bound pure-Python work (threads would share the GIL)."""
+    from concurrent.futures import ProcessPoolExecutor
+    with ProcessPoolExecutor(max_workers=workers) as pool:
+        futures = [pool.submit(fn, item) for item in items]
+        out = []
+        for k, f in enumerate(futures, 1):
+            out.append(f.result())
+            if k % 20 == 0 or k == len(futures):
+                print(f"    {k}/{len(futures)} cases", flush=True)
+        return out
+
+
+def _e9a_case(case):
+    from staffing_methods import prob_wait_exceeds
+    s, t, p, c = case
+    row = {"service_time": s, "threshold": t, "patience": p, "windows": c,
+           "delta_star": "", "scaled_delta": "", "beta_star": "", "alpha_star": "",
+           "alpha_star_sqrt_c": "", "k1": round(k1(s, p), 5)}
+    delta = crossover_slack(c, s, t, p)
+    if delta is not None:
+        alpha_star = prob_wait_exceeds(c, c - delta, s, t)
+        row.update({"delta_star": round(delta, 5), "scaled_delta": round(delta * t / s, 5),
+                    "beta_star": round(delta / math.sqrt(c), 5),
+                    "alpha_star": round(alpha_star, 7),
+                    "alpha_star_sqrt_c": round(alpha_star * math.sqrt(c), 5)})
+    return row
+
+
+def run_e9a():
+    """H19-H20: asymptotics of the crossover slack and of alpha*(c)."""
+    print("E9a: crossover slack and alpha* for c up to 10,000 (exact Erlang-A)")
+    windows = [10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000]
+    cases = [(s, t, p, c) for s in (4.0, 8.0, 16.0, 32.0) for t in (5.0, 15.0, 30.0)
+             for p in (30.0, 120.0) for c in windows]
+    # Largest (slowest) cases first so the pool stays busy to the end
+    order = sorted(range(len(cases)), key=lambda i: -cases[i][3] * cases[i][1] / cases[i][0])
+    done = pmap_processes(_e9a_case, [cases[i] for i in order])
+    rows = [None] * len(cases)
+    for i, row in zip(order, done):
+        rows[i] = row
+    write_csv("e9a_log_slack.csv", rows)
+    for s in (4.0, 8.0, 16.0, 32.0):
+        for t in (5.0, 15.0, 30.0):
+            for p in (30.0, 120.0):
+                pts = [(math.log(r["windows"]), r["delta_star"]) for r in rows
+                       if (r["service_time"], r["threshold"], r["patience"]) == (s, t, p)
+                       and r["windows"] >= 1000 and r["delta_star"] != ""]
+                top = next(r for r in rows if (r["service_time"], r["threshold"], r["patience"],
+                                               r["windows"]) == (s, t, p, 10000))
+                slope = np.polyfit(*zip(*pts), 1)[0] if len(pts) > 1 else float("nan")
+                print(f"  S={s:<4g} T={t:<4g} patience {p:<5g}: slope {slope:.3f} "
+                      f"(S/2T {s / (2 * t):.3f}), beta* {top['beta_star']}, "
+                      f"alpha* sqrt(c) {top['alpha_star_sqrt_c']} (K1 {top['k1']})")
+
+
+E9B_KINK = THRESHOLD / math.log(1 / (1 - ALPHA))     # Patience mean with G(T) = alpha
+
+
+def _e9b_case(case):
+    from abandonment import fluid_discount, required_windows
+    name, p, R = case
+    d = fluid_discount(THRESHOLD, ALPHA, p)
+    c = required_windows(R / OFFICE_S * 60, OFFICE_S, THRESHOLD, ALPHA, "renege", p)
+    x = c - (1 - d) * R
+    return {"patience": name, "mean_patience": round(p, 3),
+            "G_T": round(1 - math.exp(-THRESHOLD / p), 5), "load": R, "windows": c,
+            "fluid_windows": round((1 - d) * R, 3), "excess": round(x, 3),
+            "excess_over_sqrt_load": round(x / math.sqrt(R), 4)}
+
+
+def run_e9b():
+    """H21: order of the staffing correction above the fluid limit."""
+    print("E9b: extra windows above the fluid staffing (S = 8, T = 15, alpha = 0.10)")
+    loads = [50, 100, 200, 300, 500, 1000, 2000, 3000, 5000]
+    patiences = [("exp30", 30.0), ("exp300", 300.0), ("exp_kink", E9B_KINK), ("exp120", 120.0)]
+    cases = [(name, p, R) for name, p in patiences for R in loads]
+    rows = pmap_processes(_e9b_case, cases)
+    write_csv("e9b_fluid_order.csv", rows)
+    for name, _ in patiences:
+        print(f"  {name:<8} excess: " + ", ".join(
+            f"{r['load']}:{r['excess']:g}" for r in rows if r["patience"] == name))
+
+
+# ============================================================================
+# E10: a finite-horizon fluid theory of the walk-in day (Round 7, H22-H25)
+# ============================================================================
+
+E10_SHAPES = ("double", "single", "ramp")
+
+
+def _fluid_case(case):
+    """Fluid constants for one (shape, A, S, T): alpha = 0 LP and the alpha MILP."""
+    from fluid import fluid_day, fluid_staffing
+    from staffing_methods import SHAPES
+    shape, amp, s, t = case
+    rates = arrival_profile(1.0, s, amp, SHAPES[shape])       # 1 Erlang; scales with R
+    row = {"shape": shape, "amplitude": amp, "service_time": s, "threshold": t,
+           "load_by_hour": json.dumps([round(r / 60 * s, 4) for r in rates])}
+    for tag, a in (("f0", 0.0), ("f_alpha", ALPHA)):
+        sol = fluid_staffing(rates, s, t, a, time_limit=900)
+        day = fluid_day(sol["plan"], rates, s, t, dt=min(0.25, s / 32))
+        dt = day["t"][1] - day["t"][0]
+        c = np.array(sol["plan"])[np.minimum((day["t"] // 60).astype(int), SLOTS - 1)]
+        idle = float(np.sum(np.maximum(c - day["X"], 0.0)) * dt)     # window-minutes
+        backlog = float(day["X"][-1] + (rates[-1] / 60 - min(day["X"][-1], sol["plan"][-1])
+                                       / s) * dt)                 # X at closing
+        row.update({tag: round(sol["cost"] / SLOTS, 5),
+                    f"{tag}_plan": json.dumps([round(x, 4) for x in sol["plan"]]),
+                    f"{tag}_optimal": sol["optimal"],
+                    f"{tag}_idle_share": round(idle / (SLOTS * 60), 5),
+                    f"{tag}_backlog_share": round(s * backlog / (SLOTS * 60), 5),
+                    f"{tag}_worst_fluid_late": round(max(day["late"]), 4)})
+    return row
+
+
+def run_e10b():
+    """Fluid constants f = window-hours / (8R) for every shape, swing and service time."""
+    print("E10b: fluid constants (T = 15, and T = 1.875 S for the D2 settings)")
+    cases = [(sh, a, s, THRESHOLD) for sh in E10_SHAPES for a in AMPLITUDES
+             for s in SERVICE_TIMES]
+    cases += [("double", 0.6, s, 1.875 * s) for s in SERVICE_TIMES if s != 8.0]
+    rows = pmap_processes(_fluid_case, cases)
+    write_csv("e10b_fluid_constants.csv", rows)
+    for r in rows:
+        print(f"  {r['shape']:<6} A={r['amplitude']:<4} S={r['service_time']:<4g} "
+              f"T={r['threshold']:<5g}: f0 {r['f0']:.4f}, f_alpha {r['f_alpha']:.4f} "
+              f"(idle {r['f_alpha_idle_share']:.4f}, backlog {r['f_alpha_backlog_share']:.4f})")
+
+
+def _fluid_row(shape, amp, s, t):
+    """E10b's fluid constants for one setting; solved directly if E10b has not run yet."""
+    path = RESULTS / "e10b_fluid_constants.csv"
+    rows = load_results(path.name) if path.exists() else []
+    for r in rows:
+        if (r["shape"], float(r["amplitude"]), float(r["service_time"]),
+                float(r["threshold"])) == (shape, amp, s, t):
+            return r
+    return _fluid_case((shape, amp, s, t))
+
+
+def load_results(name):
+    with open(RESULTS / name) as f:
+        return list(csv.DictReader(f))
+
+
+def _method_rows(label, rates, s, t, fluid_plan_1e, load, extra=None):
+    """SIPP / Lag-SIPP / OL-avg / SGS / SGS-UCB for one setting, scored on eval days."""
+    plans = analytic_plans(rates, s, t, ALPHA)
+    plans["SGS"], _ = simulation_staffing(rates, s, t, ALPHA)
+    plans["SGS-UCB"], _ = simulation_staffing(rates, s, t, ALPHA, start=plans["SGS"],
+                                              criterion="ucb")
+    fluid = [x * load for x in fluid_plan_1e]
+    names = list(plans)
+    evals = pmap(lambda n: evaluate(plans[n], rates, s, t), names)
+    ucb = sum(plans["SGS-UCB"])
+    rows = []
+    for name, ev in zip(names, evals):
+        rows.append({"setting": label, "mean_load": load, "service_time": s, "threshold": t,
+                     **(extra or {}), "method": name, "plan": json.dumps(plans[name]),
+                     "staff_hours": ev.staff_hours,
+                     "gap_vs_ucb_pct": round(100 * (ev.staff_hours - ucb) / ucb, 2),
+                     "fluid_hours": round(sum(fluid), 2),
+                     "corr_with_fluid": round(float(np.corrcoef(plans[name], fluid)[0, 1]), 4),
+                     "worst_late": round(max(ev.late_prob), 4),
+                     "hours_significantly_over": ev.hours_missing(ALPHA),
+                     "late_by_hour": json.dumps([round(p, 4) for p in ev.late_prob])})
+    print(f"  {label}: " + ", ".join(f"{n} {sum(plans[n])}h" for n in names)
+          + f" | fluid {sum(fluid):.1f}h")
+    return rows
+
+
+def run_e10a():
+    """H22 (D2): the E1 comparison at 24 E with T/S held at 15/8."""
+    print("E10a: analytic rules vs SGS-UCB at 24 E, A = 0.6, T = 1.875 S")
+    rows = []
+    for s in SERVICE_TIMES:
+        t = 1.875 * s
+        rates = arrival_profile(24.0, s, 0.6)
+        fluid = json.loads(_fluid_row("double", 0.6, s, t)["f_alpha_plan"])
+        rows += _method_rows(f"R24_S{s:g}_T{t:g}", rates, s, t, fluid, 24.0)
+    write_csv("e10a_threshold_ratio.csv", rows)
+
+
+def run_e10c():
+    """H23: SGS-UCB against the fluid constant at 64 and 128 Erlangs (S = 8, A = 0.6)."""
+    print("E10c: SGS-UCB at 64 and 128 Erlangs against the fluid")
+    s = OFFICE_S
+    fluid = json.loads(_fluid_row("double", 0.6, s, THRESHOLD)["f_alpha_plan"])
+    slack = s / THRESHOLD * math.log(1 / ALPHA)          # Round 6 stationary slack per hour
+    rows = []
+    for load in (64.0, 128.0):
+        rates = arrival_profile(load, s, 0.6)
+        start = [math.ceil(x * load + slack) for x in fluid]
+        plan, calls = simulation_staffing(rates, s, THRESHOLD, ALPHA, start=start,
+                                          criterion="ucb")
+        ev = evaluate(plan, rates, s, THRESHOLD)
+        rows.append({"mean_load": load, "plan": json.dumps(plan), "staff_hours": sum(plan),
+                     "start": json.dumps(start), "simulator_calls": calls,
+                     "worst_late": round(max(ev.late_prob), 4),
+                     "hours_significantly_over": ev.hours_missing(ALPHA)})
+        print(f"  R={load:g}: {plan} ({sum(plan)} h, from {sum(start)} h, {calls} calls), "
+              f"worst hour {max(ev.late_prob):.3f}")
+    write_csv("e10c_scaling.csv", rows)
+
+
+def run_e10d():
+    """H24 robustness: the two new demand shapes at 24 E (S = 8 and 32, A = 0.6)."""
+    from staffing_methods import SHAPES
+    print("E10d: new demand shapes at 24 E")
+    rows = []
+    for shape in ("single", "ramp"):
+        for s in (8.0, 32.0):
+            rates = arrival_profile(24.0, s, 0.6, SHAPES[shape])
+            fluid = json.loads(_fluid_row(shape, 0.6, s, THRESHOLD)["f_alpha_plan"])
+            rows += _method_rows(f"{shape}_R24_S{s:g}", rates, s, THRESHOLD, fluid, 24.0,
+                                 {"shape": shape})
+    write_csv("e10d_shapes.csv", rows)
+
+
+def _fluid_roster_case(case):
+    from fluid import fluid_staffing
+    from shifts import FLEXIBLE, STANDARD, Menu
+    menu_name, s = case
+    menu = Menu(STANDARD if menu_name == "standard" else FLEXIBLE)
+    rates = arrival_profile(1.0, s, 0.6)
+    sol = fluid_staffing(rates, s, THRESHOLD, ALPHA, menu=menu, time_limit=900)
+    return {"menu": menu_name, "service_time": s, "roster_per_erlang": round(sol["cost"], 5),
+            "units": json.dumps([round(x, 4) for x in sol["units"]]),
+            "profile": json.dumps([round(x, 4) for x in sol["plan"]]),
+            "optimal": sol["optimal"]}
+
+
+def run_e10e():
+    """H25: fluid rosters against the E4 integrated-search rosters."""
+    print("E10e: fluid rosters (paid hours per Erlang) vs E4")
+    rows = pmap_processes(_fluid_roster_case,
+                          [(m, s) for m in ("standard", "flexible") for s in (8.0, 32.0)])
+    e4 = load_results("e4_shifts.csv")
+    e1 = load_results("e1_methods.csv")
+    out = []
+    for r in rows:
+        s = r["service_time"]
+        hourly = 8 * float(_fluid_row("double", 0.6, s, THRESHOLD)["f_alpha"])
+        for load in (8.0, 24.0):
+            setting = f"R{load:g}_S{s:g}_A0.6"
+            iss = next(int(x["paid_hours"]) for x in e4 if x["setting"] == setting
+                       and x["menu"] == r["menu"] and x["method"] == "ISS")
+            best_two = min(int(x["paid_hours"]) for x in e4 if x["setting"] == setting
+                           and x["menu"] == r["menu"] and x["method"] != "ISS")
+            ucb = next(int(x["staff_hours"]) for x in e1 if x["method"] == "SGS-UCB"
+                       and float(x["mean_load"]) == load and float(x["service_time"]) == s
+                       and float(x["amplitude"]) == 0.6)
+            fluid_roster, fluid_hourly = r["roster_per_erlang"] * load, hourly * load
+            out.append({**r, "mean_load": load, "fluid_roster_hours": round(fluid_roster, 2),
+                        "fluid_hourly_hours": round(fluid_hourly, 2), "iss_paid_hours": iss,
+                        "best_two_step_hours": best_two, "sgs_ucb_hours": ucb,
+                        "iss_over_fluid_pct": round(100 * (iss / fluid_roster - 1), 2),
+                        "ucb_over_fluid_pct": round(100 * (ucb / fluid_hourly - 1), 2),
+                        "fluid_price_of_shifts_pct": round(100 * (fluid_roster / fluid_hourly - 1), 2),
+                        "measured_price_of_shifts_pct": round(100 * (iss / ucb - 1), 2)})
+            print(f"  {r['menu']:<9} {setting}: fluid roster {fluid_roster:.1f} h vs ISS {iss} h "
+                  f"({out[-1]['iss_over_fluid_pct']:+.1f}%); SGS-UCB {ucb} h vs fluid hourly "
+                  f"{fluid_hourly:.1f} h ({out[-1]['ucb_over_fluid_pct']:+.1f}%)")
+    write_csv("e10e_rosters.csv", out)
+
+
+def _fluid_np_case(case):
+    """Corrected fluid (closing windows finish their citizen), alpha = 0; plans per Erlang."""
+    from fluid import fluid_staffing_nonpreemptive
+    from shifts import FLEXIBLE, STANDARD, Menu
+    from staffing_methods import SHAPES
+    shape, amp, s, t, menu_name = case
+    menu = {"hourly": None, "standard": Menu(STANDARD), "flexible": Menu(FLEXIBLE)}[menu_name]
+    rates = arrival_profile(1.0, s, amp, SHAPES[shape])
+    sol = fluid_staffing_nonpreemptive(rates, s, t, 0.0, menu=menu, time_limit=900)
+    return {"shape": shape, "amplitude": amp, "service_time": s, "threshold": t,
+            "menu": menu_name, "cost_per_erlang": round(sol["cost"], 5),
+            "f0_np": round(sol["cost"] / SLOTS, 5) if menu is None else "",
+            "plan": json.dumps([round(x, 4) for x in sol["plan"]]), "optimal": sol["optimal"]}
+
+
+def run_e10f():
+    """Post hoc (Round 7b): constants of the corrected, non-preemptive fluid."""
+    print("E10f: corrected fluid (non-preemptive closing), alpha = 0")
+    cases = [(sh, a, s, THRESHOLD, "hourly") for sh in E10_SHAPES for a in AMPLITUDES
+             for s in SERVICE_TIMES]
+    cases += [("double", 0.6, s, 1.875 * s, "hourly") for s in SERVICE_TIMES if s != 8.0]
+    cases += [("double", 0.6, s, THRESHOLD, m) for m in ("standard", "flexible")
+              for s in (8.0, 32.0)]
+    rows = pmap_processes(_fluid_np_case, cases)
+    write_csv("e10f_fluid_nonpreemptive.csv", rows)
+    for r in rows:
+        print(f"  {r['shape']:<6} A={r['amplitude']:<4} S={r['service_time']:<4g} "
+              f"T={r['threshold']:<5g} {r['menu']:<9}: {r['cost_per_erlang']:.4f} per Erlang")
+
+
+def run_e10g():
+    """H26 (confirmatory): SGS-UCB at 256 Erlangs against the corrected fluid."""
+    print("E10g: SGS-UCB at 256 Erlangs")
+    s, load = OFFICE_S, 256.0
+    row = next(r for r in load_results("e10f_fluid_nonpreemptive.csv")
+               if r["shape"] == "double" and float(r["amplitude"]) == 0.6
+               and float(r["service_time"]) == s and float(r["threshold"]) == THRESHOLD
+               and r["menu"] == "hourly")
+    fluid = json.loads(row["plan"])
+    rates = arrival_profile(load, s, 0.6)
+    start = [math.ceil(x * load) + 4 for x in fluid]      # Neutral start: E(start) ~ 32
+    plan, calls = simulation_staffing(rates, s, THRESHOLD, ALPHA, start=start, criterion="ucb")
+    ev = evaluate(plan, rates, s, THRESHOLD)
+    excess = sum(plan) - 8 * load * float(row["f0_np"])
+    write_csv("e10g_confirm.csv", [{
+        "mean_load": load, "plan": json.dumps(plan), "staff_hours": sum(plan),
+        "start": json.dumps(start), "simulator_calls": calls,
+        "fluid_hours": round(8 * load * float(row["f0_np"]), 2), "excess": round(excess, 2),
+        "worst_late": round(max(ev.late_prob), 4),
+        "hours_significantly_over": ev.hours_missing(ALPHA)}])
+    print(f"  R=256: {plan} ({sum(plan)} h from {sum(start)} h, {calls} calls), "
+          f"excess over fluid {excess:.1f}, worst hour {max(ev.late_prob):.3f}")
+
+
+def run_e10h():
+    """Validation: the corrected fluid plan at 256 Erlangs, scaled by +-5%, in the simulator."""
+    print("E10h: corrected fluid plan x (1 +- 5%) at 256 Erlangs, simulated")
+    s, load = OFFICE_S, 256.0
+    row = next(r for r in load_results("e10f_fluid_nonpreemptive.csv")
+               if r["shape"] == "double" and float(r["amplitude"]) == 0.6
+               and float(r["service_time"]) == s and float(r["threshold"]) == THRESHOLD
+               and r["menu"] == "hourly")
+    rates = arrival_profile(load, s, 0.6)
+    rows = []
+    for scale in (0.95, 1.0, 1.05):
+        plan = [round(x * load * scale) for x in json.loads(row["plan"])]
+        ev = evaluate(plan, rates, s, THRESHOLD)
+        rows.append({"scale": scale, "plan": json.dumps(plan), "staff_hours": sum(plan),
+                     "late_by_hour": json.dumps([round(p, 4) for p in ev.late_prob]),
+                     "worst_late": round(max(ev.late_prob), 4),
+                     "hours_over_alpha": sum(p > ALPHA for p in ev.late_prob)})
+        print(f"  x{scale}: {sum(plan)} h, late by hour "
+              + ", ".join(f"{p:.3f}" for p in ev.late_prob))
+    write_csv("e10h_fluid_validation.csv", rows)
+
+
+# ============================================================================
+# E11: paying for overtime and spill (Round 8, H27-H30)
+# ============================================================================
+
+KAPPAS = (1.0, 1.5)
+
+
+def _fluid_paid_case(case):
+    from overtime import fluid_paid
+    from staffing_methods import SHAPES
+    shape, amp, s, t, kappa = case
+    sol = fluid_paid(arrival_profile(1.0, s, amp, SHAPES[shape]), s, t, kappa, time_limit=900)
+    return {"shape": shape, "amplitude": amp, "service_time": s, "threshold": t,
+            "kappa": kappa, "f_paid": round(sol["paid_cost"] / SLOTS, 5),
+            "window_share": round(sol["window_hours"] / SLOTS, 5),
+            "spill_share": round(sol["spill_hours"] / SLOTS, 5),
+            "overtime_share": round(sol["overtime_hours"] / SLOTS, 5),
+            "plan": json.dumps([round(x, 4) for x in sol["plan"]]), "optimal": sol["optimal"]}
+
+
+def run_e11a():
+    """Paid-overtime fluid constants (theory): paid cost / (8R)."""
+    print("E11a: fluid with unpaid work charged at kappa")
+    cases = [(sh, 0.6, s, THRESHOLD, k) for sh in E10_SHAPES for s in SERVICE_TIMES
+             for k in (0.0,) + KAPPAS]
+    cases += [("double", 0.6, s, 1.875 * s, k) for s in SERVICE_TIMES if s != 8.0
+              for k in (0.0,) + KAPPAS]
+    rows = pmap_processes(_fluid_paid_case, cases)
+    write_csv("e11a_fluid_paid.csv", rows)
+    for r in rows:
+        print(f"  {r['shape']:<6} S={r['service_time']:<4g} T={r['threshold']:<5g} "
+              f"kappa={r['kappa']:<4g}: {r['f_paid']:.4f} (windows {r['window_share']:.4f}, "
+              f"spill {r['spill_share']:.4f}, overtime {r['overtime_share']:.4f})")
+
+
+def _paid_rows(label, rates, s, t, load, window_opt, kappa, extra=None):
+    """Paid cost of every rule's plan and of the paid-cost optimum, on the eval days."""
+    from overtime import paid_evaluation, paid_staffing
+    plans = analytic_plans(rates, s, t, ALPHA)
+    plans["SGS-UCB (window-hours)"] = window_opt
+    plans["paid optimum"], calls = paid_staffing(rates, s, t, ALPHA, kappa, window_opt)
+    names = list(plans)
+    evals = pmap(lambda n: paid_evaluation(plans[n], rates, s, t, kappa), names)
+    best = evals[names.index("paid optimum")]["paid_cost"]
+    rows = []
+    for name, ev in zip(names, evals):
+        rows.append({"setting": label, "mean_load": load, "service_time": s, "threshold": t,
+                     "kappa": kappa, **(extra or {}), "method": name,
+                     "plan": json.dumps(plans[name]), "window_hours": ev["window_hours"],
+                     "spill_hours": round(ev["spill_hours"], 3),
+                     "overtime_hours": round(ev["overtime_hours"], 3),
+                     "paid_cost": round(ev["paid_cost"], 3),
+                     "paid_cost_all_stay": round(ev["paid_cost_all_stay"], 3),
+                     "excess_pct": round(100 * (ev["paid_cost"] / best - 1), 2),
+                     "worst_late": round(max(ev["late"]), 4),
+                     "hours_significantly_over": sum(lo > ALPHA for lo, _ in ev["late_ci"]),
+                     "search_calls": calls if name == "paid optimum" else ""})
+    print(f"  {label} kappa={kappa:g}: " + ", ".join(
+        f"{n} {e['paid_cost']:.1f}" for n, e in zip(names, evals)))
+    return rows
+
+
+def run_e11b():
+    """H27 (D2 with paid overtime): the fixed-T/S settings of E10a."""
+    print("E11b: 24 E, A = 0.6, T = 1.875 S, unpaid work charged")
+    ucb = {float(r["service_time"]): json.loads(r["plan"])
+           for r in load_results("e10a_threshold_ratio.csv") if r["method"] == "SGS-UCB"}
+    rows = []
+    for kappa in KAPPAS:
+        for s in SERVICE_TIMES:
+            rows += _paid_rows(f"R24_S{s:g}_T{1.875 * s:g}", arrival_profile(24.0, s, 0.6), s,
+                               1.875 * s, 24.0, ucb[s], kappa)
+    write_csv("e11b_paid_threshold_ratio.csv", rows)
+
+
+def run_e11c():
+    """H28: E1's 24 E settings (T = 15, A = 0.6) with paid overtime."""
+    print("E11c: E1 settings at 24 E, A = 0.6, T = 15, unpaid work charged at 1")
+    e1 = load_results("e1_methods.csv")
+    rows = []
+    for s in SERVICE_TIMES:
+        ucb = next(json.loads(r["plan"]) for r in e1 if r["method"] == "SGS-UCB"
+                   and float(r["mean_load"]) == 24.0 and float(r["service_time"]) == s
+                   and float(r["amplitude"]) == 0.6)
+        rows += _paid_rows(f"R24_S{s:g}_T15", arrival_profile(24.0, s, 0.6), s, THRESHOLD,
+                           24.0, ucb, 1.0)
+    write_csv("e11c_paid_e1.csv", rows)
+
+
+def run_e11d():
+    """H29: the paid optimum against the paid fluid as the office grows (S = 8, A = 0.6)."""
+    print("E11d: paid optimum at 8, 32 and 128 Erlangs")
+    e8b = {float(r["mean_load"]): json.loads(r["no_abandonment_plan"])
+           for r in load_results("e8b_regimes.csv")
+           if r["patience"] == "exp30" and float(r["alpha"]) == 0.10 and r["office"] != "office"}
+    starts = {8.0: e8b[8.0], 32.0: e8b[32.0],
+              128.0: json.loads(next(r["plan"] for r in load_results("e10c_scaling.csv")
+                                     if float(r["mean_load"]) == 128.0))}
+    rows = []
+    for load, start in starts.items():
+        rows += _paid_rows(f"R{load:g}_S8_T15", arrival_profile(load, OFFICE_S, 0.6), OFFICE_S,
+                           THRESHOLD, load, start, 1.0)
+    write_csv("e11d_paid_scaling.csv", rows)
+
+
+def run_e11e():
+    """H31 (confirmatory): the paid optimum at 256 Erlangs against the paid fluid."""
+    print("E11e: paid optimum at 256 Erlangs")
+    start = json.loads(load_results("e10g_confirm.csv")[0]["plan"])
+    rows = _paid_rows("R256_S8_T15", arrival_profile(256.0, OFFICE_S, 0.6), OFFICE_S,
+                      THRESHOLD, 256.0, start, 1.0)
+    write_csv("e11e_paid_confirm.csv", rows)
+
+
+# ============================================================================
+# Round 9: tipping points of mandatory services (REPORT section 5.13)
+# ============================================================================
+
+E12_RATES = arrival_profile(8.0, 16.0, 0.6)
+E12_S = 16.0
+E12_PATIENCE = 30.0
+E12_FAIL_PLAN = [8, 13, 9, 6, 5, 9, 12, 9]     # E7 SGS-UCB (fail), renege, exp 30
+E12_LATE_PLAN = [6, 10, 8, 5, 4, 7, 10, 7]     # E7 SGS-UCB (late): collapsed in E7c
+E12_PHIS = [1.0, 0.95, 0.9, 0.85, 0.8]
+E12_TIMINGS = ["profile", "opening"]
+E12_KW = {"abandonment": "renege", "patience": E12_PATIENCE,
+          "patience_dist": "exp", "patience_cv": 1.0}
+
+
+def _e12_plans():
+    """The fail plan scaled by phi (rounded half up), plus E7c's collapsed plan."""
+    plans = [(f"phi={phi:.2f}", [int(math.floor(phi * c + 0.5)) for c in E12_FAIL_PLAN])
+             for phi in E12_PHIS]
+    return plans + [("late plan", E12_LATE_PLAN)]
+
+
+def run_e12a():
+    """H32: the stationary Erlang-A return model has at most one fixed point."""
+    from tipping import stationary_return_roots
+    print("E12a: stationary return fixed points")
+    rows = []
+    for c, rho, s, pat, r in itertools.product([1, 2, 4, 8, 16, 32],
+                                               [0.5, 0.8, 0.95, 1.0, 1.1, 1.5, 2.0],
+                                               [4.0, 16.0], [10.0, 30.0, 120.0],
+                                               [0.5, 0.9, 1.0]):
+        rate = rho * c * 60.0 / s
+        roots = stationary_return_roots(c, rate, s, pat, r)
+        rows.append({"c": c, "rho_fresh": rho, "S": s, "patience": pat, "r": r,
+                     "n_roots": len(roots),
+                     "total_rate_per_hour": round(roots[0] * 60.0, 4) if roots else ""})
+    counts = {k: sum(1 for x in rows if x["n_roots"] == k) for k in (0, 1, 2, 3)}
+    print(f"  {len(rows)} cases, roots: {counts}")
+    write_csv("e12a_stationary_roots.csv", rows)
+
+
+def run_e12b():
+    """Fluid of the day with returns: steady state, slope, recovery after a closure."""
+    from tipping import (classify_roots, fluid_fixed_point, fluid_recovery_days,
+                         fluid_return_curve)
+    print("E12b: fluid return dynamics (8 E, S = 16, exp patience 30, r = 1)")
+    fresh = sum(E12_RATES)
+    grid = np.concatenate([np.linspace(0.0, fresh, 41),
+                           np.geomspace(1.05 * fresh, 30 * fresh, 40)])
+    rows = []
+    for (name, plan), timing in itertools.product(_e12_plans(), E12_TIMINGS):
+        h = np.array(fluid_return_curve(plan, E12_RATES, E12_S, E12_PATIENCE, 1.0,
+                                        timing, grid))
+        cls = classify_roots(grid, h)
+        fp = fluid_fixed_point(plan, E12_RATES, E12_S, E12_PATIENCE, 1.0, timing)
+        rec = (fluid_recovery_days(plan, E12_RATES, E12_S, E12_PATIENCE, 1.0, timing,
+                                   fp["R"]) if math.isfinite(fp["R"]) else "")
+        rows.append({"plan_name": name, "plan": json.dumps(plan), "window_hours": sum(plan),
+                     "timing": timing, "fluid_R": round(fp["R"], 3),
+                     "repeat_per_100": round(100 * fp["R"] / fresh, 2),
+                     "slope": round(fp["slope"], 4), "relax_days": round(fp["relax_days"], 2),
+                     "recovery_days": rec, "max_dh_step": round(float(np.max(np.diff(h))), 4),
+                     "n_roots_grid": len(cls["roots"]), "bistable": cls["bistable"]})
+        print(f"  {name:<10} {sum(plan):>3} h {timing:<8} "
+              f"R*/100 = {rows[-1]['repeat_per_100']:>8} slope {rows[-1]['slope']:.3f} "
+              f"recovery {rec} days; max dh {rows[-1]['max_dh_step']}")
+    write_csv("e12b_fluid_returns.csv", rows)
+
+
+E12_R_FACTORS = [0.0, 0.05, 0.1, 0.2, 0.35, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0]
+
+
+def run_e12c(reps=400):
+    """H33, H34: simulated h(R) = L(R) - R on common random numbers."""
+    from tipping import return_curve, sign_changes
+    print("E12c: simulated return curves")
+    fresh = sum(E12_RATES)
+    grid = [f * fresh for f in E12_R_FACTORS]
+    jobs = list(itertools.product(_e12_plans(), E12_TIMINGS))
+    curves = pmap(lambda job: return_curve(job[0][1], E12_RATES, E12_S, 1.0, job[1], grid,
+                                           THRESHOLD, reps, EVAL_SEED, **E12_KW), jobs)
+    rows = []
+    for ((name, plan), timing), curve in zip(jobs, curves):
+        roots = sign_changes([p["R"] for p in curve], [p["h"] for p in curve])
+        rises = sum(1 for p in curve[1:] if p["dh_low"] > 0)
+        for p in curve:
+            rows.append({"plan_name": name, "plan": json.dumps(plan), "window_hours": sum(plan),
+                         "timing": timing, "R": round(p["R"], 3), "L": round(p["L"], 3),
+                         "h": round(p["h"], 3), "h_low": round(p["h_low"], 3),
+                         "h_high": round(p["h_high"], 3),
+                         "dh": round(p.get("dh", math.nan), 4),
+                         "dh_low": round(p.get("dh_low", math.nan), 4),
+                         "dh_high": round(p.get("dh_high", math.nan), 4),
+                         "sim_R": round(roots[0], 3) if roots else "",
+                         "n_roots": len(roots), "significant_rises": rises})
+        star = 100 * roots[0] / fresh if roots else math.inf
+        print(f"  {name:<10} {timing:<8} roots {[round(x, 1) for x in roots]} "
+              f"(R*/100 {star:.1f}), significant rises {rises}")
+    write_csv("e12c_return_curves.csv", rows)
+
+
+def run_e12d(chains=20, burn_in=30, max_after=400):
+    """H35: day-to-day chains with one closure day; recovery time vs the fluid."""
+    from tipping import simulate_return_chain
+    print("E12d: day-to-day chains with a closure day")
+    fresh = sum(E12_RATES)
+    fluid = {(r["plan_name"], r["timing"]): r for r in load_results("e12b_fluid_returns.csv")}
+    jobs = []
+    for (name, plan), timing in itertools.product(_e12_plans(), E12_TIMINGS):
+        fr = fluid[(name, timing)]
+        R0 = float(fr["fluid_R"])
+        if not math.isfinite(R0) or R0 > 3 * fresh:
+            R0 = 0.0
+        after = max_after if fr["recovery_days"] == "" else \
+            min(max_after, max(60, 3 * int(fr["recovery_days"])))
+        for k in range(chains):
+            jobs.append((name, plan, timing, R0, burn_in + 1 + after, k))
+    paths = pmap(lambda j: simulate_return_chain(
+        j[1], E12_RATES, E12_S, 1.0, j[2], j[4], shock_day=burn_in, start_returns=j[3],
+        seed=300_000 + 10_000 * j[5], threshold=THRESHOLD, **E12_KW), jobs)
+    rows = []
+    for (name, plan, timing, R0, days, k), path in zip(jobs, paths):
+        before = [p["returns"] for p in path[10:burn_in]]
+        base = float(np.mean(before)) if before else math.nan
+        after = [p["returns"] for p in path[burn_in + 1:]]
+        collapsed = len(path) < days
+        recovery = ""
+        if not collapsed:
+            for d in range(len(after) - 6):
+                if np.mean(after[d:d + 7]) <= base + 0.1 * fresh:
+                    recovery = d + 1
+                    break
+        rows.append({"plan_name": name, "window_hours": sum(plan), "timing": timing,
+                     "chain": k, "pre_shock_mean_R": round(base, 2),
+                     "collapsed": collapsed, "recovery_days": recovery,
+                     "final_R": round(path[-1]["returns"], 1),
+                     "path": json.dumps([round(p["returns"], 1) for p in path])})
+    for (name, plan), timing in itertools.product(_e12_plans(), E12_TIMINGS):
+        sub = [r for r in rows if r["plan_name"] == name and r["timing"] == timing]
+        rec = [r["recovery_days"] for r in sub if r["recovery_days"] != ""]
+        med = float(np.median(rec)) if rec else math.nan
+        print(f"  {name:<10} {timing:<8} recovered {len(rec)}/{len(sub)}, median {med:.0f} "
+              f"days (fluid {fluid[(name, timing)]['recovery_days']})")
+    write_csv("e12d_chains.csv", rows)
+
+
+def run_e12e(reps=200):
+    """H35 (confirmatory): the fluid's error on R* at 32 E, spread returns."""
+    from tipping import fluid_fixed_point, return_curve, sign_changes
+    print("E12e: steady state at 32 E vs the fluid")
+    rates = arrival_profile(32.0, E12_S, 0.6)
+    fresh = sum(rates)
+    grid = [f * fresh for f in np.arange(0.0, 1.001, 0.025)]
+    base = {r["plan_name"]: r for r in load_results("e12c_return_curves.csv")
+            if r["timing"] == "profile"}
+    fl8 = {r["plan_name"]: r for r in load_results("e12b_fluid_returns.csv")
+           if r["timing"] == "profile"}
+    rows = []
+    for name, plan in _e12_plans():
+        if name not in ("phi=0.95", "phi=0.90", "phi=0.85"):
+            continue
+        plan32 = [4 * c for c in plan]
+        curve = return_curve(plan32, rates, E12_S, 1.0, "profile", grid, THRESHOLD, reps,
+                             EVAL_SEED, **E12_KW)
+        roots = sign_changes([p["R"] for p in curve], [p["h"] for p in curve])
+        fp = fluid_fixed_point(plan32, rates, E12_S, E12_PATIENCE, 1.0, "profile")
+        sim100 = 100 * roots[0] / fresh if roots else math.inf
+        fl100 = 100 * fp["R"] / fresh
+        ex8 = 100 * float(base[name]["sim_R"]) / sum(E12_RATES) - float(fl8[name]["repeat_per_100"])
+        rows.append({"plan_name": name, "plan": json.dumps(plan32), "window_hours": sum(plan32),
+                     "sim_per_100": round(sim100, 2), "fluid_per_100": round(fl100, 2),
+                     "excess_32": round(sim100 - fl100, 2), "excess_8": round(ex8, 2),
+                     "ratio": round((sim100 - fl100) / ex8, 3),
+                     "significant_rises": sum(1 for p in curve[1:] if p["dh_low"] > 0)})
+        print(f"  {name}: R*/100 sim {sim100:.1f}, fluid {fl100:.1f}; excess {sim100 - fl100:.1f} "
+              f"vs {ex8:.1f} at 8 E (ratio {rows[-1]['ratio']})")
+    write_csv("e12e_scaling_confirm.csv", rows)
+
+
 EXPERIMENTS = {"e1b": run_e1b, "e1": run_e1, "e2": run_e2, "e2b": run_e2b,
-               "e3a": run_e3a, "e3b": run_e3b, "e4": run_e4, "e5": run_e5, "e6": run_e6}
+               "e3a": run_e3a, "e3b": run_e3b, "e4": run_e4, "e5": run_e5, "e6": run_e6,
+               "e7a": run_e7a, "e7": run_e7, "e7c": run_e7c, "e8a": run_e8a, "e8b": run_e8b,
+               "e9a": run_e9a, "e9b": run_e9b,
+               "e10b": run_e10b, "e10a": run_e10a, "e10c": run_e10c, "e10d": run_e10d,
+               "e10e": run_e10e, "e10f": run_e10f, "e10g": run_e10g, "e10h": run_e10h,
+               "e11a": run_e11a, "e11b": run_e11b, "e11c": run_e11c, "e11d": run_e11d,
+               "e11e": run_e11e, "e12a": run_e12a, "e12b": run_e12b, "e12c": run_e12c,
+               "e12d": run_e12d, "e12e": run_e12e}
 
 
 def main():

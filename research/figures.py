@@ -373,6 +373,554 @@ def fig_appointments():
     save(fig, "fig8_appointments.png")
 
 
+def fig_abandonment():
+    rows = load("e7_abandonment.csv")
+    returns = load("e7c_returns.csv")
+    fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(15, 4.4),
+                                        gridspec_kw={"width_ratios": [1.25, 1, 1.1]})
+
+    # (a) Staff-hours each target needs, per setting and behaviour
+    settings = [(o, p) for o in ("office", "R8_S16_A0.6") for p in ("exp30", "exp60", "logn30")]
+    label = {"office": "Office", "R8_S16_A0.6": "8 E"}
+    pname = {"exp30": "exp 30", "exp60": "exp 60", "logn30": "logn 30"}
+    series = [("SGS-UCB (late)", "served-late target", "#e34948", "v", -0.1),
+              ("SGS-UCB (fail)", "failure target", "#008300", "P", 0.0),
+              ("SIPP-A (fail)", "SIPP-A (failure target)", "#2a78d6", "o", 0.1)]
+    ys, ylabels = [], []
+    y = 0
+    for office, pat in settings:
+        base = next(int(r["staff_hours"]) for r in rows if r["office"] == office
+                    and r["patience"] == pat and "no-abandonment" in r["found_by"])
+        for mode, shift in (("renege", 0.22), ("balk", -0.22)):
+            yy = y + shift
+            for method, name, color, marker, dy in series:
+                h = next(int(r["staff_hours"]) for r in rows if r["office"] == office
+                         and r["patience"] == pat and f"{method}@{mode}" in r["found_by"])
+                ax1.scatter(100 * (h / base - 1), yy + dy, color=color, marker=marker, s=40,
+                            edgecolors=SURFACE, linewidths=0.8,
+                            label=name if (y, mode) == (0, "renege") else None, zorder=3)
+            ax1.text(-49, yy, "hidden" if mode == "renege" else "visible", fontsize=7.5,
+                     color=MUTED, va="center")
+        ys.append(y)
+        ylabels.append(f"{label[office]}, {pname[pat]}")
+        y += 1
+    ax1.axvline(0, color=INK_2, lw=1, ls="--")
+    ax1.set_yticks(ys)
+    ax1.set_yticklabels(ylabels)
+    ax1.invert_yaxis()
+    ax1.set_xlim(-50, 20)
+    ax1.set_xlabel("Staff-hours vs the no-abandonment optimum (%)")
+    ax1.set_title("Ticket-log targets let an office cut staff", loc="left")
+    ax1.legend(loc="upper center", bbox_to_anchor=(0.5, -0.13), ncol=3, fontsize=8)
+
+    # (b) Same plan, same patience: citizens lost behind a visible vs hidden queue
+    colors = {"exp30": "#2a78d6", "exp60": "#eb6834", "logn30": "#1baf7a"}
+    names = {"exp30": "exponential, mean 30", "exp60": "exponential, mean 60",
+             "logn30": "lognormal CV 0.5, mean 30"}
+    pairs = {}
+    for r in rows:
+        pairs.setdefault((r["office"], r["patience"], r["plan"]), {})[r["mode"]] = r
+    for pat in ("exp30", "exp60", "logn30"):
+        pts = [(100 * float(v["renege"]["overall_abandon"]),
+                float(v["balk"]["overall_abandon"]) / float(v["renege"]["overall_abandon"]))
+               for (o, p, _), v in pairs.items() if p == pat]
+        ax2.scatter(*zip(*pts), color=colors[pat], s=40, edgecolors=SURFACE, linewidths=0.8,
+                    label=names[pat])
+    ax2.axhline(1, color=INK_2, ls="--", lw=1)
+    ax2.set_xscale("log")
+    ax2.set_xlabel("Citizens lost, hidden queue (%, log scale)")
+    ax2.set_ylabel("Lost at visible queue / lost at hidden queue")
+    ax2.text(0.98, 0.97, "visible queue loses more", transform=ax2.transAxes, ha="right",
+             va="top", fontsize=8.5, color=INK_2)
+    ax2.text(0.98, 0.03, "visible queue loses fewer", transform=ax2.transAxes, ha="right",
+             va="bottom", fontsize=8.5, color=INK_2)
+    ax2.set_title("Which queue loses more depends on patience", loc="left")
+    ax2.legend(loc="upper center", bbox_to_anchor=(0.5, -0.13), ncol=1, fontsize=8)
+
+    # (c) Office, served-late plan, hidden queue: failure by hour with returns
+    sel = [r for r in returns if r["office"] == "office" and r["mode"] == "renege"
+           and r["plan_from"] == "SGS-UCB (late)" and r["stable"] == "True"]
+    base_row = next(r for r in rows if r["office"] == "office" and r["patience"] == "exp30"
+                    and r["mode"] == "renege" and "SGS-UCB (late)@renege" in r["found_by"])
+    x = np.arange(8)
+    ax3.plot(x, 100 * np.array(json.loads(base_row["fail_by_hour"])), color=INK_2, marker="o",
+             lw=1.6, ms=5, label="no returns")
+    for r, color, ls in zip(sorted(sel, key=lambda r: r["timing"]), ("#e34948", "#eda100"),
+                            ("-", "--")):
+        who = "return at opening" if r["timing"] == "opening" else "return any time"
+        ax3.plot(x, 100 * np.array(json.loads(r["fail_by_hour"])), color=color, ls=ls,
+                 marker="o", lw=1.8, ms=5,
+                 label=f"{who} ({float(r['repeat_visits_per_100']):.0f} repeat visits/100)")
+    ax3.plot(x, 100 * np.array(json.loads(base_row["served_late_by_hour"])), color=MUTED,
+             ls=":", lw=1.4, label="ticket log (served-late), no returns")
+    ax3.axhline(10, color=INK_2, lw=1, ls="--")
+    ax3.set_xticks(x)
+    ax3.set_xticklabels(HOURS)
+    ax3.set_xlabel("Arrival hour")
+    ax3.set_ylabel("Citizens late or lost (%)")
+    ax3.set_title("Office on the served-late plan, hidden queue", loc="left")
+    ax3.legend(loc="upper right", fontsize=7.5)
+    fig.tight_layout()
+    save(fig, "fig9_abandonment.png")
+
+
+def fig_regimes():
+    from staffing_methods import OFFICE_RATES
+    cross = load("e8a_crossover.csv")
+    fluid = load("e8a_fluid.csv")
+    sweep = [r for r in load("e8b_regimes.csv") if float(r["alpha"]) == 0.10]
+    e7 = load("e7_abandonment.csv")
+    fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(15, 4.4))
+
+    # (a) Where abandonment hurts at fixed staffing, and where real hours sit
+    colors = {"15.0": "#eb6834", "30.0": "#2a78d6", "60.0": "#1baf7a", "120.0": "#eda100"}
+    for pat, color in colors.items():
+        pts = sorted((int(r["windows"]), float(r["rho_star"])) for r in cross
+                     if r["patience"] == pat)
+        ax1.plot(*zip(*pts), color=color, lw=1.8, label=f"crossover, patience exp {float(pat):g}")
+    # Curves assume S = 8, so only S = 8 offices are placed on them
+    office_plan = next(json.loads(r["plan"]) for r in e7 if r["office"] == "office"
+                       and "no-abandonment" in r["found_by"])
+    r8_plan = next(json.loads(r["no_abandonment_plan"]) for r in sweep if r["office"] == "R8")
+    offices = [(OFFICE_RATES, office_plan, INK, "o", "office's hours (1.5 E)"),
+               (arrival_profile(8.0, 8.0, 0.6), r8_plan, "#e34948", "s",
+                "8-Erlang office's hours (S = 8)")]
+    for rates, plan, color, marker, label in offices:
+        ax1.scatter(plan, [r * 8.0 / 60 / c for r, c in zip(rates, plan)], color=color,
+                    marker=marker, s=34, edgecolors=SURFACE, linewidths=0.8, zorder=3,
+                    label=label)
+    ax1.set_xscale("log")
+    ax1.set_xticks([1, 2, 4, 10, 20, 40, 80])
+    ax1.set_xticklabels(["1", "2", "4", "10", "20", "40", "80"])
+    ax1.set_ylim(0.3, 1.2)
+    ax1.set_xlabel("Open windows c")
+    ax1.set_ylabel("Utilization (offered load / windows)")
+    ax1.text(1.1, 1.12, "abandonment lowers failures", fontsize=8.5, color=INK_2)
+    ax1.text(12, 0.62, "abandonment raises failures", fontsize=8.5, color=INK_2)
+    ax1.set_title("Early leavers vs queue thinning, per hour", loc="left")
+    ax1.legend(loc="upper center", bbox_to_anchor=(0.5, -0.13), ncol=2, fontsize=7.5)
+
+    # (b) Staffing per unit of load converges to the fluid limit
+    limit = fluid[-1]
+    rows = [r for r in fluid if r["load"] != "fluid limit"]
+    series = [("erlang_c", "Erlang-C (no abandonment)", INK_2, "-"),
+              ("renege_exp30", "exp 30", "#2a78d6", "-"),
+              ("balk_lognormal30", "lognormal 30 (visible queue)", "#1baf7a", "-"),
+              ("balk_lognormal60", "lognormal 60 (visible queue)", "#eda100", "-"),
+              ("renege_exp30_returns0.5", "exp 30, half return", "#2a78d6", "--"),
+              ("renege_exp30_returns1", "exp 30, all return", "#2a78d6", ":")]
+    for key, label, color, ls in series:
+        pts = [(float(r["load"]), float(r[key])) for r in rows if r.get(key)]
+        ax2.plot(*zip(*pts), color=color, ls=ls, marker="o", ms=3.5, lw=1.6, label=label)
+        ax2.axhline(float(limit[key]), color=color, ls=ls, lw=0.8, alpha=0.5)
+    ax2.set_xscale("log")
+    ax2.set_ylim(0.85, 1.25)
+    ax2.set_xlabel("Offered load (Erlangs, log scale)")
+    ax2.set_ylabel("Windows needed / offered load")
+    ax2.set_title("Large offices approach the fluid limit (thin lines)", loc="left")
+    ax2.legend(loc="upper center", bbox_to_anchor=(0.5, -0.13), ncol=2, fontsize=7.5)
+
+    # (c) The time-varying office sweep
+    names = {"exp30": ("exponential, mean 30", "#2a78d6", 0.10),
+             "logn60": ("lognormal CV 0.5, mean 60", "#eda100", 0.0035)}
+    for pat, (label, color, d) in names.items():
+        pts = sorted((float(r["mean_load"]), 100 * float(r["saving"])) for r in sweep
+                     if r["patience"] == pat)
+        ax3.plot(*zip(*pts), color=color, marker="o", lw=1.8, ms=5, label=label)
+        ax3.axhline(100 * d, color=color, lw=0.8, ls="--", alpha=0.7)
+    ax3.set_xscale("log", base=2)
+    ax3.set_xticks([1, 2, 4, 8, 16, 32])
+    ax3.set_xticklabels(["1", "2", "4", "8", "16", "32"])
+    ax3.set_xlabel("Mean offered load (Erlangs)")
+    ax3.set_ylabel("Staff-hours saved by abandonment (%)")
+    ax3.set_title("Time-varying offices (dashed: fluid limit)", loc="left")
+    ax3.legend(loc="upper center", bbox_to_anchor=(0.5, -0.13), ncol=1, fontsize=8)
+    fig.tight_layout()
+    save(fig, "fig10_regimes.png")
+
+
+def fig_log_regime():
+    slack = [r for r in load("e9a_log_slack.csv") if r["delta_star"]]
+    order = load("e9b_fluid_order.csv")
+    fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(15, 4.4))
+    ratios = sorted({float(r["service_time"]) / float(r["threshold"]) for r in slack})
+    shade = {q: SEQUENTIAL(0.15 + 0.85 * i / (len(ratios) - 1)) for i, q in enumerate(ratios)}
+    marker = {"30.0": "o", "120.0": "s"}
+
+    # (a) Every case collapses onto 1/2 ln c once the patience intercept is removed
+    for key in sorted({(r["service_time"], r["threshold"], r["patience"]) for r in slack}):
+        pts = sorted((int(r["windows"]), float(r["scaled_delta"]) + np.log(float(r["k1"])),
+                      float(r["beta_star"])) for r in slack
+                     if (r["service_time"], r["threshold"], r["patience"]) == key
+                     and int(r["windows"]) >= 50)     # Below that some cases lose the crossover
+        q = float(key[0]) / float(key[1])
+        c, y, beta = zip(*pts)
+        ax1.plot(c, y, color=shade[q], lw=1.0, alpha=0.8)
+        ax1.scatter([a for a, b in zip(c, beta) if b < 0.15],
+                    [v for v, b in zip(y, beta) if b < 0.15], color=shade[q], s=12,
+                    marker=marker[key[2]], zorder=3)
+    grid = np.array([50, 10000])
+    ax1.plot(grid, 0.5 * np.log(grid), color="#e34948", lw=2, ls="--",
+             label="theory: ½ ln c")
+    ax1.set_xscale("log")
+    ax1.set_xlabel("Open windows c (log scale)")
+    ax1.set_ylabel("δ*·T/S + ln K₁")
+    ax1.set_title("Crossover slack grows like ln c", loc="left")
+    ax1.legend(loc="upper left", fontsize=8)
+
+    # (b) alpha* sqrt(c) approaches K1 from below; slower when S/T is large
+    for key in sorted({(r["service_time"], r["threshold"], r["patience"]) for r in slack}):
+        pts = sorted((int(r["windows"]), float(r["alpha_star_sqrt_c"]) / float(r["k1"]))
+                     for r in slack if (r["service_time"], r["threshold"], r["patience"]) == key)
+        q = float(key[0]) / float(key[1])
+        ax2.plot(*zip(*pts), color=shade[q], lw=1.2, marker=marker[key[2]], ms=3)
+    ax2.axhline(1.0, color="#e34948", lw=1.5, ls="--")
+    for q in (ratios[0], ratios[-1]):
+        ax2.plot([], [], color=shade[q], lw=2, label=f"S/T = {q:.2g}")
+    ax2.plot([], [], color=MUTED, marker="o", ls="", label="patience mean 30")
+    ax2.plot([], [], color=MUTED, marker="s", ls="", label="patience mean 120")
+    ax2.set_xscale("log")
+    ax2.set_ylim(0, 1.15)
+    ax2.set_xlabel("Open windows c (log scale)")
+    ax2.set_ylabel("α*(c)·√c / K₁")
+    ax2.set_title("Walk-out boundary α* → K₁/√c", loc="left")
+    ax2.legend(loc="lower right", fontsize=7.5)
+
+    # (c) Three orders of the correction above the fluid staffing
+    styles = {"exp30": ("G(T) = 0.39 > α (mean 30)", "#2a78d6"),
+              "exp120": ("G(T) = 0.118, just above α (mean 120)", "#1baf7a"),
+              "exp_kink": ("G(T) = α (mean 142)", "#eda100"),
+              "exp300": ("G(T) = 0.049 < α (mean 300)", "#e34948")}
+    for name, (label, color) in styles.items():
+        pts = [(float(r["load"]), float(r["excess"])) for r in order if r["patience"] == name]
+        ax3.plot(*zip(*pts), color=color, marker="o", ms=4, lw=1.6, label=label)
+    loads = np.array([50, 5000])
+    ax3.plot(loads, 0.26 * np.sqrt(loads), color=MUTED, ls=":", lw=1.2,
+             label="predicted 0.26 √R")
+    ax3.axhline(1.0, color=MUTED, lw=0.8, ls="--")
+    ax3.set_xscale("log")
+    ax3.set_yscale("log")
+    ax3.set_xlabel("Offered load R (Erlangs, log scale)")
+    ax3.set_ylabel("Windows above fluid staffing (1 − d)R")
+    ax3.set_title("Extra windows above the fluid limit", loc="left")
+    ax3.legend(loc="upper left", fontsize=7.5)
+    fig.tight_layout()
+    save(fig, "fig11_log_regime.png")
+
+
+def fig_fluid_day(load_=24.0, s=32.0, amp=0.6):
+    from fluid import fluid_day
+    fluid = next(r for r in load("e10b_fluid_constants.csv") if r["shape"] == "double"
+                 and float(r["amplitude"]) == amp and float(r["service_time"]) == s
+                 and float(r["threshold"]) == 15.0)
+    e1 = [r for r in load("e1_methods.csv") if float(r["mean_load"]) == load_
+          and float(r["service_time"]) == s and float(r["amplitude"]) == amp]
+    rates = arrival_profile(load_, s, amp)
+    plan = [x * load_ for x in json.loads(fluid["f_alpha_plan"])]
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 3.9))
+    x = np.arange(8)
+    ax1.bar(x, [r / 60 * s for r in rates], color=GRID, width=0.8, label="offered load λᵢS")
+    for m in ("SIPP", "SGS-UCB"):
+        r = next(r for r in e1 if r["method"] == m)
+        ax1.plot(x, json.loads(r["plan"]), color=METHOD_COLOR[m], marker=METHOD_MARKER[m],
+                 lw=2, ms=6, label=f"{m} ({r['staff_hours']} h)")
+    ax1.plot(x, plan, color=INK, lw=2, ls="--", marker="o", ms=4,
+             label=f"fluid optimum ({sum(plan):.0f} h)")
+    ax1.set_xticks(x)
+    ax1.set_xticklabels(HOURS)
+    ax1.set_xlabel("Hour (8AM-4PM)")
+    ax1.set_ylabel("Open windows")
+    ax1.set_title("The fluid plan tracks simulation, not SIPP", loc="left")
+    ax1.legend(fontsize=8, loc="upper center", bbox_to_anchor=(0.5, -0.15), ncol=2)
+
+    day = fluid_day(plan, rates, s, 15.0)            # On the grid the plan was solved on
+    c = np.array(plan)[np.minimum((day["t"] // 60).astype(int), 7)]
+    ax2.plot(day["t"] / 60, day["X"], color="#2a78d6", lw=1.8, label="in office X(t)")
+    ax2.plot(day["t"] / 60, c, color=INK, lw=1.2, ls="--", label="open windows c(t)")
+    ax2.set_xlabel("Hours after opening")
+    ax2.set_ylabel("Citizens / windows")
+    tw = ax2.twinx()
+    tw.plot(day["t"] / 60, day["wait"], color="#e34948", lw=1.5, label="fluid wait w(t)")
+    tw.axhline(15, color="#e34948", lw=0.8, ls=":")
+    tw.set_ylabel("Wait (min)", color="#e34948")
+    tw.set_ylim(0, 30)
+    tw.grid(False)
+    ax2.set_title("Backlog carried through the peaks (≤ α late per hour)", loc="left")
+    h1, l1 = ax2.get_legend_handles_labels()
+    h2, l2 = tw.get_legend_handles_labels()
+    ax2.legend(h1 + h2, l1 + l2, fontsize=8, loc="upper left")
+    fig.tight_layout()
+    save(fig, "fig12_fluid_day.png")
+
+
+def fig_fluid_scaling():
+    fluid = next(r for r in load("e10b_fluid_constants.csv") if r["shape"] == "double"
+                 and float(r["amplitude"]) == 0.6 and float(r["service_time"]) == 8.0
+                 and float(r["threshold"]) == 15.0)
+    f = float(fluid["f_alpha"])
+    pts = [(float(r["mean_load"]), int(r["no_abandonment_hours"]))
+           for r in load("e8b_regimes.csv")
+           if r["patience"] == "exp30" and float(r["alpha"]) == 0.10 and r["office"] != "office"]
+    pts += [(float(r["mean_load"]), int(r["staff_hours"])) for r in load("e10c_scaling.csv")]
+    pts += [(float(r["mean_load"]), int(r["staff_hours"])) for r in load("e10g_confirm.csv")]
+    pts = sorted(set(pts))
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 3.9))
+    R = np.array([p[0] for p in pts])
+    hours = np.array([p[1] for p in pts])
+    ax1.plot(R, hours / (8 * R), color=METHOD_COLOR["SGS-UCB"], marker="P", ms=7, lw=2,
+             label="SGS-UCB (simulation)")
+    f_np = next(float(r["f0_np"]) for r in load("e10f_fluid_nonpreemptive.csv")
+                if r["shape"] == "double" and float(r["amplitude"]) == 0.6
+                and float(r["service_time"]) == 8.0 and float(r["threshold"]) == 15.0
+                and r["menu"] == "hourly")
+    grid = np.geomspace(1, 256, 100)
+    e128 = hours[R == 128][0] - 8 * 128 * f_np
+    ax1.plot(grid, f_np + e128 * np.sqrt(grid / 128) / (8 * grid), color=INK_2, ls="--",
+             lw=1.2, label="corrected fluid + κ√R windows")
+    ax1.axhline(f, color=MUTED, lw=1.2, ls=":", label=f"registered fluid f = {f:.3f}")
+    ax1.axhline(f_np, color=INK, lw=1.2, label=f"corrected fluid f = {f_np:.3f}")
+    ax1.axhline(1.0, color=GRID, lw=1)
+    ax1.set_xscale("log", base=2)
+    ax1.set_ylim(0.88, 1.6)
+    ax1.set_xlabel("Mean offered load R (Erlangs)")
+    ax1.set_ylabel("Window-hours / raw workload 8R")
+    ax1.set_title("Large offices converge to the fluid, below the workload", loc="left")
+    ax1.legend(fontsize=8)
+
+    rows = load("e10e_rosters.csv")
+    labels = [f"{r['menu'][:4]} R{float(r['mean_load']):g} S{float(r['service_time']):g}"
+              for r in rows]
+    y = np.arange(len(rows))
+    npf = load("e10f_fluid_nonpreemptive.csv")
+
+    def corrected_price(r):
+        cost = {m: next(float(x["cost_per_erlang"]) for x in npf if x["shape"] == "double"
+                        and float(x["amplitude"]) == 0.6 and x["menu"] == m
+                        and float(x["service_time"]) == float(r["service_time"])
+                        and float(x["threshold"]) == 15.0) for m in (r["menu"], "hourly")}
+        return 100 * (cost[r["menu"]] / cost["hourly"] - 1)
+
+    ax2.barh(y - 0.27, [float(r["measured_price_of_shifts_pct"]) for r in rows], height=0.27,
+             color="#2a78d6", label="measured: ISS vs SGS-UCB")
+    ax2.barh(y, [corrected_price(r) for r in rows], height=0.27, color=INK,
+             label="corrected fluid (post hoc)")
+    ax2.barh(y + 0.27, [float(r["fluid_price_of_shifts_pct"]) for r in rows], height=0.27,
+             color=AXIS, label="registered fluid")
+    ax2.set_yticks(y)
+    ax2.set_yticklabels(labels, fontsize=8)
+    ax2.set_xlabel("Price of shifts (% more paid hours)")
+    ax2.set_title("The fluid predicts the price of shifts", loc="left")
+    ax2.legend(fontsize=8, loc="upper center", bbox_to_anchor=(0.5, -0.15), ncol=3)
+    fig.tight_layout()
+    save(fig, "fig13_fluid_scaling.png")
+
+
+def fig_paid_overtime():
+    fluid = load("e11a_fluid_paid.csv")
+    fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(15, 4.3))
+    services = [4.0, 8.0, 16.0, 32.0]
+
+    # (a) Paying for unpaid work removes the "below the workload" effect
+    styles = {0.0: ("overtime free", "#e34948", "o"), 1.0: ("paid (κ = 1)", INK, "s"),
+              1.5: ("time and a half (κ = 1.5)", "#2a78d6", "^")}
+    for kappa, (label, color, marker) in styles.items():
+        ys = [next(float(r["f_paid"]) for r in fluid if r["shape"] == "double"
+                   and float(r["service_time"]) == s and float(r["threshold"]) == 15.0
+                   and float(r["kappa"]) == kappa) for s in services]
+        ax1.plot(services, ys, color=color, marker=marker, lw=2, label=label)
+    ax1.axhline(1.0, color=GRID, lw=1)
+    ax1.set_xscale("log", base=2)
+    ax1.set_xticks(services)
+    ax1.set_xticklabels(["4", "8", "16", "32"])
+    ax1.set_xlabel("Mean service time S (min)")
+    ax1.set_ylabel("Fluid cost / raw workload")
+    ax1.set_title("Below-workload staffing was unpaid work", loc="left")
+    ax1.legend(fontsize=8)
+
+    # (b) SIPP's excess: free vs paid overtime, at fixed T and at fixed T/S
+    def sipp_excess(rows, key):
+        out = []
+        for s in services:
+            sub = [r for r in rows if float(r["service_time"]) == s and key(r)]
+            out.append(next(float(r["excess_pct"]) for r in sub if r["method"] == "SIPP"))
+        return out
+
+    e1 = load("e1_methods.csv")
+    free_t15 = []
+    for s in services:
+        sub = {r["method"]: int(r["staff_hours"]) for r in e1 if float(r["mean_load"]) == 24.0
+               and float(r["service_time"]) == s and float(r["amplitude"]) == 0.6}
+        free_t15.append(100 * (sub["SIPP"] / sub["SGS-UCB"] - 1))
+    free_ratio = [next(float(r["gap_vs_ucb_pct"]) for r in load("e10a_threshold_ratio.csv")
+                       if float(r["service_time"]) == s and r["method"] == "SIPP")
+                  for s in services]
+    paid_t15 = sipp_excess(load("e11c_paid_e1.csv"), lambda r: True)
+    paid_ratio = sipp_excess(load("e11b_paid_threshold_ratio.csv"),
+                             lambda r: float(r["kappa"]) == 1.0)
+    for ys, label, color, ls in [(free_t15, "T = 15, overtime free", "#e34948", "--"),
+                                 (paid_t15, "T = 15, paid", "#e34948", "-"),
+                                 (free_ratio, "T = 1.875 S, overtime free", "#2a78d6", "--"),
+                                 (paid_ratio, "T = 1.875 S, paid", "#2a78d6", "-")]:
+        ax2.plot(services, ys, color=color, ls=ls, marker="o", ms=4, lw=1.8, label=label)
+    ax2.set_xscale("log", base=2)
+    ax2.set_xticks(services)
+    ax2.set_xticklabels(["4", "8", "16", "32"])
+    ax2.set_xlabel("Mean service time S (min)")
+    ax2.set_ylabel("SIPP's excess over the optimum (%)")
+    ax2.set_title("SIPP's excess still grows with S when paid", loc="left")
+    ax2.legend(fontsize=8)
+
+    # (c) Excess over the fluid: grows like sqrt(R) when overtime is free, flat when paid
+    f_np = next(float(r["f0_np"]) for r in load("e10f_fluid_nonpreemptive.csv")
+                if r["shape"] == "double" and float(r["amplitude"]) == 0.6
+                and float(r["service_time"]) == 8.0 and float(r["threshold"]) == 15.0
+                and r["menu"] == "hourly")
+    free = [(float(r["mean_load"]), int(r["no_abandonment_hours"]))
+            for r in load("e8b_regimes.csv") if r["patience"] == "exp30"
+            and float(r["alpha"]) == 0.10 and r["office"] != "office"
+            and float(r["mean_load"]) >= 4]
+    free += [(float(r["mean_load"]), int(r["staff_hours"])) for r in load("e10c_scaling.csv")]
+    free += [(float(r["mean_load"]), int(r["staff_hours"])) for r in load("e10g_confirm.csv")]
+    free = sorted(set(free))
+    ax3.plot([R for R, _ in free], [h - 8 * R * f_np for R, h in free], color="#e34948",
+             marker="o", lw=1.8, label="overtime free (Round 7)")
+    f1 = next(float(r["f_paid"]) for r in fluid if r["shape"] == "double"
+              and float(r["service_time"]) == 8.0 and float(r["threshold"]) == 15.0
+              and float(r["kappa"]) == 1.0)
+    paid = [(float(r["mean_load"]), float(r["paid_cost"]))
+            for name in ("e11d_paid_scaling.csv", "e11e_paid_confirm.csv")
+            for r in load(name) if r["method"] == "paid optimum"]
+    paid = sorted(paid)
+    ax3.plot([R for R, _ in paid], [c - 8 * R * f1 for R, c in paid], color=INK, marker="s",
+             lw=1.8, label="paid overtime (Round 8)")
+    ax3.axhline(8 * 8.0 / 15.0 * np.log(10), color=MUTED, ls=":", lw=1.2,
+                label="8 (S/T) ln(1/α) = 9.8")
+    ax3.set_xscale("log", base=2)
+    ax3.set_xlabel("Mean offered load R (Erlangs)")
+    ax3.set_ylabel("Optimum − 8R × fluid constant (window-hours)")
+    ax3.set_title("Excess over the fluid: free vs paid overtime", loc="left")
+    ax3.legend(fontsize=8)
+    fig.tight_layout()
+    save(fig, "fig14_paid_overtime.png")
+
+
+# ----------------------------------------------------------------------------
+def fig_tipping():
+    """Round 9: return curves, steady states and recovery times (fluid vs simulation)."""
+    from experiments import E12_PATIENCE, E12_RATES, E12_S
+    from tipping import fluid_return_curve
+    fresh = sum(E12_RATES)
+    curves = load("e12c_return_curves.csv")
+    fl = load("e12b_fluid_returns.csv")
+    chains = load("e12d_chains.csv")
+    fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(15, 4.3))
+
+    # (a) h(R) = L(R) - R, simulated (band) vs fluid (line), returns spread over the day
+    colors = {"phi=1.00": "#2a78d6", "phi=0.90": "#1baf7a", "phi=0.85": "#eda100",
+              "phi=0.80": "#e34948"}
+    grid = np.linspace(0.0, 3 * fresh, 61)
+    for name, color in colors.items():
+        sub = [r for r in curves if r["plan_name"] == name and r["timing"] == "profile"]
+        R = np.array([float(r["R"]) for r in sub]) / fresh
+        ax1.fill_between(R, [float(r["h_low"]) / fresh for r in sub],
+                         [float(r["h_high"]) / fresh for r in sub], color=color, alpha=0.25, lw=0)
+        ax1.plot(R, [float(r["h"]) / fresh for r in sub], color=color, marker="o", ms=3, lw=1.5,
+                 label=f"{name.replace('phi', 'φ')} ({sub[0]['window_hours']} h)")
+        plan = json.loads(sub[0]["plan"])
+        h = fluid_return_curve(plan, E12_RATES, E12_S, E12_PATIENCE, 1.0, "profile", grid)
+        ax1.plot(grid / fresh, np.array(h) / fresh, color=color, ls="--", lw=1)
+    ax1.axhline(0.0, color=INK_2, lw=0.8)
+    ax1.set_xlabel("Returners per day R / fresh demand")
+    ax1.set_ylabel("h(R) = L(R) − R, per fresh citizen")
+    ax1.set_title("One crossing: no tipping point", loc="left")
+    ax1.legend(fontsize=8, title="simulated (dots), fluid (dashed)", title_fontsize=8)
+
+    # (b) Steady state R* against staffing
+    for timing, color, marker in [("profile", INK, "o"), ("opening", "#e34948", "s")]:
+        fsub = sorted([r for r in fl if r["timing"] == timing and r["plan_name"] != "late plan"],
+                      key=lambda r: int(r["window_hours"]))
+        xs = [int(r["window_hours"]) for r in fsub]
+        ys = [min(float(r["repeat_per_100"]), 1e4) for r in fsub]
+        ax2.plot(xs, ys, color=color, ls="--", lw=1.2)
+        pts = {}
+        for r in curves:
+            if r["timing"] == timing and r["plan_name"] != "late plan":
+                pts[int(r["window_hours"])] = (100 * float(r["sim_R"]) / fresh
+                                               if r["sim_R"] else None)
+        xs2 = sorted(pts)
+        ax2.plot([x for x in xs2 if pts[x]], [pts[x] for x in xs2 if pts[x]], color=color,
+                 marker=marker, lw=0, ms=6,
+                 label=f"returns {'spread over the day' if timing == 'profile' else 'at opening'}")
+        for x in xs2:
+            if pts[x] is None:
+                ax2.annotate("none ≤ 3×", (x, 300), color=color, fontsize=7, ha="center",
+                             xytext=(0, 4), textcoords="offset points")
+                ax2.plot([x], [300], color=color, marker="^", ms=6)
+    ax2.set_yscale("log")
+    ax2.set_xlabel("Window-hours (E7 fail plan × φ)")
+    ax2.set_ylabel("Steady-state repeat visits per 100")
+    ax2.set_title("The steady state diverges smoothly", loc="left")
+    ax2.legend(fontsize=8, title="simulated (markers), fluid (dashed)", title_fontsize=8)
+
+    # (c) Recovery after one closure day: critical slowing down
+    for timing, color, marker in [("profile", INK, "o"), ("opening", "#e34948", "s")]:
+        fsub = sorted([r for r in fl if r["timing"] == timing and r["plan_name"] != "late plan"
+                       and r["recovery_days"] not in ("", "2000")],
+                      key=lambda r: int(r["window_hours"]))
+        ax3.plot([int(r["window_hours"]) for r in fsub],
+                 [float(r["recovery_days"]) for r in fsub], color=color, ls="--", lw=1.2)
+        xs, med, lo, hi = [], [], [], []
+        for name in sorted({r["plan_name"] for r in chains if r["plan_name"] != "late plan"}):
+            sub = [r for r in chains if r["plan_name"] == name and r["timing"] == timing]
+            rec = [float(r["recovery_days"]) for r in sub if r["recovery_days"] != ""]
+            if len(rec) == len(sub) and rec:
+                xs.append(int(sub[0]["window_hours"]))
+                med.append(np.median(rec))
+                lo.append(np.percentile(rec, 10))
+                hi.append(np.percentile(rec, 90))
+        if not xs:              # no case where every chain recovered
+            continue
+        order = np.argsort(xs)
+        xs, med = np.array(xs)[order], np.array(med)[order]
+        lo, hi = np.array(lo)[order], np.array(hi)[order]
+        ax3.errorbar(xs, med, yerr=[med - lo, hi - med], color=color, marker=marker, lw=0,
+                     elinewidth=1, capsize=3, ms=6,
+                     label=f"returns {'spread over the day' if timing == 'profile' else 'at opening'}")
+    ax3.set_yscale("log")
+    ax3.set_xlabel("Window-hours (E7 fail plan × φ)")
+    ax3.set_ylabel("Days to recover from one closure day")
+    ax3.set_title("Critical slowing down near collapse", loc="left")
+    ax3.legend(fontsize=8, title="simulated median, 10–90% (markers); fluid (dashed)",
+               title_fontsize=8)
+    fig.tight_layout()
+    save(fig, "fig15_tipping.png")
+
+
+def fig_return_chains():
+    """Round 9: day-to-day returners around one closure day (day 30)."""
+    from experiments import E12_RATES
+    fresh = sum(E12_RATES)
+    chains = load("e12d_chains.csv")
+    fig, axes = plt.subplots(1, 3, figsize=(15, 3.8), sharey=True)
+    for ax, name, color in zip(axes, ["phi=1.00", "phi=0.90", "phi=0.80"],
+                               ["#2a78d6", "#1baf7a", "#e34948"]):
+        sub = [r for r in chains if r["plan_name"] == name and r["timing"] == "profile"]
+        paths = [np.array(json.loads(r["path"])) / fresh for r in sub]
+        n = min(len(p) for p in paths)
+        for p in paths:
+            ax.plot(np.arange(len(p)), p, color=color, alpha=0.15, lw=0.8)
+        ax.plot(np.arange(n), np.median([p[:n] for p in paths], axis=0), color=INK, lw=1.6,
+                label="median of 20 chains")
+        ax.axvline(30, color=MUTED, ls=":", lw=1)
+        ax.set_title(f"{name.replace('phi', 'φ')} ({sub[0]['window_hours']} h)", loc="left")
+        ax.set_xlabel("Day (office closed on day 30)")
+        ax.set_xlim(0, min(n, 250))
+    axes[0].set_ylabel("Returners / fresh demand")
+    axes[0].legend(fontsize=8)
+    fig.tight_layout()
+    save(fig, "fig16_return_chains.png")
+
+
 if __name__ == "__main__":
     fig_gap_heatmap()
     fig_hourly()
@@ -382,3 +930,11 @@ if __name__ == "__main__":
     fig_shifts()
     fig_crossval()
     fig_appointments()
+    fig_abandonment()
+    fig_regimes()
+    fig_log_regime()
+    fig_fluid_day()
+    fig_fluid_scaling()
+    fig_paid_overtime()
+    fig_tipping()
+    fig_return_chains()

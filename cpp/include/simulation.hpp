@@ -27,7 +27,18 @@ enum class EventType {
     ARRIVAL,
     DEPARTURE,
     STAFFING_CHANGE,   // Slot boundary: newly opened windows pull from the queue
-    APPOINTMENT        // A booked citizen arrives (does not schedule further arrivals)
+    APPOINTMENT,       // A booked citizen arrives (does not schedule further arrivals)
+    RENEGE             // A waiting walk-in's patience runs out
+};
+
+/**
+ * @brief How walk-ins abandon (appointment holders never do)
+ */
+enum class Abandonment {
+    NONE,     // Everyone waits until served
+    RENEGE,   // Hidden queue: join, then leave once the wait exceeds patience
+    BALK      // Visible queue: on arrival, estimate the wait from the line and
+              // leave at once if the estimate exceeds patience; joiners stay
 };
 
 /**
@@ -62,6 +73,9 @@ struct Citizen {
     double arrival_time;
     double service_time;         // Drawn at arrival (common random numbers)
     bool is_appointment;         // Booked arrival rather than walk-in
+    double patience;             // Minutes this citizen will wait (drawn at arrival)
+    bool abandoned;              // Balked or reneged instead of being served
+    double abandon_time;         // When they left (arrival time for a balk)
     double service_start_time;
     double departure_time;
 };
@@ -91,6 +105,11 @@ struct SimulationResults {
     int appointments_arrived;                  // Booked citizens who showed up
     int appointments_late;                     // Of those, how many waited > wait_threshold
     double appointment_wait_sum;               // Total wait of booked citizens (minutes)
+    std::vector<int> abandoned_per_slot;       // Walk-ins who balked or reneged, by arrival hour
+    double abandoned_wait_sum;                 // Minutes spent in the office by those who left
+    double spill_minutes;                      // Service on windows already closed (a closing
+                                               // window finishing its citizen), before closing
+    double overtime_busy_minutes;              // Service delivered after the doors close
     std::vector<double> utilization_per_slot;  // 8 hourly slots
     std::vector<double> all_wait_times;        // For distribution analysis
 };
@@ -111,6 +130,10 @@ struct SimulationConfig {
     std::vector<double> appointment_times; // Booked arrival times (minutes from opening)
     double no_show;                        // Probability a booked citizen does not come
     double punctuality_sd;                 // SD (minutes) of arrival around the booked time
+    Abandonment abandonment;               // Walk-in abandonment behaviour
+    double mean_patience;                  // Mean patience in minutes
+    ServiceDist patience_dist;             // Patience distribution family
+    double patience_cv;                    // Patience CV (lognormal only)
 
     SimulationConfig()
         : mean_service_time(8.0)
@@ -121,7 +144,11 @@ struct SimulationConfig {
         , rate_cv(0.0)
         , wait_threshold(15.0)
         , no_show(0.0)
-        , punctuality_sd(0.0) {}
+        , punctuality_sd(0.0)
+        , abandonment(Abandonment::NONE)
+        , mean_patience(30.0)
+        , patience_dist(ServiceDist::EXPONENTIAL)
+        , patience_cv(1.0) {}
 };
 
 /**
@@ -137,6 +164,8 @@ struct SimulationConfig {
  *   multiplier (a gamma-mixed Poisson process, which is overdispersed)
  * - Optional appointments: booked times with no-shows and punctuality noise,
  *   served FIFO alongside walk-ins
+ * - Optional walk-in abandonment: reneging from a hidden queue or balking at
+ *   a visible one, with patience on its own random stream
  */
 class QueueSimulator {
 public:
@@ -162,6 +191,7 @@ private:
     std::mt19937 service_rng_;
     std::mt19937 rate_rng_;
     std::mt19937 appointment_rng_;
+    std::mt19937 patience_rng_;
     std::exponential_distribution<double> service_dist_;
     std::lognormal_distribution<double> lognormal_dist_;
     std::uniform_real_distribution<double> uniform_dist_;
@@ -172,12 +202,15 @@ private:
     double last_departure_time_;
     int next_citizen_id_;
     std::priority_queue<Event, std::vector<Event>, std::greater<Event>> event_queue_;
-    std::queue<int> waiting_queue_;  // Citizen IDs waiting for service
+    std::queue<int> waiting_queue_;  // Citizen IDs waiting for service (may hold reneged ones)
+    int waiting_count_;              // Citizens actually waiting (excludes reneged)
     std::vector<ServiceWindow> windows_;
     std::vector<Citizen> citizens_;
 
     // Statistics tracking
     std::vector<double> slot_busy_time_;  // Cumulative busy time per slot
+    double spill_minutes_;                // Busy time on closed windows before closing
+    double overtime_busy_minutes_;        // Busy time after closing
 
     // Helper methods
     double get_arrival_rate(double time) const;
@@ -186,14 +219,17 @@ private:
     double slot_length(int slot) const;
     double generate_next_arrival_time();
     double generate_service_time();
+    double generate_patience();
 
     void process_arrival(const Event& event);
     void admit_citizen(bool is_appointment);
     void process_departure(const Event& event);
+    void process_renege(const Event& event);
     void process_staffing_change();
     void start_service(int citizen_id, int window_id);
     void serve_waiting_citizens();
     void add_busy_time(double start, double end);
+    void add_unpaid_time(int window_id, double start, double end);
     int find_free_window();
 
     SimulationResults compute_results() const;

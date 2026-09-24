@@ -14,9 +14,18 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from staffing_methods import (  # noqa: E402
     OFFICE_RATES, analytic_plans, evaluate, lagged_rates, offered_load,
-    prob_wait_exceeds, ratio_ci,
+    prob_wait_exceeds, ratio_ci, servers_for_load,
 )
 from optimizer import find_simulator, run_simulation, sipp_staffing  # noqa: E402
+from abandonment import (  # noqa: E402
+    balk_metrics, fluid_discount, hour_metrics, renege_abandon, renege_metrics,
+    required_windows, required_windows_with_returns, return_rates, score,
+)
+from fluid import fluid_day, fluid_staffing  # noqa: E402
+from tipping import (  # noqa: E402
+    classify_roots, fluid_day_renege, fluid_fixed_point, fluid_return_curve,
+    simulate_return_chain, stationary_return_roots,
+)
 
 SIMULATOR = find_simulator()
 
@@ -155,6 +164,24 @@ class TestSimulatorExtensions(unittest.TestCase):
                  for d, cv in [("det", 1.0), ("lognormal", 0.5), ("exp", 1.0), ("lognormal", 1.5)]]
         self.assertEqual(waits, sorted(waits))
 
+    def test_unpaid_service_accounting(self):
+        # Every service minute is in a paid slot (utilization) or after closing
+        plan = [3, 5, 2, 2, 4, 1, 3, 2]
+        r = run_simulation(plan, [20.0, 30, 12, 12, 25, 8, 18, 12], replications=50)
+        util = np.array(r.utilization)          # averaged over days
+        in_day = float(np.sum(util * np.array(plan) * 60.0))
+        total = r.mean_service * r.avg_served
+        after = float(np.mean(r.daily_overtime_busy))
+        self.assertAlmostEqual(in_day + after, total, delta=0.02 * total)
+        self.assertGreater(np.mean(r.daily_spill), 0.0)     # Staffing drops at 9-10, 12-1
+
+    def test_no_spill_without_staffing_cuts_and_overtime_is_r_times_s(self):
+        # With spare windows, the office at closing holds Poisson(R) citizens,
+        # each needing S more minutes on average: overtime service = R * S
+        r = run_simulation([12] * 8, [30.0] * 8, replications=4000, seed=11)
+        self.assertEqual(max(r.daily_spill), 0.0)
+        self.assertAlmostEqual(np.mean(r.daily_overtime_busy), 4.0 * 8.0, delta=1.5)
+
     def test_rate_cv_keeps_mean_demand(self):
         base = run_simulation([3] * 8, replications=1000)
         mixed = run_simulation([3] * 8, replications=1000, rate_cv=0.2)
@@ -168,6 +195,232 @@ class TestSimulatorExtensions(unittest.TestCase):
         low, high = ev.late_ci[7]           # Slot 7 covers minutes 420..20000
         self.assertLessEqual(low, expected)
         self.assertGreaterEqual(high, expected)
+
+
+class TestAbandonmentModels(unittest.TestCase):
+    def test_erlang_a_abandonment_identity(self):
+        # P(abandon) = theta * E[queue] / lambda for M/M/c+M
+        for c, lam, patience in [(2, 15, 30), (3, 15, 30), (4, 40, 20)]:
+            m = renege_metrics(c, lam / 60, 8.0, patience, 15.0)
+            self.assertAlmostEqual(m.abandon, m.mean_queue / patience / (lam / 60), places=8)
+
+    def test_long_patience_reduces_to_erlang_c(self):
+        expected = prob_wait_exceeds(3, 2.0, 8.0, 15.0)
+        self.assertAlmostEqual(renege_metrics(3, 0.25, 8.0, 3000, 15.0).fail, expected, delta=0.002)
+        self.assertAlmostEqual(balk_metrics(3, 0.25, 8.0, 1e6, 15.0).fail, expected, places=5)
+
+    def test_offered_wait_splits_the_failure_rate(self):
+        # fail = P(V > T) + P(left early with V <= T), both parts non-negative
+        m = renege_metrics(3, 0.25, 8.0, 30, 15.0)
+        self.assertGreater(m.offered_late, 0.0)
+        self.assertGreater(m.fail - m.offered_late, 0.0)
+        self.assertAlmostEqual(renege_abandon(3, 0.25, 8.0, 30), m.abandon, places=9)
+
+    def test_required_windows_matches_sipp_without_abandonment(self):
+        for rate in (6.0, 12.0, 15.0, 40.0):
+            self.assertEqual(required_windows(rate, 8.0, 15.0, 0.10),
+                             servers_for_load(rate / 60 * 8, 8.0, 15.0, 0.10))
+
+    def test_required_windows_matches_linear_search(self):
+        # The bisection starts at c < (1 - alpha) R, which the throughput bound
+        # makes infeasible; the answer must equal the first feasible c from 1
+        for rate, mode, patience in [(40.0, "renege", 30.0), (150.0, "renege", 300.0),
+                                     (150.0, "balk", 30.0), (90.0, "renege", 120.0)]:
+            c = 1
+            while hour_metrics(mode, c, rate, 8.0, patience, 15.0).fail > 0.10:
+                c += 1
+            self.assertEqual(required_windows(rate, 8.0, 15.0, 0.10, mode, patience), c)
+
+    def test_fluid_discount(self):
+        self.assertAlmostEqual(fluid_discount(15.0, 0.10, 30.0), 0.10)
+        self.assertAlmostEqual(fluid_discount(15.0, 0.10, 60.0, "lognormal", 0.5), 0.0035,
+                               delta=0.0002)
+        self.assertEqual(fluid_discount(15.0, 0.10, 30.0, "det"), 0.0)
+
+    def test_returns_fixed_point(self):
+        # No returns reproduces the plain requirement; returns never need fewer windows
+        for load in (4.0, 25.0):
+            rate = load / 8 * 60
+            plain = required_windows(rate, 8.0, 15.0, 0.10, "renege", 30.0)
+            c0, x0 = required_windows_with_returns(rate, 8.0, 15.0, 0.10, 30.0, 0.0)
+            c1, x1 = required_windows_with_returns(rate, 8.0, 15.0, 0.10, 30.0, 1.0)
+            self.assertEqual(c0, plain)
+            self.assertAlmostEqual(x0, rate, places=6)
+            self.assertGreaterEqual(c1, c0)
+            self.assertGreater(x1, rate)
+
+    def test_return_rates_add_the_returners(self):
+        self.assertAlmostEqual(sum(return_rates(OFFICE_RATES, 9.0, "profile")),
+                               sum(OFFICE_RATES) + 9.0, places=9)
+        self.assertEqual(return_rates(OFFICE_RATES, 9.0, "opening")[0], OFFICE_RATES[0] + 9.0)
+
+
+@unittest.skipUnless(SIMULATOR.exists(), f"simulator not built at {SIMULATOR}")
+class TestAbandonmentSimulator(unittest.TestCase):
+    """Constant demand and staffing over a long day against the exact chains."""
+
+    def _check(self, mode, c, lam, patience, dist="exp", cv=1.0):
+        ev = score([c] * 8, [lam] * 8, 8.0, reps=40, seed=7, duration=20000,
+                   abandonment=mode, patience=patience, patience_dist=dist, patience_cv=cv)
+        exact = hour_metrics(mode, c, lam, 8.0, patience, 15.0, dist, cv)
+        low, high = ev.fail_ci[7]             # Slot 7 covers minutes 420..20000
+        self.assertLessEqual(low, exact.fail, msg=(mode, c, lam, dist))
+        self.assertGreaterEqual(high, exact.fail, msg=(mode, c, lam, dist))
+        self.assertAlmostEqual(ev.abandon[7], exact.abandon, delta=0.1 * exact.abandon)
+
+    def test_renege_matches_erlang_a(self):
+        self._check("renege", 3, 15.0, 30.0)
+        self._check("renege", 2, 15.0, 30.0)   # Overloaded without abandonment
+
+    def test_balk_matches_birth_death_chain(self):
+        self._check("balk", 3, 15.0, 30.0)
+        self._check("balk", 2, 15.0, 30.0, "lognormal", 0.5)
+
+    def test_infinite_patience_changes_nothing(self):
+        base = run_simulation([2, 3, 3, 2, 2, 3, 3, 2], replications=100)
+        for mode in ("renege", "balk"):
+            r = run_simulation([2, 3, 3, 2, 2, 3, 3, 2], replications=100, abandonment=mode,
+                               patience=1e9, patience_dist="det")
+            self.assertEqual(r.daily_mean_waits, base.daily_mean_waits, msg=mode)
+            self.assertEqual(r.daily_abandoned, [[0] * 8] * 100, msg=mode)
+
+    def test_appointment_holders_never_leave(self):
+        # No walk-ins, overloaded single window, zero patience: nobody leaves
+        r = run_simulation([1] * 8, [0.0] * 8, replications=3, abandonment="renege",
+                           patience=0.01, appointments=[5.0 * i for i in range(90)])
+        self.assertEqual(sum(map(sum, r.daily_abandoned)), 0)
+        self.assertEqual(r.daily_appt_arrived, [90] * 3)
+
+    def test_abandonment_is_aligned_across_plans(self):
+        # Common random numbers: the same citizens arrive under every plan
+        a = run_simulation([2] * 8, replications=20, abandonment="renege", patience=20)
+        b = run_simulation([4] * 8, replications=20, abandonment="renege", patience=20)
+        arrivals = lambda r: [sum(x) + sum(y) for x, y in zip(r.daily_arrivals, r.daily_abandoned)]
+        self.assertEqual(arrivals(a), arrivals(b))
+        self.assertGreater(sum(map(sum, a.daily_abandoned)), sum(map(sum, b.daily_abandoned)))
+
+
+class TestFluid(unittest.TestCase):
+    RATES = [9.0, 12.0, 7.5, 6.0, 6.0, 9.0, 10.5, 7.5]     # about 1.1 Erlangs at S = 8
+
+    def test_empty_start_follows_offered_load(self):
+        # With windows to spare nobody queues and X(t) is the offered load m(t)
+        day = fluid_day([10] * 8, self.RATES, 8.0, 15.0, dt=0.25)
+        t, m = offered_load(self.RATES, 8.0)
+        self.assertLess(np.max(np.abs(day["X"] - np.interp(day["t"], t, m))), 0.01)
+        self.assertEqual(max(day["late"]), 0.0)
+
+    def test_overload_grows_the_queue_linearly(self):
+        # 2 windows, 30 per hour at S = 8: the queue grows at 0.5 - 2/8 = 0.25 per minute
+        day = fluid_day([2] * 8, [30.0] * 8, 8.0, 15.0, dt=0.1)
+        q = day["queue"]
+        k = np.searchsorted(day["t"], [120.0, 180.0])
+        self.assertAlmostEqual((q[k[1]] - q[k[0]]) / 60.0, 0.25, places=3)
+        # 15-minute wait reached when the queue holds 15 * 2/8 = 3.75 citizens
+        self.assertGreater(day["late"][1], 0.9)
+
+    def test_lp_plan_is_feasible_and_below_workload(self):
+        sol = fluid_staffing(self.RATES, 8.0, 15.0, 0.0, dt=1.0)
+        day = fluid_day(sol["plan"], self.RATES, 8.0, 15.0, dt=0.25)
+        self.assertLess(max(day["late"]), 0.02)       # grid error only
+        workload = sum(r / 60 * 8.0 for r in self.RATES)
+        self.assertLess(sol["cost"], workload)       # opens empty, drains free
+
+    def test_work_conservation(self):
+        # 60 * window-hours = S * (arrivals - backlog at closing) + idle window-minutes
+        sol = fluid_staffing(self.RATES, 8.0, 15.0, 0.0, dt=1.0)
+        day = fluid_day(sol["plan"], self.RATES, 8.0, 15.0, dt=0.05)
+        c = np.array(sol["plan"])[np.minimum((day["t"] // 60).astype(int), 7)]
+        idle = np.sum(np.maximum(c - day["X"], 0.0)) * 0.05
+        arrivals = sum(self.RATES)
+        self.assertAlmostEqual(60 * sol["cost"], 8.0 * (arrivals - day["X"][-1]) + idle,
+                               delta=0.02 * 60 * sol["cost"])
+
+    def test_nonpreemptive_closing_is_cheaper_and_converges(self):
+        from fluid import fluid_day_nonpreemptive, fluid_staffing_nonpreemptive
+        # Closing windows that finish their citizen can only add capacity
+        drop = fluid_staffing(self.RATES, 8.0, 15.0, 0.0, dt=1.0)
+        finish = fluid_staffing_nonpreemptive(self.RATES, 8.0, 15.0, 0.0, dt=1.0)
+        self.assertLessEqual(finish["cost"], drop["cost"] + 1e-6)
+        # Waits on the solver's own grid overshoot T by a few steps at most, and
+        # the overshoot shrinks with the grid
+        over = []
+        for dt in (1.0, 0.5):
+            sol = fluid_staffing_nonpreemptive(self.RATES, 8.0, 15.0, 0.0, dt=dt)
+            day = fluid_day_nonpreemptive(sol["plan"], self.RATES, 8.0, 15.0, dt=dt)
+            over.append(float(np.max(day["wait"])) - 15.0)
+        self.assertLess(over[0], 4 * 1.0)
+        self.assertLess(over[1], over[0])
+
+    def test_paid_fluid(self):
+        from fluid import fluid_staffing_nonpreemptive
+        from overtime import fluid_paid
+        free = fluid_staffing_nonpreemptive(self.RATES, 8.0, 15.0, 0.0, dt=1.0)
+        self.assertAlmostEqual(fluid_paid(self.RATES, 8.0, 15.0, 0.0, dt=1.0)["paid_cost"],
+                               free["cost"], places=4)
+        # Paying for all work: cost = work + idle >= work
+        workload = sum(r / 60 * 8.0 for r in self.RATES)
+        one = fluid_paid(self.RATES, 8.0, 15.0, 1.0, dt=1.0)
+        self.assertGreaterEqual(one["paid_cost"], workload - 1e-6)
+        self.assertAlmostEqual(one["paid_cost"], one["window_hours"] + one["spill_hours"]
+                               + one["overtime_hours"], places=6)
+        self.assertGreaterEqual(fluid_paid(self.RATES, 8.0, 15.0, 1.5, dt=1.0)["paid_cost"],
+                                one["paid_cost"] - 1e-9)
+
+    def test_late_allowance_never_costs_more(self):
+        lp = fluid_staffing(self.RATES, 8.0, 15.0, 0.0, dt=2.0)
+        mip = fluid_staffing(self.RATES, 8.0, 15.0, 0.10, dt=2.0)
+        self.assertLessEqual(mip["cost"], lp["cost"] + 1e-6)
+        day = fluid_day(mip["plan"], self.RATES, 8.0, 15.0, dt=0.25)
+        self.assertLessEqual(max(day["late"]), 0.10 + 0.05)
+
+
+class TestTipping(unittest.TestCase):
+    """Round 9: steady states of mandatory services."""
+
+    RATES = [30.0, 45.0, 30.0, 20.0, 20.0, 30.0, 40.0, 25.0]
+
+    def test_stationary_model_has_at_most_one_root(self):
+        rng = np.random.default_rng(7)
+        for _ in range(25):
+            c = int(rng.integers(1, 12))
+            rho = float(rng.uniform(0.3, 1.8))
+            r = float(rng.choice([0.3, 0.8, 1.0]))
+            roots = stationary_return_roots(c, rho * c * 60 / 8.0, 8.0, 30.0, r)
+            self.assertLessEqual(len(roots), 1)
+            if r < 1.0 or rho < 0.95:
+                self.assertEqual(len(roots), 1)
+
+    def test_fluid_conserves_citizens(self):
+        plan = [3, 4, 3, 2, 2, 3, 4, 3]
+        day = fluid_day_renege(plan, self.RATES, 8.0, 30.0)
+        self.assertAlmostEqual(day["served"] + day["losses"], sum(self.RATES), delta=0.05)
+
+    def test_fluid_loses_nobody_with_ample_windows(self):
+        day = fluid_day_renege([20] * 8, self.RATES, 8.0, 30.0)
+        self.assertLess(day["losses"], 1e-9)
+
+    def test_fluid_return_curve_never_rises(self):
+        plan = [5, 7, 5, 4, 4, 5, 6, 4]                       # 40 h for 32 h of work
+        grid = np.linspace(0.0, 3 * sum(self.RATES), 31)
+        for timing in ("profile", "opening"):
+            h = fluid_return_curve(plan, self.RATES, 8.0, 30.0, 1.0, timing, grid)
+            self.assertLess(max(np.diff(h)), 0.0)
+            fp = fluid_fixed_point(plan, self.RATES, 8.0, 30.0, 1.0, timing)
+            self.assertLess(fp["slope"], 1.0)
+
+    def test_classify_roots_finds_bistability(self):
+        grid = np.linspace(0.0, 10.0, 101)
+        h = (2.0 - grid) * (5.0 - grid) * (8.0 - grid)      # +, -, +, -
+        cls = classify_roots(grid, h)
+        self.assertEqual(len(cls["roots"]), 3)
+        self.assertEqual(cls["stable"], [True, False, True])
+        self.assertTrue(cls["bistable"])
+
+    def test_chain_without_returns_stays_empty(self):
+        path = simulate_return_chain([3, 4, 3, 2, 2, 3, 4, 3], self.RATES, 8.0, 0.0,
+                                     "profile", 5, abandonment="renege", patience=30.0)
+        self.assertTrue(all(p["returns"] == 0 for p in path))
 
 
 if __name__ == "__main__":

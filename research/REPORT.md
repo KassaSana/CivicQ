@@ -19,6 +19,12 @@ The target is that at most 10% of each hour's arrivals wait more than 15 minutes
 - **Two methodological results.** Common random numbers cut the variance of plan-vs-plan comparisons by a median of 40×. And the choice of service-level definition alone changes the required staffing for the same office from 18 to 22 staff-hours, which is a policy decision disguised as a technical one.
 - **Shifts matter more than the staffing rule (Round 2).** Real staff work 4- and 8-hour shifts. The textbook two-step method (set an hourly requirement, then choose shifts with an integer program) costs up to **68%** more paid hours than the ideal hour-by-hour plan. Searching over shift schedules directly with simulation cuts that to **14–33%**, and is up to **15%** cheaper than the best two-step schedule. Unlike the call-center finding of Ingolfsson et al. (2002), two-step schedules here never miss the target: they are safe but expensive.
 - **Appointments save staff through shifts, not hours (Round 3).** Moving demand to appointments barely changes the hour-by-hour staffing need: at most −6.5% even with 75% of demand booked. But booked into the quiet hours, appointments flatten demand enough for full-day shifts to fit it. That cut an 8-Erlang office's roster from 100 to 76 paid hours (−24%), against −4% when bookings follow the demand curve. A small office saw no change. Appointment holders waited less than walk-ins in every setting.
+- **A served-citizens metric rewards understaffing (Round 4).** When walk-ins can leave, the usual ticket-log metric (the late share of *served* citizens) is met with 18–27% fewer staff-hours than the citizen view (late *or* left), while 11–19% of the busiest hour's arrivals walk out. If leavers must come back for a mandatory service, those savings become repeat visits: 18 per 100 transactions in the office, and at 8 Erlangs a plan below the raw workload that collapses. Returners who "come back first thing" swamp the opening hour. Whether a visible line loses more citizens than a hidden ticket queue depends on the shape of patience, as a Jensen argument predicts, but the visible line always has the higher failure rate. Erlang-A staffing was safe except where its exponential-patience assumption failed.
+- **When leaving helps and when it hurts (Round 5).** Abandonment lowers the staffing need only if the target is lenient relative to the office's size. At fixed staffing it raises the failure rate below a crossover utilization ρ\*(c) and lowers it above. A strict 2% target makes abandonment cost 12–15% more staff; a 20% target saves up to 16%. For large offices a fluid limit predicts the saving as min(α, G(T)) of the load, where G is the patience CDF: 10.5% measured at 32 Erlangs against 10% predicted, and 0.4% against 0.35% for patient citizens. With mandatory returns the saving is exactly zero.
+- **Large offices with a fixed threshold (Round 6).** Exact models up to 10,000 windows correct Round 5's scaling. The crossover slack grows like (S/2T)·ln c, not like √c. Abandonment can raise a large office's staffing only when the target α is below K₁/√c, a closed form that does not depend on the threshold. How fast the fluid saving is reached depends on where α sits against G(T): within one window above it, O(√R) extra windows below it, and O(√(R ln R)) exactly at it. Convergence is slow for patient citizens facing short thresholds, where two of the pre-registered tolerances failed.
+- **A fluid model of the whole day (Round 7).** A deterministic fluid of the finite day shows that a large office needs *less* than its raw workload (0.93 of it for the studied demand at S = 8). Only the two ends of the day explain this: the backlog absorbed by unpaid service after closing, net of the idle time from opening empty. Simulation sits about 3√R windows above that fluid, confirmed out of sample at 256 Erlangs. The same boundary effect, not lag or threshold stringency, is why SIPP's excess grows with service time: holding T/S fixed, it still rises from 1.5% to 33%. Three of the five registered tests failed, two because the first fluid ignored that a closing window finishes its citizen. Against the corrected fluid, integrated shift search leaves no measurable slack.
+- **Paying for unpaid work (Round 8).** When service after closing and at closing windows is paid, a large office needs its full workload plus a small constant slack, about 8·(S/T)·ln(1/α) window-hours. Round 7's below-workload result and its √R correction both came from that free work. SIPP's excess still grows with service time, but now through threshold stringency and lag. Who stays after closing (staff leaving when idle, or everyone waiting for the last citizen) moves paid costs by up to 16%, more than a time-and-a-half premium does.
+- **Mandatory services fade, they do not tip (Round 9).** When every citizen who leaves must come back, the office has one steady state at every staffing level, both in theory (the fluid and stationary models) and in 12 simulated return curves. There is no second state for a bad day to push it into. What grows near collapse is recovery time: after one closure day, 5 days at the citizen-optimal plan and 47 days with 21% fewer window-hours, while the daily numbers still look calm. With returners at opening, cutting 5% of window-hours raises the steady state from 30 to 142 repeat visits per 100. The fluid's error on the steady state is a fixed number of citizens, about 30–65 a day, at both 8 and 32 Erlangs.
 - **Independent validation (Round 2).** An independent implementation in the open-source Ciw library agrees with CivicQ: 0 of 54 tests reject under constant staffing, and CivicQ stays within Ciw's bounds in all 25 hours tested under changing staffing. Along the way we found that Ciw's hourly schedules silently add overtime capacity at every shift boundary, which halves the measured lateness if used naively.
 
 ## 1. Background and gap
@@ -98,6 +104,140 @@ The simulator (C++) is validated against the exact Erlang-C mean wait and per-ho
 - **H8.** Converting demand to appointments saves staff mainly by smoothing demand. Counter-cyclical placement (booking the quiet hours) saves clearly more than placement proportional to demand.
 - **H9.** With 15% no-shows and walk-ins still present, a small office (about 1.5 Erlangs) saves less than 10% of roster paid hours, even with half of demand booked.
 - **H10.** Under FIFO, appointment holders get *worse* late rates than walk-ins when placement is proportional, because they are booked into the peaks. Counter-cyclical placement reverses this.
+
+**Round 4** (stated before running E7; informed only by the stationary per-hour models in `research/abandonment.py`, not by any simulation of the office):
+
+Walk-ins may now leave. Two behaviours share one patience distribution. In a **hidden queue** (ticket number, no view of the line) a citizen *reneges* once their wait exceeds their patience. In a **visible queue** a citizen *balks*: they see q people waiting at c windows, expect to wait (q + 1)·S/c, and leave at once if that exceeds their patience. Two per-hour metrics are compared. The **served-late rate** (late / served) is what a ticket log of served citizens shows. The **failure rate** ((late + left) / everyone who came) is the citizen's view.
+
+- **H11 (ticket-log illusion).** With mean patience 30 min, the cheapest plan meeting the per-hour target on the served-late rate uses at least 10% fewer staff-hours than the cheapest plan meeting it on the failure rate, in both offices and under both behaviours. It loses at least 5% of arrivals in its worst hour.
+- **H12 (visible vs hidden queue).** For one citizen facing an uncertain wait V, a hidden queue loses them with probability E[F(V)], where F is the patience CDF. A visible queue loses them with probability F(estimate), and the estimate ignores people ahead who would have left. By Jensen's inequality, where F is concave (exponential patience) the visible queue loses **more** citizens at the same staffing. Where F is convex over typical waits (lognormal, CV 0.5, mode ≈ 21 min) the ordering may reverse. Prediction: with exponential patience the visible queue loses more citizens in ≥ 90% of plan × setting comparisons, and with lognormal patience it loses fewer in the majority.
+- **H13 (mandatory services).** A citizen who leaves still needs the permit, so they return on a later day (probability r = 1). Prediction for the served-late-optimal plan (exponential patience, mean 30): at least 5 repeat visits per 100 transactions. If returners come at opening, the opening hour's failure rate rises by at least 5 points over the no-return case. The office's own ticket log still shows the target met in every hour, so the office could not detect the problem from its own data.
+- **H14 (analytic rule under abandonment).** Per-hour SIPP built on the stationary abandonment models (Erlang-A for reneging, the balking chain for balking) meets the failure target with no significant misses in every setting.
+
+**Round 5** (stated before running E8b; derived from the stationary models and a fluid argument, §5.9). Round 4 found that abandonment raised the small office's staffing need but cut the 8-Erlang office's. The stationary analysis attributes this to two regimes. At a fixed number of windows, abandonment lowers the failure rate only above a crossover utilization ρ\*(c), which rises toward 1 with c. Below it, early leavers outweigh queue thinning. Abandonment can raise the requirement only when the target α is stricter than the Erlang-C late rate at that crossover, α\*(c), which falls from 0.14 at c = 1 to 0.02 at c = 80. For large offices a fluid limit gives the saving as a share of the offered load: d = min(α, G(T)), where G is the patience CDF. With a return probability r it becomes d(1 − r)/(1 − rd), which is zero for mandatory services.
+
+- **H15 (the saving grows with size toward the fluid limit).** Time-varying offices (S = 8, A = 0.6), hidden queue, α = 0.10. With exponential patience (mean 30), the staff-hour saving of the failure-target plan over the no-abandonment plan grows with mean load from 1 to 32 Erlangs and lies within 6–14% at 32 Erlangs. With lognormal patience (mean 60, CV 0.5; G(15) = 0.35%), the saving is at most 3% at every size.
+- **H16 (a strict target reverses the sign).** At α = 0.02, abandonment (exponential, mean 30) **raises** the staff-hours needed in both the office and the 8-Erlang office. At α = 0.20 it lowers or leaves them unchanged in both.
+- **H17 (small offices feel only the early leavers).** Many-server theory says a moderately loaded system depends on patience mainly through its density near zero (Zeltyn & Mandelbaum 2005). Prediction for the office's plan: exponential patience at means 30, 60 and 120 raises the worst hour's failure rate above its no-abandonment late rate. Lognormal patience (CV 0.5, density 0 at zero) at means 60 and 120 changes it by less than 1 point.
+- **H18 (returns remove the discount).** In the stationary per-hour model with returns at probability r, staffing per unit of offered load converges to (1 − d)/(1 − rd) as load grows: 0.90, 0.947 and 1.00 for r = 0, 0.5 and 1 with exponential patience.
+
+**Round 6** (stated before running E9; derived analytically below). §5.9 read the crossover as Halfin–Whitt scaling, 1 − ρ\* ≈ β\*/√c. But β\* kept falling with c, from 0.6 to 0.2. A re-reading of the published E8a table showed that the slack δ\* = c − R\* at the crossover grows like ln c instead, with a slope near S/(2T) for every patience level. We give a derivation, and then predictions tested only at window counts, service times, thresholds and patience levels that E8a did not cover.
+
+*Derivation (hidden queue, exponential service mean S and patience mean θ⁻¹, threshold T fixed as c grows).*
+- **Erlang-C side.** P(W > T) = C(c, R)·e^{−δT/S}. For this to reach a fixed small target, δ need only be O(log c). Then β = δ/√c → 0 and C → 1.
+- **Erlang-A side, near critical load.** Write the number in system as c + √c·X. X is a diffusion with drift −X/S below zero (servers) and −θX above zero (abandonment), and infinitesimal variance 2/S.
+  - Its stationary density is ∝ e^{−x²/2} for x < 0 and ∝ e^{−r²x²/2} for x > 0, where r = √(θS).
+  - So P(wait) → 1/(1 + r) and E[Q] = √c·E[X⁺].
+  - Hence P(abandon) = θE[Q]/λ → K₁/√c, with **K₁ = r·√(2/π)/(1 + r)**.
+  - Waits are O(S/√c) ≪ T, so served-late citizens are exponentially rare, and the failure rate is ≈ K₁/√c.
+- **Crossover.** Setting e^{−δT/S} = K₁/√c gives
+
+  δ\*·T/S = ½ ln c − ln K₁(θS) + o(1),  and  α\*(c) = K₁(θS)/√c · (1 + o(1)).
+
+  Convergence is slow, because the neglected terms are O(β\*) = O((S/T) ln c/√c).
+
+*Order of the large-office correction.* Let x(R) = c_req − (1 − d)R be the extra windows above the fluid staffing of §5.9, with d = min(α, G(T)). The throughput identity λ(1 − P(ab)) = μ·E[busy] ≤ cμ gives P(ab) ≥ 1 − c/R, so x > 0 whenever d = α. In the fluid regime, the stationary queue fluctuates by √(λ/θ). Together with each citizen's own service randomness, that gives the wait a spread σ_w ≈ √(S(θ⁻¹ + T)/R) around its fluid value w\*, where G(w\*) = 1 − c/R.
+- **G(T) > α.** w\* < T by a fixed margin, so late service is exponentially rare and idle windows are exponentially rare. One window above (1 − α)R suffices: **x ≤ 1**.
+- **G(T) < α.** w\* sits at T. Late service must be held to α − G(T) by pushing w\* below T by z·σ_w, where z is the standard normal quantile at α − G(T). That costs **x ≈ z·g(T)·√(S(θ⁻¹ + T))·√R** windows, where g is the patience density.
+- **G(T) = α.** Both constraints bind together, and x grows faster than √R, like √(R ln R).
+
+*Hypotheses.*
+- **H19 (logarithmic slack).** For S ∈ {4, 8, 16, 32}, T ∈ {5, 15, 30} and patience means 30 and 120 (exponential), the slope of δ\* against ln c, fitted over c = 1,000–10,000, lies within 10% of S/(2T) in every case where β\* < 0.15 at c = 10,000. For fixed θS, curves of δ\*·T/S against ln c for different T coincide within 0.1 at c ≥ 1,000: patience shifts the intercept, and S/T scales the whole curve.
+- **H20 (the walk-out boundary falls like 1/√c and does not depend on T).** α\*(c)·√c rises monotonically toward K₁(θS) (0.272 for S = 8, mean 30; 0.164 for mean 120). At c = 10,000 it lies within 15% of K₁ in every case with β\* < 0.15. At that c, α\* differs by less than 15% across T = 5, 15 and 30 for the same S and patience. Abandonment can therefore raise the requirement of a large office only when α < K₁/√c, whatever the threshold.
+- **H21 (three orders of the fluid correction).** Stationary per-hour failure-target staffing, hidden queue, S = 8, T = 15, α = 0.10, R from 50 to 5,000 Erlangs:
+  - (a) exponential patience, mean 30 (G(T) = 0.39): x ∈ (0, 1] at every R ≥ 50;
+  - (b) mean 300 (G(T) = 0.049): x/√R converges, and lies in 0.15–0.40 (predicted 0.26) at R ≥ 1,000;
+  - (c) mean 142.4 (G(T) = α exactly): x/√R keeps rising from R = 300 to 5,000;
+  - (d) mean 120 (G(T) = 0.1175, just above α): x > 1 up to R = 500, then falls back to x ≤ 1 by R = 5,000. The derivation places the turnover where the margin T − G⁻¹(α) = 2.4 min reaches about 3.5 σ_w, near R ≈ 2,000–3,000.
+
+**Round 7** (stated before running E10a and E10c–E10e). Rounds 1–6 used stationary per-hour models, but the office's day is finite: it opens empty, and once the doors close everyone inside is served at no staffing cost. Round 7 asks whether a deterministic **fluid** model of the whole day predicts the plans found by simulation.
+
+*The fluid model* (`research/fluid.py`; exponential service). X(t), the number in the office, starts at 0 and follows dX/dt = λ(t) − μ·min(X, c(t)). Service continues with the last hour's windows after closing. A citizen arriving at t waits ≤ T exactly when the queue (X − c)⁺ is at most μ∫ₜ^{t+T} c(u) du. That constraint is linear, so the cheapest plan in which at most α of each hour's arrivals wait longer than T is a mixed-integer linear program. It scales linearly with load, which gives a **fluid constant** f = window-hours/(8R) for each demand shape, swing, S and T.
+
+*What was computed before this pre-registration.* E10b (the fluid constants, which are theory) and the unit tests. Double peak, A = 0.6, S = 8, T = 15: f₀ = 0.967 with nobody late, and f_α = 0.967 with α = 0.10.
+
+Two structural facts come out of the computation:
+- **The α allowance is worth almost nothing in the fluid.** Under FIFO a late citizen makes those behind them late too, so the budget is spent only where it removes idle time: the opening hour.
+- **The constant sits below the raw workload, and only because of the two ends of the day.** Work conservation gives f = 1 − S·X(close)/(480R) + (idle window-minutes)/(480R). The backlog handed to the free drain after closing, net of the idle time from opening empty, is the entire difference from 1.
+
+*Disclosure.* After computing f, we compared it with the existing E8b plans for this office at R = 1–32. There, SGS-UCB sits about 10 window-hours above 8R·f at every R from 4 to 32. That is roughly constant, and close to 8·(S/T)·ln(1/α) = 9.8, Round 6's stationary slack summed over the day. It contradicts the √R growth predicted by the argument below, which was written first. Both predictions are registered, and the new runs decide between them.
+
+- **H22 (service time or threshold?).**
+  - Setup: the E1 comparison at 24 E, A = 0.6, with T/S held at 15/8 (T = 7.5, 15, 30, 60 for S = 4, 8, 16, 32).
+  - Prediction: SIPP's excess over SGS-UCB spans less than 6 points across S (in E1, with T = 15, it runs from 2.1% to 14.5%). Lag-SIPP and OL-avg recover a larger share of SIPP's excess than in E1 at S ≥ 8.
+  - Rationale: stationary slack (S/T)·ln(1/α) is constant once T/S is fixed.
+- **H23 (what sits above the fluid?).** Let E(R) = SGS-UCB window-hours − 8R·f_α, for the E8b office (double peak, S = 8, A = 0.6), extended to R = 64 and 128.
+  - **H23a (derivation).** Hour-level Poisson fluctuations of √(60λ) citizens move the binding waits by O(√(60S/R)) minutes, so E(R) grows like √R. Prediction: E(128)/E(32) ∈ [1.6, 2.4].
+  - **H23b (stationary slack, suggested by the in-sample data).** E(R) → 8·(S/T)·ln(1/α). Prediction: E(64) and E(128) both lie in 9.8 ± 40%, and E(128)/E(32) ∈ [0.6, 1.4].
+  - Out-of-sample cross-check, for H23b only: in E10a's four settings E should stay near 9.8 ± 40% whatever S, because S/T is fixed.
+  - In both cases SGS-UCB/(8R) → f_α < 1: a large office needs **less** than its raw workload.
+- **H24 (one mechanism behind the time-varying findings).** In the six 24-E E1 settings, and in the new single-peak and ramp shapes (24 E, S = 8 and 32, A = 0.6):
+  - (a) the fluid plan staffs the opening hour below SIPP;
+  - (b) wherever A = 0.6, at least one peak hour of the fluid plan has cᵢ < λᵢS (ρ > 1);
+  - (c) across hours, the SGS-UCB plan correlates with the fluid plan at ≥ 0.9, and more strongly than SIPP does, in every setting.
+- **H25 (how close integrated search comes to optimal).** On the E4 settings at 8 and 24 E (S = 8 and 32, both menus), let the fluid-optimal roster be the same program over shift counts:
+  - ISS paid hours exceed the fluid roster by at most 3 points more than SGS-UCB exceeds the fluid hourly plan;
+  - the fluid price of shifts (roster ÷ hourly) matches the measured one (ISS ÷ SGS-UCB) to within 5 points.
+
+*Round 7b* (stated after E10c, before running E10g). As registered, H23 failed. At R = 128, SGS-UCB found a feasible plan (988 window-hours) **below** 8R·f_α = 990, which is impossible if the fluid is the limit. The cause is the approximation flagged in the model. A closing window in the simulator finishes its citizen, and the 128-E plan closes about 230 windows after its peaks, roughly 30 window-hours of service the fluid did not count.
+
+A corrected fluid (`fluid_staffing_nonpreemptive`) splits citizens in service into those at open windows and those finishing at windows that just closed, and it measures waits exactly by FIFO counts. It gives f₀ = 0.933 for this office, against 0.967 (converged in the time step to ±0.0002; the α version is too slow to solve to optimality here, and α was worth 0.0005 in the original model). With it, E(R) = SGS-UCB − 8R·f₀ is 11.1, 12.3, 15.6, 19.2, 26.3 and 32.7 at R = 4 … 128. It grows, with a log-log slope of about 0.4 from R = 32 to 128, which is closer to H23a than to H23b. That reading is post hoc, so it is tested on a new point:
+
+- **H26 (confirmatory; the √R correction above the corrected fluid).** SGS-UCB at R = 256 (same office and settings as E10c) has an excess E(256) = SGS-UCB − 2048·f₀ in [38, 52]. That band is the extrapolations R^0.38 (42.6) and √R (46.2) from E(128), with about 10% added for search noise. Equivalently, E(256)/E(128) ∈ [1.15, 1.6]. A saturating correction (E(256) ≤ 35) would reject it.
+
+**Round 8** (stated after E11a and fixed before E11b–E11d were launched). *Disclosure:* a failed file edit meant the E11b–E11d runs started before this text reached the report. It was written unchanged from the version prepared before launch. The first result, E11c at S = 4, appeared at about the time of writing, so it cannot be shown to have come after; no wording was changed in light of it. Every other E11 result arrived later.
+
+Rounds 1–7 counted only staffed hours. Two kinds of service were free: service after the doors close, and a closing window finishing its citizen after its hour ends. Round 7 showed that this free work is what puts large offices below their raw workload. Round 8 charges it at κ times the regular rate (κ = 1 or 1.5).
+
+Staff are assumed to leave once nobody is left for them, so the unpaid work is exactly the service delivered outside paid window time. The simulator now records it per day, and its existing outputs are unchanged. For every plan, paid cost = window-hours + κ × unpaid work, and **with κ = 1 this equals total service work plus idle window-time**. Total work is fixed by demand, so the cheapest plan is the one that idles least while meeting the target.
+
+*Computed before this pre-registration* (E11a: the corrected fluid with the charge, which is theory). For κ = 1, the fluid paid cost per unit of workload is 1.000–1.021 for every shape, service time and threshold studied. Before the charge the range was 0.59–0.97, and the S = 32, T = 60 case goes from 0.587 to exactly 1.000. For κ = 1.5 it is 1.004–1.064.
+
+- **H27 (the service-time trend at fixed T/S was the free drain).** On E10a's settings (24 E, A = 0.6, T = 1.875S), with κ = 1:
+  - SIPP's excess in paid cost over the paid optimum spans less than 6 points across S = 4 … 32 (in E10a, with free overtime, it ran from 1.5% to 33%);
+  - with κ = 1.5 the span is under 8 points.
+- **H28 (at fixed T the trend survives, and it is threshold stringency).** On E1's settings (24 E, A = 0.6, T = 15), with κ = 1: SIPP's paid excess at S = 32 exceeds that at S = 4 by at least 5 points.
+  - Rationale: Erlang-C's stationary slack (S/T)·ln(1/α) per hour grows with S at fixed T. Priced overtime removes only the drain.
+  - Together, H27 and H28 would say that once work is paid, the trend in E1 is threshold stringency.
+- **H29 (the paid fluid is the leading order).** Double peak, S = 8, A = 0.6, T = 15, κ = 1, at R = 8, 32 and 128. Let E(R) be the paid optimum minus 8R·f₁ (f₁ = 1.0069). E(R) grows like √R: E(128)/E(32) ∈ [1.6, 2.4]. The rationale is Round 7's stochastic correction, which with paid work is all idle time.
+- **H30 (optimizing staffed hours when overtime is paid is costly for long services).** With κ = 1, the plan that minimizes staffed hours (the window-hours SGS-UCB plan) costs at least 3% more than the paid optimum at S = 32, and less than 2% more at S = 4, in E1's settings.
+
+*Round 8b* (stated after E11d, before running E11e). H29 failed. With paid overtime the excess of the paid optimum over the paid fluid was 10.1, 11.0 and 9.5 window-hours at R = 8, 32 and 128. That is flat, and close to 8·(S/T)·ln(1/α) = 9.8, the stationary slack of Round 6. So once all work is paid, the √R correction of Round 7 appears to go away.
+
+- **H31 (confirmatory; with paid work the correction is Round 6's stationary slack).** At R = 256 (same office, κ = 1), the paid optimum exceeds 2048·f₁ by E(256) ∈ [5.9, 13.7] (9.8 ± 40%). Growth like √R from R = 128 would give about 13.4–15, so the band's upper edge is set below 15, the value at which the reading would be rejected.
+
+**Round 9** (stated after the theory runs E12a and E12b and before the simulations E12c and E12d). The question asks whether a mandatory service can *tip*. Every citizen who leaves returns on a later day (r = 1). With R returners a day and L(R) the day's losses, steady states solve R = L(R). If more than one of them is stable, a single closure day could move an office that works into a permanent backlog.
+
+The theory says it cannot, in two models:
+- **Stationary Erlang-A.** The abandonment flow x − served(x) is convex, so x = λ + r·x·P_ab(c, x) has at most one root. E12a found 0 or 1 root in all 756 cases, and 0 only when r = 1 and ρ ≥ 1.
+- **The fluid of the day with reneging (`research/tipping.py`).** More input never lowers the work served, by an ODE comparison argument, so L′ ≤ 1. The fixed point is therefore unique. E12b shows h = L(R) − R strictly decreasing for every plan and timing (8 E, S = 16, exponential patience with mean 30, the E7 fail plan scaled by φ, and E7c's collapsed plan).
+
+What the fluid predicts instead is **critical slowing down**. As staffing falls, L′(R\*) rises toward 1. R\* grows roughly exponentially, and recovery from one closure day slows accordingly:
+
+| Plan | Returns spread over the day: R\*/100, days to recover | Returns at opening: R\*/100, days to recover |
+|---|---|---|
+| φ = 1.00 (71 h) | 0.3, 5 | 0.4, 19 |
+| φ = 0.95 (69 h) | 1.2, 7 | 1.6, 30 |
+| φ = 0.90 (64 h) | 3.5, 12 | 20.1, 93 |
+| φ = 0.85 (61 h) | 14.3, 28 | 3,802, over 2,000 |
+| φ = 0.80 (56 h) | 220, 133 | none below 200× |
+| E7c late plan (57 h) | 146, 102 | none below 200× |
+
+Here "days to recover" is the time for the fluid map to come back within 10% of fresh demand of R\*.
+
+- **H32 (no tipping in the stochastic day).** In E12c (12 curves of simulated h(R), 400 days each on common random numbers, R from 0 to 3× fresh demand at 11 points), no curve has a step where h rises significantly (paired 95% CI of Δh entirely above 0), and no curve changes sign more than once. A sign pattern +, −, + would reject it.
+- **H33 (the fluid locates the collapse).**
+  - (a) Where the fluid R\* is at least 100 per 100 but finite (spread returns, φ = 0.80 and the late plan), the simulated R\* is 1.0–2.0 times the fluid's.
+  - (b) Where the fluid has no root below 3× fresh demand (returns at opening, φ ≤ 0.85 and the late plan), the simulated h is still positive at 3× fresh.
+- **H34 (critical slowing down without hysteresis).** In E12d (20 chains per case, 30 days at the steady state, one closure day, then up to 400 days):
+  - (a) every chain in a case with fluid R\* ≤ 3× fresh returns to within 10% of fresh demand of its pre-shock level;
+  - (b) across those cases, median recovery days rank-correlate with the fluid's (Spearman ≥ 0.8);
+  - (c) recovery at spread-returns φ = 0.80 takes at least 10 times as long as at φ = 1.00;
+  - (d) every chain in a case with fluid R\* > 3× fresh, started with no returners, either passes 5× fresh demand or ends above 1× fresh.
+
+*Round 9b* (stated after E12c and E12d, before running E12e). There was no fold, so there is none to confirm. What E12c did show is that the simulated R\* exceeds the fluid's, by much more where L′ is close to 1. The proposed mechanism: stochastic losses δ = O(√R) a day, amplified by 1/(1 − L′). Relative to fresh demand this excess should then fall like 1/√R.
+
+- **H35 (confirmatory; the fluid's error shrinks like 1/√R).** Take the same office at 32 E: rates ×4, and the φ-plans ×4, which is exact for the fluid. For spread-over-the-day returns at φ = 0.95, 0.90 and 0.85, the excess (simulated R\* − fluid R\*) per 100 fresh citizens is 0.25–0.75 of its 8 E value in each case (13.0, 19.4 and 26.4 at 8 E; √R scaling predicts 0.5). A ratio of 0.75 or more would mean the error does not shrink with size; 0.25 or less would mean it is not a √R effect.
 
 *Change after pre-registration (Round 2):* while testing H7 we found that Ciw cannot express CivicQ's staffing-change rule (see §5.6). H7 was therefore split into a strict test for constant staffing and a bounds test for changing staffing *before* E5 was run. This deviation is disclosed here.
 
@@ -301,15 +441,394 @@ Both are scored on the separate evaluation days. The simulator's appointment fea
 
 **H10: rejected.** Appointment holders fared better than walk-ins under every placement.
 
+### 5.8 When citizens leave (E7)
+
+Walk-ins may now abandon; booked citizens never do. Patience is exponential with mean 30 or 60 min, or lognormal with mean 30 and CV 0.5. Exponential patience is the call-center convention. Lognormal is more plausible for someone who has travelled to an office, since almost nobody leaves in the first minutes. Each behaviour (§4, Round 4) and each metric gets its own SGS-UCB plan in the office and in the 8-Erlang office with S = 16 (as in E6). Every plan is scored under both behaviours on the evaluation days. Patience has its own random stream, so common random numbers still hold, and with abandonment switched off the simulator's output is byte-identical to before.
+
+**Validation (E7a).** Under constant demand and staffing the simulator matches the exact stationary models:
+- reneging against Erlang-A (M/M/c+M) in 4 cases, including one that is overloaded without abandonment;
+- balking against its birth-death chain in 6 cases, with exponential and lognormal patience.
+
+All 20 comparisons of failure and served-late rates have |z| < 1.2. The served-late SGS optimum in the office was also certified by exhaustive search. No plan in {1..4}⁸ cheaper than SGS meets the target, for either behaviour or metric (5,115 to 44,542 candidates each). Lower bounds could not be used here, because the served-late rate is **not monotone in staffing**: an extra window serves impatient citizens who would otherwise have left, and they count as served late.
+
+![Abandonment](figures/fig9_abandonment.png)
+
+**The ticket-log illusion.** Staff-hours needed to meet the per-hour 10% target:
+
+| Setting | No abandonment | Failure target (hidden / visible) | Served-late target (hidden / visible) | Worst-hour loss on the served-late plan |
+|---|---|---|---|---|
+| Office, exp 30 | 21 | 22 / 22 | **16 / 18** | 17% / 11% |
+| Office, exp 60 | 21 | 22 / 22 | 18 / 18 | 6% / 7% |
+| Office, logn 30 | 21 | 20 / 21 | 18 / 19 | 4% / 4% |
+| 8 E, exp 30 | 77 | 71 / 73 | **57 / 57** | 19% / 18% |
+| 8 E, exp 60 | 77 | 71 / 72 | 65 / 67 | 8% / 8% |
+| 8 E, logn 30 | 77 | 72 / 74 | 69 / 71 | 3% / 6% |
+
+1. **A served-citizens metric rewards understaffing.** With exponential patience of mean 30, the plans tuned to the ticket log use 18–27% fewer staff-hours than the plans tuned to the citizen view, and lose 11–19% of arrivals in their worst hour. Judged by the citizen view, they miss the target significantly in 4 to 8 hours of the day. At the 8-Erlang office the 57 h plan is **below the raw workload** (8 Erlangs × 8 h = 64 window-hours). It is feasible on paper only because citizens give up.
+2. **The illusion depends on the patience shape.** With lognormal patience few citizens leave early, so queues are not thinned. The gap falls to 4–10% and the worst-hour loss to 3–6%.
+3. **Abandonment cuts both ways for the citizen target.** In the small office it adds a window-hour (22 vs 21 h). At 8 Erlangs it saves 4–8%. *Correction (Round 5):* the first draft of this section blamed the extra hour on early leavers raising the staffing requirement. The stationary analysis in §5.9 shows the per-hour requirement at α = 0.10 never rises. The extra hour is a marginal effect: the 21 h plan's worst hour moves from 9.2% to 10.8% (§5.9, E8b), because most of the office's hours lie in the regime where abandonment raises the failure rate at fixed staffing.
+
+**H11: supported for exponential patience, rejected for lognormal.** The gap was 18–27% (≥ 10%) with 11–19% worst-hour losses (≥ 5%) in all four exponential cells. Under lognormal patience it was 4–10% with 3–6% losses.
+
+**Visible vs hidden queues.** On identical plans and patience:
+- With exponential patience the visible queue lost more citizens in **21 of 21** comparisons (4–10% more).
+- With lognormal patience it lost fewer in **8 of 13** (ratios 0.69–1.19).
+
+This is the curvature argument of H12: judging from the line helps when the patience CDF is convex over typical waits and hurts when it is concave. One result was not predicted. The visible queue had the **higher failure rate in 34 of 34** comparisons, even where it lost fewer citizens. A citizen who joins a visible line has committed and will be served, however late; in a hidden queue the same citizen would have left and been counted once, as lost. The visible queue's advantage is time: its leavers walk out at once. Hidden-queue leavers spend 5–6 min (exponential) or about 15 min (lognormal) inside first.
+
+**H12: supported.** An unpredicted corollary: the visible queue never needed fewer staff-hours for the failure target (0 to +2 h).
+
+**Mandatory services (E7c).** The service is mandatory, so every citizen who leaves returns on a later day (r = 1). We solve the steady state R = L(R) by bisection, where R is daily returns and L(R) the daily losses. Returners either arrive like everyone else, or all come at opening.
+
+| Plan (hidden queue, exp 30) | Returns spread over the day | Returns at opening |
+|---|---|---|
+| Office, served-late plan (16 h) | 18 repeat visits / 100; ticket log's worst hour 8.5% → 13.5% | 96 / 100; 8AM: 12% → **93%** late or lost |
+| Office, failure plan (22 h) | 4.5 / 100; little change | 4.5 / 100; 8AM: 2.4% → 5.1% |
+| 8 E, served-late plan (57 h) | **158 / 100**; ticket log 99% late in the worst hour | no steady state; the backlog grows without bound |
+| 8 E, failure plan (71 h) | 9.5 / 100 | 31 / 100; 8AM: 8% → **78%** |
+
+1. **The staff saved on a ticket-log target is paid for in repeat visits.** The 16 h office plan generates 4 times the repeat visits of the 22 h plan. The 57 h plan at 8 Erlangs collapses once lost citizens must come back.
+2. **The morning is where it breaks.** "Come back early tomorrow" concentrates the returners in the first hour. That hour then fails even under the citizen-optimal plan at 8 Erlangs (78% late or lost). The office starts empty, so the 8AM hour was the one that analytic rules *over*staffed in §5.2; with returners it becomes the bottleneck.
+3. **Whether the office would notice depends on the queue.** On the office's served-late plan, returns spread over the day push the hidden queue's ticket log over target in 2 hours, but the visible queue's stays within target (worst hour 6.2%). Returners at opening show up in every ticket log.
+
+**H13: partly supported.** The served-late plan produced 18 repeat visits per 100 (≥ 5), and returns at opening raised its 8AM failure rate by 81 points (≥ 5). But the ticket log did *not* stay clean in every case: it hid the problem only for a visible queue with returns spread over the day.
+
+**Analytic staffing under abandonment.** In the office, per-hour SIPP built on the stationary abandonment models gives 22 h in every setting, the same plan as Erlang-C SIPP. At 8 Erlangs it saves 4–8 h over Erlang-C SIPP (73–77 vs 81 h) and lands 1–4 h above the simulation optimum. It met the failure target in 11 of 12 settings. The exception is the 8-Erlang office with lognormal patience and a hidden queue: Erlang-A there assumes exponential patience with the same mean, and the plan misses in 2 hours (worst 13.1%). The exponential model predicts many early leavers who shorten the line; with lognormal patience they stay, so the real queue is longer than modelled.
+
+**H14: rejected (1 of 12).** Erlang-A is safe when its patience assumption holds. It is not conservative when patience has few early leavers. The balking model uses the actual patience distribution and never missed.
+
+### 5.9 Why abandonment raises staffing in some offices and lowers it in others (E8)
+
+Round 4 found that abandonment made the small office's citizen target *more* expensive and the 8-Erlang office's *cheaper*. Round 5 explains why, predicts where the switch happens, and tests the predictions with the time-varying simulator. E8a uses only the exact stationary models (Erlang-A for a hidden queue, the balking chain for a visible one; S = 8, T = 15). E8b is simulation. All E8b plans are SGS-UCB, chosen on the design days, and none has a significant miss on the evaluation days.
+
+![Regimes](figures/fig10_regimes.png)
+
+**Two opposing effects at fixed staffing.** Abandonment changes the failure rate P(late or left) in two ways:
+- **Early leavers** raise it. A citizen whose wait would have been short still leaves if their patience is shorter still. Without abandonment that citizen would have been served on time.
+- **Queue thinning** lowers it. Each leaver shortens the wait of everyone behind them.
+
+For each window count c there is a crossover utilization ρ\*(c). Below it early leavers dominate, and above it thinning does (Fig. 10a):
+
+| Windows c | 1 | 2 | 3 | 4 | 10 | 30 | 80 |
+|---|---|---|---|---|---|---|---|
+| ρ\* (exponential patience, mean 30) | 0.42 | 0.58 | 0.66 | 0.72 | 0.86 | 0.94 | 0.98 |
+| Erlang-C P(W > 15) at ρ\* | 0.14 | 0.09 | 0.07 | 0.06 | 0.04 | 0.03 | 0.02 |
+
+Below ρ\* waits are short and rare, so there is little queue to thin, while any citizen who waits might leave early. Above it the queue is long enough that removing people from it matters. ρ\* rises toward 1 as c grows. *Correction (Round 6):* this sentence first read the rise as Halfin–Whitt scaling, 1 − β\*/√c, with β\* "falling slowly" from 0.6 to 0.2. §5.10 shows that it is not: with a fixed threshold the slack c(1 − ρ\*) grows like (S/2T)·ln c, so β\* → 0. Less patient citizens move the boundary up, since there are more early leavers (ρ\* = 0.48 at c = 1 for mean 15 against 0.35 for mean 120). The office's plan has 6 of its 8 hours below the boundary. The 8-Erlang office's plan has 5 of 8 above it, and two of those run *over* capacity (ρ = 1.14 and 1.01), which is feasible only because the office opens empty.
+
+**When the requirement itself moves.** A per-hour requirement can rise only if abandonment pushes a feasible staffing over the target. That needs a staffing in the "raises" region whose Erlang-C late rate is just under α. Since the Erlang-C late rate at ρ\* is α\*(c) (bottom row of the table), abandonment can raise the requirement only when **α < α\*(c)**. Counted over 160 loads from 0.1 to 16 Erlangs (exponential, mean 30):
+
+| Target α | 0.20 | 0.10 | 0.05 | 0.02 | 0.01 |
+|---|---|---|---|---|---|
+| Loads where abandonment adds a window | 0 | 0 | 4 | 118 | 147 |
+| Loads where it removes one | 135 | 116 | 38 | 0 | 0 |
+
+At the report's α = 0.10 the stationary requirement never rises. The office's extra hour comes from its time-varying plan, whose worst hour was already near 10% (see H17 below). With a strict target the sign reverses everywhere.
+
+**The fluid limit.** In a large office Erlang-C is bound by stability, not by the target: at the Erlang-C staffing for 8 Erlangs or more, P(W > 15) is only 1–2%. The office needs c ≥ R + (S/T)·ln(1/α), about R + 1.2 windows, for the queue to stay short at all. Abandonment removes that floor. In the fluid model (Whitt 2006b), with c < R windows a share 1 − c/R of arrivals must leave, and the rest wait w with G(w) = 1 − c/R, where G is the patience CDF. The failure rate is 1 − c/R while w ≤ T and 1 beyond it. So the cheapest feasible staffing is
+
+c/R → 1 − min(α, G(T)).
+
+If a fraction r of leavers returns, the fresh demand must be served eventually, so the served rate R(1 − G)/(1 − rG) equals c. The limit then becomes (1 − d)/(1 − rd), with d = min(α, G(T)). For a mandatory service (r = 1) the discount is exactly zero.
+
+Exact per-hour staffing per unit of load (Fig. 10b):
+
+| Load (Erlangs) | Erlang-C | exp 30 | logn 30 | logn 60 | exp 30, r = 0.5 | exp 30, r = 1 |
+|---|---|---|---|---|---|---|
+| 25 | 1.08 | 0.96 | 1.00 | 1.04 | 1.00 | 1.04 |
+| 100 | 1.02 | 0.91 | 0.96 | 1.01 | 0.95 | 1.01 |
+| 200 | 1.01 | 0.905 | 0.95 | 1.005 | 0.95 | 1.005 |
+| 400 | 1.005 | 0.9025 | 0.94 | 1.0025 | — | — |
+| **Fluid limit** | 1 | **0.90** | 0.90 | **0.9965** | **0.947** | **1.00** |
+
+Exponential patience reaches the limit quickly. Lognormal mean 30 converges slowly because G(15) = 0.109 is barely above α. Lognormal mean 60 has G(15) = 0.35%, so it gets essentially no discount at any size.
+
+**Time-varying offices (E8b).** Offices with S = 8 and demand swing A = 0.6, hidden queue, α = 0.10:
+
+| Mean load (Erlangs) | 1 | 2 | 4 | 8 | 16 | 32 | Fluid limit |
+|---|---|---|---|---|---|---|---|
+| Saving, exponential 30 | 0% | 0% | 4.9% | 8.3% | 8.9% | **10.5%** | 10% |
+| Saving, lognormal 60 | 0% | 0% | 0% | 1.4% | 0.7% | **0.4%** | 0.35% |
+
+**H15: supported.** The exponential saving grows with size and reaches 10.5% at 32 Erlangs (predicted 6–14%). The lognormal saving never exceeds 1.4% (predicted ≤ 3%). The same patience *mean* gives 10% or nothing depending on how much of the population gives up within 15 minutes.
+
+**A strict target reverses the sign.** Staff-hours with and without abandonment (exponential, mean 30):
+
+| Office | α = 0.02 | α = 0.10 | α = 0.20 |
+|---|---|---|---|
+| Office (1.5 E) | 26 → **30 h (+15%)** | 21 → 22 h | 18 → 18 h |
+| 8 E, S = 8 | 78 → **87 h (+12%)** | 72 → 66 h | 69 → **58 h (−16%)** |
+
+**H16: supported.** A strict target turns abandonment into a large cost in both offices, and a lenient one makes it a large saving.
+
+**What small offices respond to.** The office's no-abandonment plan [2,4,2,2,2,3,3,3] has a worst-hour late rate of 9.21%. With abandonment its worst-hour failure rate is:
+
+| Patience | exp 30 | exp 60 | exp 120 | logn 30 | logn 60 | logn 120 |
+|---|---|---|---|---|---|---|
+| Worst-hour failure | 10.77% | 9.62% | 9.31% | 8.13% | 9.06% | 9.18% |
+| Change (points) | **+1.57** | +0.42 | +0.10 | −1.08 | −0.15 | −0.03 |
+
+With exponential patience the penalty scales with 1/θ, which is the patience density at zero. Lognormal patience has zero density at zero, so its early-leaver penalty vanishes; it only helps, and barely at long means. This matches the many-server result that in moderately loaded systems patience matters mainly through its density near zero (Zeltyn & Mandelbaum 2005). It also explains why Round 4's lognormal cells behaved almost as if nobody left.
+
+**H17: supported.** All three exponential cases raise the worst hour; lognormal 60 and 120 change it by less than 1 point.
+
+**Returns (H18): supported.** The stationary fixed point converges to 0.905, 0.950 and 1.005 at 200 Erlangs for r = 0, 0.5 and 1 (predicted limits 0.90, 0.947 and 1.00). For a mandatory service, abandonment does not reduce long-run staffing at all; it only converts failures into repeat visits. This is the general reason E7c's ticket-log plans collapsed at 8 Erlangs: they relied on a discount that exists only if leavers never come back.
+
+**Visible vs hidden, revisited.** Round 4 found the visible queue had the higher failure rate on 34 of 34 plans. Per citizen with k people ahead and wait V, a hidden queue serves on time with probability E[S(V); V ≤ T], where S is patience survival. A visible queue does so with probability S(E V)·P(V ≤ T). Conditioning on V ≤ T lowers the relevant wait, and if S is convex on [0, T], Jensen's inequality adds to that. So for exponential patience the hidden queue is at least as good in *every* state: it was in all 506 states checked. For lognormal or fixed patience the visible queue wins in about 20% of states, by at most 0.7 points at mean 30. The 34-of-34 result is therefore guaranteed only for exponential patience, and is an aggregate outcome otherwise.
+
+**What this changes in practice.** Whether walk-outs make an office cheaper or dearer to run is not a property of the office alone. It depends on three things:
+1. **The target.** α against α\*(c) decides the sign.
+2. **The size.** Utilization against ρ\*(c) decides it at fixed staffing, and in large offices the fluid limit decides the size of the saving.
+3. **Who leaves early.** The patience density at zero drives small offices, and G(T) drives large ones.
+
+A "saving" from abandonment is only real if the people who leave do not need to come back.
+
+### 5.10 Large offices with a fixed wait threshold (E9)
+
+Round 5 described the crossover with Halfin–Whitt scaling. Round 6 tests a different claim, pre-registered in §4 with its derivation. When T stays fixed while the office grows, the slack at the crossover grows like ln c rather than √c, and the walk-out boundary falls like 1/√c. E9 uses only exact stationary models, with no simulation:
+- **E9a** is the crossover for 4 service times × 3 thresholds × 2 patience levels, at c = 10 to 10,000.
+- **E9b** is the staffing above the fluid limit at loads from 50 to 5,000 Erlangs.
+
+To reach these sizes, the Erlang-A model now applies the matrix exponential to a vector with a sparse generator. It matches the previous dense computation to 7 × 10⁻¹⁵, and E8a reproduces byte for byte.
+
+![Log regime](figures/fig11_log_regime.png)
+
+**The crossover slack grows like ln c (Fig. 11a).** The table gives the fitted slope of δ\* against ln c over c = 1,000–10,000, as a share of the predicted S/(2T), for the 20 cases with β\* < 0.15 at c = 10,000:
+
+| | T = 5 | T = 15 | T = 30 |
+|---|---|---|---|
+| S = 4, patience 30 / 120 | 0.95 / **0.84** | 0.98 / 0.95 | 0.99 / 0.97 |
+| S = 8, patience 30 / 120 | 0.94 / **0.81** | 0.98 / 0.94 | 0.99 / 0.97 |
+| S = 16, patience 30 / 120 | — | 0.99 / 0.93 | 0.99 / 0.96 |
+| S = 32, patience 30 / 120 | — | 1.00 / 0.92 | 1.00 / 0.96 |
+
+- In 18 of the 20 cases the slope is within 10% of S/(2T). The threshold scales the whole curve, as the derivation says.
+- The two misses are patient citizens (mean 120) with a 5-minute threshold. There the slope is still 16–19% short at c = 10,000.
+- The collapse across thresholds holds for patience 30: δ\*·T/S differs by at most 0.09 between T = 5, 15 and 30 at every c ≥ 1,000. It does not hold for patience 120: 0.24–0.40 apart at c = 1,000, still 0.09–0.15 at c = 10,000.
+- When T is short relative to S (S/T ≥ 2 with c ≤ 20), there is no crossover at all. Almost anyone who waits is late anyway, so no leaver could have been served on time, and abandonment lowers failures at every load.
+
+**H19: partly supported, rejected as stated.** The ln c law with slope S/(2T) holds, but it is not reached by c = 10,000 for patient citizens facing a short threshold.
+
+**The walk-out boundary falls like K₁/√c (Fig. 11b).**
+- α\*(c)·√c rises monotonically toward K₁ in all 24 cases.
+- At c = 10,000 it is within 15% of K₁ in 17 of the 20 cases with β\* < 0.15. The closest is 1.7% below (S = 4, T = 30, patience 30).
+- The three misses are all patience 120: S = 4 and 8 at T = 5 (16% and 24% below), and S = 32 at T = 15 (20% below).
+- Where the curves for different thresholds have converged, α\* barely depends on T: it differs by 4–14% across thresholds for S = 4, for S = 8 with patience 30, and for S = 16 and 32 at T = 15 and 30. The exception is S = 8 with patience 120, at 20%.
+
+**H20: partly supported.** The limit is right. Convergence toward it is slow for patient citizens.
+
+*What controls the convergence (post hoc, not pre-registered).* We chose β\* < 0.15 as the convergence criterion. The misses line up better with Erlang-A's own heavy-traffic parameter, β̂ = β\*/√(θS) (Garnett, Mandelbaum & Reiman 2002), which grows as patience lengthens. Every case with β̂ < 0.19 has its slope within 7.3% and its limit within 15%. Every miss has β̂ ≥ 0.24. Long patience makes √(θS) small, so the asymptotic regime starts only at much larger offices.
+
+**Three orders of the fluid correction (E9b, Fig. 11c).** Windows above the fluid staffing (1 − d)R; S = 8, T = 15, α = 0.10:
+
+| Load R (Erlangs) | 50 | 100 | 300 | 1,000 | 2,000 | 5,000 |
+|---|---|---|---|---|---|---|
+| G(T) = 0.39 > α (patience 30) | 1 | 1 | 1 | 1 | 1 | 1 |
+| G(T) = 0.118, just above α (patience 120) | 3 | 3 | 4 | 4 | **1** | 1 |
+| G(T) = α (patience 142) | 3 | 4 | 8 | 16 | 23 | 39 |
+| G(T) = 0.049 < α (patience 300) | 2.4 | 2.9 | 4.6 | 7.8 | 11.5 | 17.9 |
+
+- **G(T) > α.** One window above (1 − α)R always suffices, at every load up to 5,000 Erlangs. At R = 5,000, c = 4,500 is infeasible by less than 10⁻¹³, below the models' numerical precision. The throughput bound settles it exactly: c ≤ (1 − α)R is always infeasible. `required_windows` now starts from that bound.
+- **G(T) < α.** x/√R settles at 0.25–0.26 for R ≥ 1,000, where 0.26 was predicted from the diffusion argument.
+- **G(T) = α.** x/√R keeps rising, from 0.46 at R = 300 to 0.55 at R = 5,000. x/√(R ln R) stays at 0.19 over the whole range, as derived.
+- **Just above the kink.** The office behaves like the kink case until the wait margin exceeds a few standard deviations. It then drops to a single window between R = 1,000 and 2,000, somewhat earlier than the estimated 2,000–3,000.
+
+**H21: supported in all four cases.**
+
+**What changes.**
+1. **A correction to §5.9.** The crossover is not Halfin–Whitt. With a fixed threshold, the slack c − R\* grows like (S/2T)·ln c, so 1 − ρ\* falls like ln c/c.
+2. **A closed-form boundary.** Abandonment can raise a large office's requirement only when α < K₁/√c, with K₁ = r·√(2/π)/(1 + r) and r = √(S/mean patience). The threshold T drops out. For S = 8 and patience 30 that means α < 0.027 at 100 windows and α < 0.0086 at 1,000.
+3. **The fluid saving arrives at different speeds.** How fast the fluid saving is reached depends on which side of the kink α = G(T) an office sits. If citizens who give up within the threshold outnumber the target share, the saving is exact to within one window. If they are fewer, the office must keep O(√R) windows in reserve. At the kink it needs more, O(√(R ln R)).
+
+### 5.11 A fluid model of the whole day (E10)
+
+Round 7 tests whether a deterministic fluid of the finite day (§4) is the leading-order description of the simulated plans. Registered hypotheses were scored as written. The model turned out to contain a first-order flaw, so a corrected fluid (Round 7b) was introduced and tested once more on a point not yet seen.
+
+![Fluid day](figures/fig12_fluid_day.png)
+
+**Fluid constants (E10b).** Window-hours per unit of raw workload 8R, with T = 15:
+
+| Demand shape, A = 0.6 | S = 4 | S = 8 | S = 16 | S = 32 |
+|---|---|---|---|---|
+| Double peak (the office) | 0.971 | 0.967 | 0.957 | 0.938 |
+| Single midday peak | 0.985 | 0.983 | 0.980 | 0.971 |
+| Morning-heavy ramp | 0.989 | 0.990 | 0.990 | 0.984 |
+
+1. **Every constant is below 1: a large office needs less than its raw workload.** By work conservation f = 1 − S·X(close)/(480R) + idle/(480R). For the double peak at S = 8 the backlog passed to the free post-close drain is worth 3.9% and the idle time from opening empty costs 0.6%. Longer service raises both, and the backlog wins.
+2. **The late allowance α is nearly worthless in the fluid.** Allowing 10% of each hour to be late lowers f by at most 0.006 (the median is 0.0003). Under FIFO a late citizen makes the next arrivals late too, so the budget buys little except earlier queues in the opening hour. In the stochastic system α does something else: it absorbs randomness.
+3. **The fluid plan has the shape that §5.2 and §5.5 described.**
+   - It opens with far fewer windows than SIPP (15 against 31 at 24 E, S = 32).
+   - It carries backlog across hour boundaries.
+   - It runs peak hours over capacity: 30 windows for a load of 38 at 9AM in Fig. 12.
+
+   Five of the 27 α-programs stopped at the solver's time limit; they are feasible, so their f is an upper bound.
+
+**H22: rejected.** With T/S held at 15/8, SIPP is **the same plan (204 h) at every S**, because Erlang-C's P(W > T) depends on S and T only through T/S. But the simulated optimum falls as service lengthens:
+
+| S, T (minutes) | 4, 7.5 | 8, 15 | 16, 30 | 32, 60 |
+|---|---|---|---|---|
+| SGS-UCB (h) | 201 | 197 | 184 | 153 |
+| SIPP's excess | +1.5% | +3.6% | +10.9% | +33% |
+| Share of the excess recovered by Lag-SIPP / OL-avg | 33% / 33% | 29% / 43% | 25% / 25% | 22% / 24% |
+
+- The excess spans 32 points, not under 6, and the lag rules recover *less* than in E1.
+- So the growth of SIPP's excess with S in E1 was neither a threshold effect nor mainly a lag effect. It comes from the ends of the day, which scale with S relative to the 480-minute day and which no per-hour rule can see.
+- At S = 32 with T = 60 the fluid needs only 0.82 of the workload (0.59 after the correction below), because a one-hour threshold lets a large backlog pass to the unpaid drain.
+
+**H23: rejected, both versions.** Let E(R) be the excess of SGS-UCB over the registered fluid, 8R·f_α. It was 10.1, 10.1, 11.2, 10.5 and 8.9 window-hours at R = 4 … 64, as the stationary-slack version H23b predicted. But at R = 128 SGS-UCB found a feasible plan (988 h, worst hour 8.2%) **below** the fluid (990 h).
+
+*Why.* The flaw is the model's own approximation: a closing window loses capacity at once. In the simulator it finishes its citizen, and the large post-peak drops of a big office make that worth about 3% of the workload. The corrected fluid (§4, Round 7b) lowers f from 0.967 to 0.933 for this office. For all shapes it lowers f by 0.02–0.03 at S = 8 and by 0.07–0.11 at S = 32.
+
+**H26 (confirmatory): supported.** Excess over the corrected fluid:
+
+| R (Erlangs) | 4 | 8 | 16 | 32 | 64 | 128 | **256** |
+|---|---|---|---|---|---|---|---|
+| E(R) (window-hours) | 11.1 | 12.3 | 15.6 | 19.2 | 26.3 | 32.7 | **47.1** |
+| E(R)/√R | 5.6 | 4.4 | 3.9 | 3.4 | 3.3 | 2.9 | 2.9 |
+
+At the unseen R = 256, SGS-UCB found 1,958 h (worst hour 7.7%), so E(256) = 47.1. That lies in the registered band [38, 52], and E(256)/E(128) = 1.44 is in [1.15, 1.6]. The simulated optimum is the corrected fluid plus a stochastic correction of about 3√R windows over the day.
+
+A direct check (E10h) agrees, by simulating the corrected fluid plan at 256 E:
+- scaled by 1.05, it meets the target with every hour below 3% late;
+- unscaled, it fails in its binding hours (10–69% late), because fluid waits sit exactly at T;
+- scaled by 0.95, it collapses.
+
+![Fluid scaling](figures/fig13_fluid_scaling.png)
+
+**H24: partly supported.** Scored over the 8 settings at 24 E in E1 (§4 said "six", a counting slip; all 8 are reported) and the 4 new-shape settings:
+- **(a) The fluid opens below SIPP in 12 of 12.**
+- **(b) A peak hour runs over capacity in 4 of the 8 settings with A = 0.6.** It fails at S = 16 and for the single peak at S = 8. The ramp's only over-capacity hour is its opening hour, which is the empty start, not carryover.
+- **(c) SGS-UCB correlates with the fluid plan at ≥ 0.9, and more strongly than SIPP does, in 9 of 12.** It misses at A = 0.3 with S = 4 and 8 (0.86, 0.89), and for the single peak at S = 8, where SIPP matches the fluid shape better (0.995).
+
+The fluid explains the opening hour everywhere, and carryover where the peaks are sharp.
+
+**H25: rejected as registered; supported against the corrected fluid (post hoc).**
+- *As registered.* ISS's excess over the registered fluid roster was within 3 points of SGS-UCB's excess over the hourly fluid in only 2 of 8 cases. The fluid price of shifts matched the measured one within 5 points in 3 of 8. The registered fluid put every roster at about 22%, against 25–33% measured.
+- *Against the corrected fluid.* ISS's excess is *never* larger than SGS-UCB's (by −0.6 to −3.4 points, all 8 cases). The fluid price of shifts matches within 5 points in 6 of 8, the misses being the standard menu at S = 32 (39% against 32–33%).
+
+Taken at face value, integrated search leaves nothing measurable on the table relative to the fluid, which answers the open threat in §6 about its optimality. This comparison was not pre-registered.
+
+**What changes.**
+1. **Staffing at scale is set by the ends of the day.** A large walk-in office needs about 1 − S·X(close)/(480R) of its raw workload, plus about 3√R windows over the day. X(close) is the backlog the free post-close drain absorbs. This is why SIPP's excess grows with S (§5.2), and why no per-hour correction (Lag-SIPP, offered load) recovers more than about half of it.
+2. **The per-hour late allowance matters only through randomness.** In the fluid it is almost worthless.
+3. **Unpaid overtime is a first-order modelling choice.** With a long threshold it is worth up to 40% of the workload in the fluid (§6).
+4. **The fluid model needs the simulator's staffing-change rule.** An instant capacity drop was the one approximation we flagged, and it was large enough to overturn two pre-registered tests.
+
+### 5.12 Paying for unpaid work (E11)
+
+Round 8 charges the service that Rounds 1–7 got for free: work after closing, and closing windows finishing their citizen. It is charged at κ = 1 (the same wage) or 1.5 (time and a half). Staff are assumed to leave once nobody is left for them. The simulator records this work per day, and its existing outputs are byte-identical. A new local search (`research/overtime.py`) minimizes paid cost under the same per-hour UCB target. All its plans meet the target on the evaluation days with no significant misses; one has a point estimate of 11.9% in its worst hour (S = 32, T = 60, κ = 1.5).
+
+![Paid overtime](figures/fig14_paid_overtime.png)
+
+**The fluid (E11a, theory).** Paying for all work turns every fluid constant into workload plus idle time: 1.000–1.021 for κ = 1, against 0.59–0.97 with free work (Fig. 14a). The "below the raw workload" result of §5.11 was therefore **entirely unpaid work**. With it paid, the only thing left above the workload is idle time, mostly from opening empty.
+
+**H27: rejected.** At fixed T/S (24 E, A = 0.6), SIPP's paid excess over the paid optimum still rises steeply with S:
+
+| S, T (minutes) | 4, 7.5 | 8, 15 | 16, 30 | 32, 60 |
+|---|---|---|---|---|
+| Overtime free (E10a) | +1.5% | +3.6% | +10.9% | +33% |
+| Paid, κ = 1 | +1.7% | +4.2% | +9.4% | +18.2% |
+| Paid, κ = 1.5 | +1.8% | +4.5% | +8.8% | +17.3% |
+
+Paying for the drain halves SIPP's excess at S = 32, but a 16-point trend remains, against the fewer than 6 predicted. With T/S fixed and all work paid, the remaining dependence on S can only come from S relative to the one-hour planning period. That is the lag mechanism of §1, which H1 and H2 were about.
+
+**H28: supported.** At fixed T = 15, SIPP's paid excess rises from 2.2% at S = 4 to 13.3% at S = 32 (E1, free: 2.1% → 14.5%). Paying for overtime barely changes it.
+
+Putting H27 and H28 together, the growth of SIPP's excess with service time has three sources:
+- **threshold stringency**, (S/T)·ln(1/α) per hour, which sets the trend at fixed T;
+- **lag**, which shows at fixed T/S once work is paid;
+- **the free drain**, which roughly doubles the excess at S = 32 when T/S is fixed and T is long.
+
+**H29: rejected; H31 (confirmatory): supported.** Excess of the paid optimum over 8R times the paid fluid constant (f₁ = 1.0069); S = 8, A = 0.6, T = 15, κ = 1:
+
+| R (Erlangs) | 8 | 32 | 128 | **256** |
+|---|---|---|---|---|
+| Excess (window-hours) | 10.1 | 11.0 | 9.5 | **6.2** |
+
+H29's √R prediction (E(128)/E(32) ∈ [1.6, 2.4]) failed: the ratio was 0.87. H31 was registered after that and before the R = 256 run. It predicted E(256) ∈ [5.9, 13.7], and the result, 6.2, falls inside the band, near its lower edge.
+
+With all work paid, the office needs the fluid plus a correction that **does not grow**. It stays close to 8·(S/T)·ln(1/α) = 9.8, Round 6's stationary slack, and may even shrink slowly. This points to the free drain as the source of §5.11's √R growth; one confirmatory load supports it, and a mechanism is proposed below but not tested. In the fluid, arrivals near closing are allowed to wait exactly T, because their service after closing costs nothing. The stochastic system must protect that knife edge against day-to-day randomness, which costs O(√R). Once that service is paid, the fluid no longer leans on it, and only the ordinary per-hour slack remains.
+
+**H30: rejected.** At κ = 1 the plan minimizing staffed hours is within 0–0.9% of the paid optimum in every setting of E11b–E11e, including 0.2% at S = 32 in E1's setting (≥ 3% was predicted). Only with time and a half and a long threshold does it matter: 4.0% at S = 32, T = 60, κ = 1.5. Both searches are local and the paid search starts from the staffed-hours plan, so this small gap may partly reflect a shared local optimum.
+
+**Who stays after closing matters more than the wage.** Under a second accounting, every window open in the last hour stays until the last citizen leaves. That raises paid costs by 2% (S = 4) to 16% (S = 32, T = 15) over "staff leave when idle". It can even reverse which plan is cheaper: at S = 32, T = 60, κ = 1.5 the staffed-hours plan costs 266 h against the paid optimum's 282 h.
+
+**What changes.**
+1. **Large offices need their workload, not less.** §5.11's "0.93 of the workload" holds only when service after hours and at closing windows costs nothing. Paying for it gives workload plus opening idle plus an O(1) slack.
+2. **The √R correction was an artefact of free overtime.** With work paid, Round 7's fluid and Round 6's stationary slack combine into one description: paid fluid + 8·(S/T)·ln(1/α).
+3. **SIPP's excess over service time has three sources.** Threshold stringency sets the trend at fixed T; with T/S fixed and all work paid, what remains is lag; and a free drain roughly doubles it when T is long.
+4. **Optimizing staffed hours is nearly optimal for paid cost when overtime is paid at the regular rate.** It is not when overtime carries a premium and the threshold is long. The rule for who stays after closing matters more than either.
+
+### 5.13 Can a mandatory service tip? (E12)
+
+Round 9 asks whether an office providing a mandatory service can have two steady states. If it could, one closure day would move it for good from a working state to a permanent backlog. The office is the E7 8-Erlang office (S = 16, hidden queue, exponential patience with mean 30, r = 1), staffed with its citizen-optimal plan scaled by φ, and with E7c's collapsed 57 h plan. Returners come back either spread over the day or all at opening. Everything is computed by `research/tipping.py`.
+
+![Tipping](figures/fig15_tipping.png)
+
+**Theory (E12a, E12b; before registration).** Neither the stationary model nor the fluid of the day can tip. Adding citizens never lowers the work served, so L′(R) ≤ 1, and R = L(R) has one steady state. E12a found 0 or 1 root in all 756 stationary cases. In E12b, h = L(R) − R falls strictly on every curve.
+
+What the fluid does predict is a smooth divergence. As staffing falls, R\* grows roughly exponentially and L′(R\*) → 1, so the office takes longer and longer to recover from a single disturbance.
+
+**H32: supported.** None of the 12 simulated curves (Fig. 15a) rises significantly between grid points (paired 95% CIs), and none changes sign more than once. There is no +, −, + pattern anywhere, so no tipping point.
+
+**H33: supported.** Steady-state repeat visits per 100 fresh citizens:
+
+| Plan | Spread returns: simulated | Spread returns: fluid | At opening: simulated | At opening: fluid |
+|---|---|---|---|---|
+| φ = 1.00 (71 h) | 10.0 | 0.3 | 30 | 0.4 |
+| φ = 0.95 (69 h) | 14.2 | 1.2 | 142 | 1.6 |
+| φ = 0.90 (64 h) | 22.9 | 3.5 | none ≤ 300 | 20 |
+| φ = 0.85 (61 h) | 40.7 | 14.3 | none ≤ 300 | 3,802 |
+| φ = 0.80 (56 h) | **268** | **220** | none ≤ 300 | none ≤ 20,000 |
+| E7c late plan (57 h) | **173** | **146** | none ≤ 300 | none ≤ 20,000 |
+
+- **(a)** In deep collapse the fluid is 1.22 and 1.19 times too low (band 1.0–2.0).
+- **(b)** Every case the fluid calls unbounded is still growing at 3× fresh demand.
+- These agree with E7c's bisection (9.5, 31 and 158 per 100 for the same three settings).
+- E7c's "no steady state" for the late plan with returns at opening is a single state that is unbounded or far away, not a second state.
+
+Outside deep collapse the fluid is badly optimistic, most of all for returns at opening. There the simulated curve is almost flat (L′ ≈ 1 across R), so small stochastic losses move the fixed point a long way: 142 per 100 simulated against 1.6 in the fluid at φ = 0.95.
+
+**H34: partly supported.** One closure day on day 30, with 20 chains per case (Fig. 16; recovery = the 7-day mean back within 10% of fresh demand of the pre-shock level):
+
+| Plan | Spread returns: recovered | Median days (fluid) | At opening: recovered | Median days (fluid) |
+|---|---|---|---|---|
+| φ = 1.00 | 20/20 | 5 (5) | 12/20 | 40 (19) |
+| φ = 0.95 | 20/20 | 6 (7) | 2/20 | 66 (30) |
+| φ = 0.90 | 20/20 | 10 (12) | 0/20 (all passed 5×) | (93) |
+| φ = 0.85 | 20/20 | 20.5 (28) | 0/20 (all passed 5×) | (over 2,000) |
+| φ = 0.80 | 20/20 | 47 (133) | 0/20 (all passed 5×) | none |
+| Late plan | 20/20 | 48.5 (102) | 0/20 (all passed 5×) | none |
+
+- **(a) Rejected.** Three cases with returns at opening did not come back. *Post-hoc reading:* this is not hysteresis. Those chains started at the fluid's R\*, which E12c shows is far below the simulated one, and they were still rising before the shock: at φ = 0.95 the 5-day means went 0.09 → 0.59 × fresh demand over the 30 days. A chain cannot recover to a baseline that was never a steady state. At φ = 0.90 the simulated office has no steady state below 3× fresh demand at all.
+- **(b) Supported.** The rank correlation of simulated and fluid recovery times is 0.88 across the eight cases with a median (0.94 for spread returns).
+- **(c) Rejected narrowly.** Recovery at φ = 0.80 took 9.4 times as long as at φ = 1.00, against at least 10 predicted. The fluid over-predicts the slowest recoveries (133 days against 47), because noise kicks chains down as well as up.
+- **(d) Supported.** Every chain in the three cases the fluid calls unbounded passed 5× fresh demand.
+
+**H35 (confirmatory): rejected, with a sharper answer.** At 32 E the fluid's error on R\* per 100 fresh citizens is 0.249, 0.256 and 0.254 of its 8 E value for φ = 0.95, 0.90 and 0.85, at the band's lower edge and once just below it. Registered reading: the error does not scale like √R. It scales like 1/R. In absolute numbers the excess is the same at both sizes: 31, 47 and 64 extra returners a day at 8 E, against 31, 48 and 64 at 32 E. Like the paid-overtime correction of Round 8, the stochastic correction to the steady state is O(1) in citizens, not O(√R). Why it is constant has not been tested.
+
+![Day-to-day returners](figures/fig16_return_chains.png)
+
+**What changes.**
+1. **Mandatory services do not tip; they fade slowly.** There is one steady state at every staffing level (proved in the stationary and fluid models, found in every simulated curve). It rises smoothly and very steeply as staff are cut: near collapse each 5% of window-hours cuts repeat visits several-fold (fluid about 4×; simulated 41 → 268 per 100 from 61 h to 56 h).
+2. **The warning sign is recovery time, not the daily numbers.** An office at φ = 0.85 looks almost as calm as one at φ = 1.00 (Fig. 16). After one closure day it needs 20 days to recover instead of 5, and near collapse it needs 47. How slowly an office recovers from a disturbance says how close it is to collapse.
+3. **Returns at opening are far more fragile than the fluid says.** With returners concentrated at 8AM, even the citizen-optimal plan (71 h) settles at 30 repeat visits per 100 and wanders widely around it. Cutting 5% of window-hours takes it to 142.
+4. **The correction to the fluid is a fixed number of citizens** (tens a day here), independent of size. For a large office the fluid is the right planning tool; for this 8-Erlang office it is not.
+
 ## 6. Threats to validity
 - **Synthetic demand.** Arrival rates follow a stylized double-peak profile. There are no public arrival-count data for walk-in offices; the CA DMV data contain only waits.
 - **Exponential service in E1.** This favours the Erlang-C rules, which assume it. With CV < 1, as is typical for lognormal service, the analytic rules would overstaff even more (E2).
 - **Fixed service threshold.** T = 15 min is the same for every S. The same target is harder to meet with S = 32 than with S = 4.
-- **Fixed schedule structure.** One-hour blocks. §5.5 adds shifts, but without lunch breaks, part-time limits or labor rules. There is no abandonment, no appointments and a single service type.
+- **Fixed schedule structure.** One-hour blocks. §5.5 adds shifts, but without lunch breaks, part-time limits or labor rules. Rounds 1–2 have no abandonment or appointments, and every round has a single service type.
+- **The regime analysis (§5.9) is per hour and stationary.** The crossover and the fluid limit come from steady-state models. The time-varying tests agree with them, but the office's own +1 h is a marginal effect near the target, not a stationary one. The fluid limit is an asymptotic argument; the table shows how fast each case converges. Round 6 (§5.10) is also stationary, per hour, and limited to exponential patience and service. Its diffusion constants are heuristic, and the variable that governs convergence (β̂) was identified only after the results were in.
+- **Abandonment is stylized (§5.8).** Patience distributions are assumed, not calibrated; no public data measure walk-away behaviour at government offices. Balkers judge the wait from the line with the true mean service time and ignore people ahead who would leave. There is no mixed behaviour (balking *and* reneging) and no priority or callback. In E7c every leaver returns (r = 1) with the same patience, either following the demand curve or all at opening; real return timing lies somewhere between, and the fixed point assumes a stationary day-to-day regime.
 - **Appointments are simplified.** They are served FIFO, with no priority for booked citizens. No-shows are independent with a fixed rate, bookings are evenly spaced within each hour, and there are no walk-in balking or booking-lead-time effects.
 - **Integrated search is a local search.** It is multi-started and never worse than its two-step start, but it is not proven optimal for large offices.
 - **The Ciw bounds test is weak for long-service, large offices** (§5.6); the strict constant-staffing test is the main evidence.
 - **SGS optimality** is shown only for small instances, and relies on the monotonicity assumption used to derive the lower bounds.
+- **Overtime is free (all rounds).** Staff-hours count only the eight open hours, while service after closing continues at the last hour's staffing without cost. The fluid shows this is a first-order modelling choice: it supplies 4% of the workload at S = 8 and T = 15, and up to 40% when T = 60 (§5.11). Charging overtime would raise every plan's last hour and cut the savings attributed to a long threshold. *Round 8 (§5.12) tests this:* paid, the below-workload effect vanishes, the ranking of rules is unchanged, and SIPP's excess falls by up to half at long thresholds. The paid search is local and starts from the staffed-hours plan. The rule for who stays after closing is itself an assumption that moves costs by up to 16%.
+- **Return dynamics (§5.13)** use one office, exponential patience, r = 1 and a next-day return, and treat the day's returners as Poisson at their expected rate. Real returners may wait several days, which would smooth the chain but not change the unique steady state. H34(a)'s failure was explained after the fact (a pre-shock baseline that was not at steady state), and unshocked chains were not run as a control. The constant-in-citizens correction of H35 rests on two sizes.
+- **The fluid (§5.11)** covers exponential service only. Its corrected version and the √R reading were fixed after the registered tests failed, and were confirmed at one new load only. Five α-programs were not solved to optimality, and the comparison of shift rosters with the corrected fluid was not pre-registered.
 - **Rate uncertainty** is modelled as a single daily multiplier. Correlated within-day forecast errors could matter more.
 
 ## 7. Practical guidance
@@ -321,18 +840,30 @@ Both are scored on the separate evaluation days. The simulator's appointment fea
 6. **For larger offices, measure how much daily demand varies.** At 20% day-to-day variation it costs 19–22% more staff.
 7. **Plan shifts, not hours, and plan them with simulation.** Converting an hourly requirement into shifts wastes up to 15% of paid hours in medium and large offices. Searching over shift schedules directly avoids it, and helps more than adding new shift types.
 8. **If you offer appointments, fill the quiet hours first.** Booking against the demand curve lets full-day shifts fit the day, saving up to about a quarter of paid hours at 8 Erlangs. Booking in proportion to demand saves almost nothing. Adjust for no-shows by overbooking.
-9. **If you use Ciw for time-varying staffing, merge consecutive equal shifts.** Otherwise each shift boundary adds phantom overtime capacity.
+9. **Count the citizens who leave, not only those you serve.** A late rate computed from served tickets improves as people give up. Log walk-outs and abandoned tickets, and set the target on "late or left". For a mandatory service, every walk-out is a repeat visit, often at opening the next day, so staff the first hour for returners.
+10. **Don't assume walk-outs save staff.** They do only in larger offices with lenient targets, by at most the target share α and at most the share of citizens who would give up within the threshold. With strict targets or in small offices they cost staff, and for a mandatory service the long-run saving is zero. For an office with c windows, "strict" means α < K₁/√c (§5.10): about 0.03 at 100 windows when service takes 8 min and patience averages 30.
+11. **Watch recovery time for mandatory services.** An office close to collapse does not look different on a normal day; it takes weeks instead of days to recover from a closure or a system outage (§5.13). If a one-day disruption is still visible in repeat visits two weeks later, add staff, first-hour staff especially when returners come at opening.
+11. **Don't pick Erlang-A's patience model by habit.** Its exponential assumption can understaff when few people leave early. If the line is visible, a balking model with a realistic patience distribution is exact and was safe here.
+12. **If you use Ciw for time-varying staffing, merge consecutive equal shifts.** Otherwise each shift boundary adds phantom overtime capacity.
 
 ## 8. Reproducing
 ```bash
 g++ -std=c++17 -O2 -static -Icpp/include -o cpp/build/queue_sim.exe cpp/src/simulation.cpp cpp/src/main.cpp
 pip install -r research/requirements.txt   # numpy, matplotlib, scipy, ciw
 python research/test_research.py
-python research/experiments.py --all     # about 25 minutes on 8 cores
+python research/experiments.py --all     # about 2.5 hours on 8 cores (E7 takes 25, E8a 3, E8b 5, E9 5, E10 60, E11 20, E12 3)
 python research/figures.py
 ```
 
 ## References
+- Aguir, S., Karaesmen, F., Akşin, O. Z., & Chauvet, F. (2004). The impact of retrials on call center performance. *OR Spectrum*, 26, 353–376.
+- Garnett, O., Mandelbaum, A., & Reiman, M. (2002). Designing a call center with impatient customers. *Manufacturing & Service Operations Management*, 4(3), 208–227.
+- Hassin, R., & Haviv, M. (2003). *To Queue or Not to Queue: Equilibrium Behavior in Queueing Systems*. Kluwer.
+- Halfin, S., & Whitt, W. (1981). Heavy-traffic limits for queues with many exponential servers. *Operations Research*, 29(3), 567–588.
+- Whitt, W. (2006b). Fluid models for multiserver queues with abandonments. *Operations Research*, 54(1), 37–54.
+- Zeltyn, S., & Mandelbaum, A. (2005). Call centers with impatient customers: many-server asymptotics of the M/M/n+G queue. *Queueing Systems*, 51, 361–402.
+- Mandelbaum, A., & Zeltyn, S. (2009). Staffing many-server queues with impatient customers: Constraint satisfaction in call centers. *Operations Research*, 57(5), 1189–1205.
+- Naor, P. (1969). The regulation of queue size by levying tolls. *Econometrica*, 37(1), 15–24.
 - Cayirli, T., & Veral, E. (2003). Outpatient scheduling in health care: A review of literature. *Production and Operations Management*, 12(4), 519–549.
 - Hassin, R., & Mendel, S. (2008). Scheduling arrivals to queues: A single-server model with no-shows. *Management Science*, 54(3), 565–572.
 - Staffing a service system with appointment-based customer arrivals (2014). *Journal of the Operational Research Society*, 65(10). doi:10.1057/jors.2013.110

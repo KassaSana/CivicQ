@@ -30,7 +30,7 @@ This project models a municipal permit and licensing office with multiple identi
 
 ### Key Assumptions
 - Walk-ins only by default. Appointments are optional (`--appointments`, `--no-show`, `--punctuality-sd`); booked citizens join the same FIFO queue.
-- No balking/reneging (citizens wait indefinitely)
+- No abandonment by default: citizens wait until served. Optionally walk-ins renege from a hidden queue or balk at a visible one (`--abandonment renege|balk`, `--patience`, `--patience-dist`, `--patience-cv`); booked citizens never leave.
 - All service windows are identical
 - Citizens are served to completion
 - **Closing time:** no one enters after 480 minutes, but everyone already inside is served. The time needed to clear the queue is reported as *overtime*.
@@ -122,6 +122,9 @@ cmake --build cpp/build
 # One CSV row per replication (used by the optimizer for confidence intervals)
 ./queue_sim --replications 30 --per-replication
 
+# Walk-ins leave a hidden queue after 30 minutes' patience on average
+./queue_sim --abandonment renege --patience 30
+
 # Full options
 ./queue_sim --help
 ```
@@ -198,7 +201,8 @@ frontier = pareto_frontier(all_results, known=list(scenarios.values()))
 best, all_results = grid_search_optimize(
     wait_weight=1.0,
     staff_weight=0.5,
-    p90_target=15.0  # Max 15-minute P90 wait
+    p90_target=15.0,     # Max 15-minute P90 wait
+    overtime_rate=1.0    # Work after closing paid at the regular wage (0: unpaid)
 )
 ```
 
@@ -212,6 +216,8 @@ The optimizer compares three staffing policies:
 | **B. SIPP / Erlang-C** | Each hour is treated as its own steady-state M/M/c queue, using the fewest windows with P(wait > 15 min) ≤ 10% (the textbook "stationary independent period-by-period" method) |
 | **C. Optimized** | Cost-minimized under the 15-minute P90 constraint, found by simulation |
 
+Staff cost is **paid** staff-hours: the open window-hours plus the service work done outside them (a window finishing its citizen after its hour ends, and serving everyone still inside after closing), paid at `--overtime-rate` times the regular wage (default 1; 1.5 = time and a half). Counting only open hours treats that work as free, which flatters plans that close with too few windows ([research/REPORT.md](research/REPORT.md) §5.12). `--overtime-rate 0` gives the old open-hours objective.
+
 ### Example Output
 Real output from `python optimizer.py --scenario-analysis`, with default arrival rates, 300 replications, and seeds 42–341:
 ```
@@ -220,18 +226,21 @@ Real output from `python optimizer.py --scenario-analysis`, with default arrival
     Mean wait: 1.39 min  (95% CI: 1.24-1.53)
     P90 wait:  5.29 min  (95% CI: 4.74-5.85)
     Staff-hours: 24  |  Overtime: 8.6 min  |  n=300 replications
+    Paid staff-hours (work after closing at 1x): 24.2
 
 [B] SIPP / Erlang-C (steady-state P90 <= 15 min each hour)
     Staffing: [3, 3, 3, 2, 2, 3, 3, 3]
     Mean wait: 1.77 min  (95% CI: 1.59-1.94)
     P90 wait:  6.59 min  (95% CI: 5.97-7.21)
     Staff-hours: 22  |  Overtime: 8.6 min  |  n=300 replications
+    Paid staff-hours (work after closing at 1x): 22.2
 
 [C] Optimized (P90 <= 15 min target)
-    Staffing: [3, 3, 3, 2, 2, 3, 3, 2]
-    Mean wait: 2.24 min  (95% CI: 2.03-2.45)
-    P90 wait:  8.20 min  (95% CI: 7.45-8.95)
-    Staff-hours: 21  |  Overtime: 11.9 min  |  n=300 replications
+    Staffing: [3, 3, 3, 2, 2, 3, 3, 3]
+    Mean wait: 1.77 min  (95% CI: 1.59-1.94)
+    P90 wait:  6.59 min  (95% CI: 5.97-7.21)
+    Staff-hours: 22  |  Overtime: 8.6 min  |  n=300 replications
+    Paid staff-hours (work after closing at 1x): 22.2
 
 ============================================================
 ROBUSTNESS: P90 wait (min) if demand differs from forecast
@@ -239,27 +248,28 @@ ROBUSTNESS: P90 wait (min) if demand differs from forecast
   Scenario      90% demand   100% demand   110% demand   120% demand
   Flat              3.8 ok        5.3 ok        6.9 ok        9.1 ok
   Sipp              4.8 ok        6.6 ok        8.4 ok       10.9 ok
-  Optimized         6.1 ok        8.2 ok       10.7 ok       13.6 ok
+  Optimized         4.8 ok        6.6 ok        8.4 ok       10.9 ok
 
 >>> RECOMMENDATION:
-    Adopt optimized staffing schedule: [3, 3, 3, 2, 2, 3, 3, 2]
-    Peak staffing periods: 8-9AM, 9-10AM, 10-11AM, 1-2PM, 2-3PM
-    Expected P90 wait: 8.2 minutes (95% CI 7.5-8.9)
-    Total daily staff-hours: 21
-    Statistically tied: [3, 3, 2, 2, 2, 3, 3, 2] (20 h, cost +0.03, 95% CI -0.07 to +0.12)
-    Statistically tied: [2, 3, 3, 2, 2, 3, 3, 2] (20 h, cost +0.10, 95% CI -0.00 to +0.19)
-    Statistically tied: [3, 3, 2, 2, 2, 3, 3, 3] (21 h, cost +0.05, 95% CI -0.07 to +0.18)
-    Statistically tied: [2, 4, 2, 2, 2, 3, 3, 2] (20 h, cost +0.02, 95% CI -0.09 to +0.13)
-    Statistically tied: [2, 3, 3, 2, 2, 3, 3, 3] (21 h, cost +0.12, 95% CI -0.00 to +0.25)
+    Adopt optimized staffing schedule: [3, 3, 3, 2, 2, 3, 3, 3]
+    Peak staffing periods: 8-9AM, 9-10AM, 10-11AM, 1-2PM, 2-3PM, 3-4PM
+    Expected P90 wait: 6.6 minutes (95% CI 6.0-7.2)
+    Total daily staff-hours: 22 (22.2 paid, work after closing at 1x)
+    Statistically tied: [2, 3, 3, 2, 2, 3, 3, 3] (21 h, cost +0.10, 95% CI -0.00 to +0.19)
+    Statistically tied: [3, 3, 2, 2, 2, 3, 3, 3] (21 h, cost +0.04, 95% CI -0.05 to +0.14)
+    Statistically tied: [3, 3, 2, 2, 2, 3, 3, 2] (20 h, cost +0.10, 95% CI -0.02 to +0.22)
+    Statistically tied: [2, 4, 2, 2, 2, 3, 3, 3] (21 h, cost +0.05, 95% CI -0.06 to +0.15)
+    Statistically tied: [3, 3, 3, 2, 2, 3, 3, 2] (21 h, cost +0.06, 95% CI -0.03 to +0.14)
     Meets the P90 target up to 120% of forecast demand
 ```
 
 ### Reading the Results
-- **The best plan uses 20 or 21 staff-hours, and six plans are tied.** With the default weights (1 per minute of mean wait, 0.5 per staff-hour), the cost curve is flat there: an extra staff-hour cuts mean wait by about 0.5–0.6 minutes, almost exactly its 0.5 price. The optimizer reports every finalist whose paired 95% CI on the cost difference includes zero, so read the output as "any of these". To choose among them:
-  - pick a 20-hour plan to save labor;
-  - pick the 21-hour plan to protect against busier-than-forecast days. It still meets the target at +20% demand, where the 20-hour plans do not.
-- **Staffing should lag demand.** Demand falls at 10AM (15 → 10 citizens/hour), but the recommended plan keeps 3 windows until 11AM to clear the 9AM backlog. Per-hour formulas like SIPP can't see this carryover between hours (Green, Kolesar & Soares, 2001).
-- **The trade-off:** relative to SIPP, the recommended plan saves 1 staff-hour per day for about 1.6 extra minutes of P90 wait (8.2 vs 6.6 min), well within the 15-minute target.
+- **The best plan uses 20 to 22 staff-hours, and six plans are tied.** With the default weights (1 per minute of mean wait, 0.5 per paid staff-hour), the cost curve is flat there: an extra staff-hour cuts mean wait by about 0.5 minutes, almost exactly its 0.5 price. The optimizer reports every finalist whose paired 95% CI on the cost difference includes zero, so read the output as "any of these". To choose among them:
+  - pick a 20- or 21-hour plan to save labor;
+  - pick the 22-hour plan to protect against busier-than-forecast days.
+- **Paying for overtime moves the winner by one hour.** Counting open hours only (`--overtime-rate 0`), the winner was the 21-hour plan [3, 3, 3, 2, 2, 3, 3, 2]. It closes with 2 windows, so its staff spend 0.41 h a day serving citizens after their hour ends, against 0.24 h with 3. Dropping that last window therefore saves 0.84 paid hours, not 1, which is worth less than the 0.47 minutes of mean wait it adds. The two plans remain statistically tied.
+- **Staffing should lag demand.** Demand falls at 10AM (15 → 10 citizens/hour), but the recommended plan keeps 3 windows until 11AM to clear the 9AM backlog. Per-hour formulas like SIPP can't see this carryover between hours (Green, Kolesar & Soares, 2001); at these defaults SIPP happens to keep the third window too, but its error grows with service time ([research/REPORT.md](research/REPORT.md) §5.2).
+- **The trade-off:** with paid overtime the recommended plan coincides with SIPP's for this office. The tied 21-hour plan [3, 3, 3, 2, 2, 3, 3, 2] saves 1 open hour (0.84 paid) for about 1.6 extra minutes of P90 wait (8.2 vs 6.6 min), still well within the 15-minute target.
 - **Forecast risk:** the recommended plan meets the target even with 20% more demand than forecast. Staffing to a single point forecast is a known weakness (Whitt, 2006), so the stress test is part of every scenario run.
 
 ### Cost vs Service Trade-off
@@ -271,8 +281,8 @@ The weighted cost picks among plans, but the real decision is how many staff-hou
 | 18 | 13.5 (12.5–14.5) | 4.2 | [2, 3, 2, 2, 2, 2, 3, 2] |
 | 19 | 11.7 (10.8–12.6) | 3.4 | [2, 3, 2, 2, 2, 3, 3, 2] |
 | 20 | 10.0 (9.2–10.8) | 2.8 | [2, 3, 3, 2, 2, 3, 3, 2] |
-| **21** | **8.2 (7.5–8.9)** | **2.2** | **[3, 3, 3, 2, 2, 3, 3, 2]** (optimized) |
-| 22 | 6.6 (6.0–7.2) | 1.8 | [3, 3, 3, 2, 2, 3, 3, 3] (SIPP) |
+| 21 | 8.2 (7.5–8.9) | 2.2 | [3, 3, 3, 2, 2, 3, 3, 2] (optimized if overtime is unpaid) |
+| **22** | **6.6 (6.0–7.2)** | **1.8** | **[3, 3, 3, 2, 2, 3, 3, 3]** (optimized; SIPP) |
 | 24 | 4.5 (4.0–5.0) | 1.2 | [3, 4, 3, 2, 3, 3, 3, 3] |
 
 18 staff-hours is the cheapest budget that meets the 15-minute target, with its whole CI below it. Under an hour-by-hour target (every hour at most 10% of arrivals waiting over 15 minutes), the answer is 21 ([research/REPORT.md](research/REPORT.md) §5.4).
@@ -358,6 +368,8 @@ python python/test_validation.py
 - Real shifts (4h/8h) add 14-68% paid hours over an ideal hour-by-hour plan; searching over shift schedules with simulation is up to 15% cheaper than the textbook "hourly requirement, then shifts" method.
 - Appointments cut the staffing need mainly through shifts: booking 75% of demand into quiet hours shrinks an 8-Erlang office's roster by 24%, but barely changes the hour-by-hour need.
 - The simulator is cross-validated against the independent [Ciw](https://github.com/CiwPython/Ciw) library (0 of 54 tests reject).
+- When citizens can leave, a late rate computed from served tickets is met with 18–27% fewer staff-hours than the citizen view (late or left), while up to 19% of the busiest hour's arrivals walk out. For a mandatory service those walk-outs come back as repeat visits: 18 per 100 transactions in the office. Validated against exact Erlang-A and balking models (all |z| < 1.2).
+- Whether walk-outs save or cost staff depends on the target and the office's size. A strict 2% target makes them cost 12–15% more staff, and a 20% target saves up to 16%. For large offices a fluid limit predicts the saving as min(α, share of citizens who give up within the threshold): 10.5% measured at 32 Erlangs against 10% predicted. For a mandatory service, where leavers must return, the long-run saving is zero.
 
 The study also showed that 30 confirmation days gave P90 CIs of about ±4 minutes and misreported the 18-hour plan as missing the target. The optimizer now confirms with 300 days and reports statistical ties.
 
@@ -379,7 +391,6 @@ cd web && npm install && npm run dev
 
 **Intentionally Excluded:**
 - Multiple service types / skill-based routing
-- Balking / reneging behavior
 - External datasets
 - Metaheuristics (GA, SA)
 
@@ -387,7 +398,7 @@ cd web && npm install && npm run dev
 - Grid search only (no external solvers)
 
 ## Future Work
-- **Abandonment (Erlang-A).** Walk-in offices do lose citizens who give up. Modeling this needs a patience distribution calibrated on real walk-away data, and a separate "% abandoned" limit. Without those, abandonment shortens the queue and can hide understaffing.
+- **Calibrated abandonment.** The simulator supports balking and reneging ([research/REPORT.md](research/REPORT.md) §5.8), but the patience distributions are assumptions. The results depend on patience shape, so real walk-away data from an office would matter.
 - **Iterative Staffing Algorithm.** A simulation-based method for staffing time-varying queues to meet a time-stable service level (Feldman, Mandelbaum, Massey & Whitt, 2008).
 - **Multiple service types.** Different transaction types with their own service times, as in the Virginia DMV staffing study.
 - **Local search.** Replace the exhaustive search if the decision space grows, for example with more slots or larger offices.

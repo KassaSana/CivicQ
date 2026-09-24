@@ -1,0 +1,5 @@
+mode,metric,sgs_plan,sgs_staff_hours,candidates,cheaper_feasible,example
+renege,late,"[2, 2, 2, 2, 2, 2, 2, 2]",16,5115,0,
+renege,fail,"[3, 3, 3, 2, 2, 3, 3, 3]",22,44542,0,
+balk,late,"[2, 3, 2, 2, 2, 2, 3, 2]",18,14266,0,
+balk,fail,"[3, 3, 3, 2, 2, 3, 3, 3]",22,44542,0,
