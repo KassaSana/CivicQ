@@ -1,8 +1,11 @@
 # Public-Sector Queue Resource Allocation Simulator
 
 [![CI](https://github.com/KassaSana/CivicQ/actions/workflows/ci.yml/badge.svg)](https://github.com/KassaSana/CivicQ/actions/workflows/ci.yml)
+[![Deploy visualizer](https://github.com/KassaSana/CivicQ/actions/workflows/pages.yml/badge.svg)](https://github.com/KassaSana/CivicQ/actions/workflows/pages.yml)
 
-A discrete-event simulation (C++) coupled with parameter optimization (Python) to support staffing decisions at a government service center, plus an [interactive web visualizer](web/README.md) that runs the same model in the browser.
+**Live site: [kassasana.github.io/CivicQ](https://kassasana.github.io/CivicQ/)**
+
+A discrete-event simulation (C++) coupled with parameter optimization (Python) to support staffing decisions at a government service center, plus an [interactive web visualizer](https://kassasana.github.io/CivicQ/) ([source](web/README.md)) that runs the same model in the browser.
 
 ## Overview
 
@@ -363,6 +366,8 @@ python research/experiments.py --all && python research/figures.py
 ```
 
 ## Web Visualizer
+
+**Try it: [kassasana.github.io/CivicQ](https://kassasana.github.io/CivicQ/)**. It redeploys automatically when `web/` changes on `master`.
 
 [`web/`](web/README.md) is a static React site. The simulator is ported to TypeScript and runs in a Web Worker, so you can edit the staffing plan, demand, service times and appointment share and see simulated and Erlang-C results update live. Its tests cross-check the port against the C++ executable.
 
