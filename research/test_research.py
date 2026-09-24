@@ -198,6 +198,16 @@ class TestAbandonmentModels(unittest.TestCase):
             self.assertEqual(required_windows(rate, 8.0, 15.0, 0.10),
                              servers_for_load(rate / 60 * 8, 8.0, 15.0, 0.10))
 
+    def test_required_windows_matches_linear_search(self):
+        # The bisection starts at c < (1 - alpha) R, which the throughput bound
+        # makes infeasible; the answer must equal the first feasible c from 1
+        for rate, mode, patience in [(40.0, "renege", 30.0), (150.0, "renege", 300.0),
+                                     (150.0, "balk", 30.0), (90.0, "renege", 120.0)]:
+            c = 1
+            while hour_metrics(mode, c, rate, 8.0, patience, 15.0).fail > 0.10:
+                c += 1
+            self.assertEqual(required_windows(rate, 8.0, 15.0, 0.10, mode, patience), c)
+
     def test_fluid_discount(self):
         self.assertAlmostEqual(fluid_discount(15.0, 0.10, 30.0), 0.10)
         self.assertAlmostEqual(fluid_discount(15.0, 0.10, 60.0, "lognormal", 0.5), 0.0035,

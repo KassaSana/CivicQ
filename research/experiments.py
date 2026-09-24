@@ -3,7 +3,7 @@ Experiments for the CivicQ staffing study. Every result is written to
 research/results/*.csv and is reproducible from fixed seeds.
 
     python research/experiments.py --all
-    python research/experiments.py e1b e1      # or any subset: e1b e1 e2 e2b e3a e3b e4 e5 e6 e7a e7 e7c e8a e8b
+    python research/experiments.py e1b e1      # or any subset: e1b e1 e2 e2b e3a e3b e4 e5 e6 e7a e7 e7c e8a e8b e9a e9b
 
 Design seeds (DESIGN_SEED..) choose plans; evaluation seeds (EVAL_SEED..) score
 them, so no reported number is biased by the search that produced the plan.
@@ -907,9 +907,131 @@ def run_e8b():
     write_csv("e8b_patience_shape.csv", rows)
 
 
+# ============================================================================
+# E9: the fixed-threshold regime (Round 6, H19-H21; exact models, no simulation)
+# ============================================================================
+
+def k1(mean_service, mean_patience):
+    """Limit of sqrt(c) P(abandon) in a critically loaded Erlang-A queue (Round 6)."""
+    r = math.sqrt(mean_service / mean_patience)
+    return r * math.sqrt(2 / math.pi) / (1 + r)
+
+
+def crossover_slack(c, s, threshold, patience):
+    """
+    Slack delta* = c - R* at which abandonment (Erlang-A) stops raising the
+    failure rate at fixed c: below R* early leavers dominate, above it
+    queue thinning. None if no load 0 < R < c has a crossover.
+    """
+    from scipy.optimize import brentq
+    from abandonment import renege_metrics
+    from staffing_methods import prob_wait_exceeds
+
+    def diff(delta):
+        load = c - delta
+        return (renege_metrics(c, load / s, s, patience, threshold, offered=False).fail
+                - prob_wait_exceeds(c, load, s, threshold))
+
+    lo = 1e-3                      # Near critical load Erlang-C is far worse
+    cap = 0.999 * c                # Keep some load: R = c - delta > 0
+    hi = min(cap, (s / threshold) * (0.5 * math.log(c) + 3.0) + 1.0)
+    while diff(hi) < 0:
+        if hi >= cap:
+            return None
+        hi = min(cap, hi * 1.5)
+    if diff(lo) > 0:
+        return None
+    return brentq(diff, lo, hi, xtol=1e-7)
+
+
+def pmap_processes(fn, items, workers=8):
+    """Like pmap, for CPU-bound pure-Python work (threads would share the GIL)."""
+    from concurrent.futures import ProcessPoolExecutor
+    with ProcessPoolExecutor(max_workers=workers) as pool:
+        futures = [pool.submit(fn, item) for item in items]
+        out = []
+        for k, f in enumerate(futures, 1):
+            out.append(f.result())
+            if k % 20 == 0 or k == len(futures):
+                print(f"    {k}/{len(futures)} cases", flush=True)
+        return out
+
+
+def _e9a_case(case):
+    from staffing_methods import prob_wait_exceeds
+    s, t, p, c = case
+    row = {"service_time": s, "threshold": t, "patience": p, "windows": c,
+           "delta_star": "", "scaled_delta": "", "beta_star": "", "alpha_star": "",
+           "alpha_star_sqrt_c": "", "k1": round(k1(s, p), 5)}
+    delta = crossover_slack(c, s, t, p)
+    if delta is not None:
+        alpha_star = prob_wait_exceeds(c, c - delta, s, t)
+        row.update({"delta_star": round(delta, 5), "scaled_delta": round(delta * t / s, 5),
+                    "beta_star": round(delta / math.sqrt(c), 5),
+                    "alpha_star": round(alpha_star, 7),
+                    "alpha_star_sqrt_c": round(alpha_star * math.sqrt(c), 5)})
+    return row
+
+
+def run_e9a():
+    """H19-H20: asymptotics of the crossover slack and of alpha*(c)."""
+    print("E9a: crossover slack and alpha* for c up to 10,000 (exact Erlang-A)")
+    windows = [10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000]
+    cases = [(s, t, p, c) for s in (4.0, 8.0, 16.0, 32.0) for t in (5.0, 15.0, 30.0)
+             for p in (30.0, 120.0) for c in windows]
+    # Largest (slowest) cases first so the pool stays busy to the end
+    order = sorted(range(len(cases)), key=lambda i: -cases[i][3] * cases[i][1] / cases[i][0])
+    done = pmap_processes(_e9a_case, [cases[i] for i in order])
+    rows = [None] * len(cases)
+    for i, row in zip(order, done):
+        rows[i] = row
+    write_csv("e9a_log_slack.csv", rows)
+    for s in (4.0, 8.0, 16.0, 32.0):
+        for t in (5.0, 15.0, 30.0):
+            for p in (30.0, 120.0):
+                pts = [(math.log(r["windows"]), r["delta_star"]) for r in rows
+                       if (r["service_time"], r["threshold"], r["patience"]) == (s, t, p)
+                       and r["windows"] >= 1000 and r["delta_star"] != ""]
+                top = next(r for r in rows if (r["service_time"], r["threshold"], r["patience"],
+                                               r["windows"]) == (s, t, p, 10000))
+                slope = np.polyfit(*zip(*pts), 1)[0] if len(pts) > 1 else float("nan")
+                print(f"  S={s:<4g} T={t:<4g} patience {p:<5g}: slope {slope:.3f} "
+                      f"(S/2T {s / (2 * t):.3f}), beta* {top['beta_star']}, "
+                      f"alpha* sqrt(c) {top['alpha_star_sqrt_c']} (K1 {top['k1']})")
+
+
+E9B_KINK = THRESHOLD / math.log(1 / (1 - ALPHA))     # Patience mean with G(T) = alpha
+
+
+def _e9b_case(case):
+    from abandonment import fluid_discount, required_windows
+    name, p, R = case
+    d = fluid_discount(THRESHOLD, ALPHA, p)
+    c = required_windows(R / OFFICE_S * 60, OFFICE_S, THRESHOLD, ALPHA, "renege", p)
+    x = c - (1 - d) * R
+    return {"patience": name, "mean_patience": round(p, 3),
+            "G_T": round(1 - math.exp(-THRESHOLD / p), 5), "load": R, "windows": c,
+            "fluid_windows": round((1 - d) * R, 3), "excess": round(x, 3),
+            "excess_over_sqrt_load": round(x / math.sqrt(R), 4)}
+
+
+def run_e9b():
+    """H21: order of the staffing correction above the fluid limit."""
+    print("E9b: extra windows above the fluid staffing (S = 8, T = 15, alpha = 0.10)")
+    loads = [50, 100, 200, 300, 500, 1000, 2000, 3000, 5000]
+    patiences = [("exp30", 30.0), ("exp300", 300.0), ("exp_kink", E9B_KINK), ("exp120", 120.0)]
+    cases = [(name, p, R) for name, p in patiences for R in loads]
+    rows = pmap_processes(_e9b_case, cases)
+    write_csv("e9b_fluid_order.csv", rows)
+    for name, _ in patiences:
+        print(f"  {name:<8} excess: " + ", ".join(
+            f"{r['load']}:{r['excess']:g}" for r in rows if r["patience"] == name))
+
+
 EXPERIMENTS = {"e1b": run_e1b, "e1": run_e1, "e2": run_e2, "e2b": run_e2b,
                "e3a": run_e3a, "e3b": run_e3b, "e4": run_e4, "e5": run_e5, "e6": run_e6,
-               "e7a": run_e7a, "e7": run_e7, "e7c": run_e7c, "e8a": run_e8a, "e8b": run_e8b}
+               "e7a": run_e7a, "e7": run_e7, "e7c": run_e7c, "e8a": run_e8a, "e8b": run_e8b,
+               "e9a": run_e9a, "e9b": run_e9b}
 
 
 def main():

@@ -539,6 +539,75 @@ def fig_regimes():
     save(fig, "fig10_regimes.png")
 
 
+def fig_log_regime():
+    slack = [r for r in load("e9a_log_slack.csv") if r["delta_star"]]
+    order = load("e9b_fluid_order.csv")
+    fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(15, 4.4))
+    ratios = sorted({float(r["service_time"]) / float(r["threshold"]) for r in slack})
+    shade = {q: SEQUENTIAL(0.15 + 0.85 * i / (len(ratios) - 1)) for i, q in enumerate(ratios)}
+    marker = {"30.0": "o", "120.0": "s"}
+
+    # (a) Every case collapses onto 1/2 ln c once the patience intercept is removed
+    for key in sorted({(r["service_time"], r["threshold"], r["patience"]) for r in slack}):
+        pts = sorted((int(r["windows"]), float(r["scaled_delta"]) + np.log(float(r["k1"])),
+                      float(r["beta_star"])) for r in slack
+                     if (r["service_time"], r["threshold"], r["patience"]) == key
+                     and int(r["windows"]) >= 50)     # Below that some cases lose the crossover
+        q = float(key[0]) / float(key[1])
+        c, y, beta = zip(*pts)
+        ax1.plot(c, y, color=shade[q], lw=1.0, alpha=0.8)
+        ax1.scatter([a for a, b in zip(c, beta) if b < 0.15],
+                    [v for v, b in zip(y, beta) if b < 0.15], color=shade[q], s=12,
+                    marker=marker[key[2]], zorder=3)
+    grid = np.array([50, 10000])
+    ax1.plot(grid, 0.5 * np.log(grid), color="#e34948", lw=2, ls="--",
+             label="theory: ½ ln c")
+    ax1.set_xscale("log")
+    ax1.set_xlabel("Open windows c (log scale)")
+    ax1.set_ylabel("δ*·T/S + ln K₁")
+    ax1.set_title("Crossover slack grows like ln c", loc="left")
+    ax1.legend(loc="upper left", fontsize=8)
+
+    # (b) alpha* sqrt(c) approaches K1 from below; slower when S/T is large
+    for key in sorted({(r["service_time"], r["threshold"], r["patience"]) for r in slack}):
+        pts = sorted((int(r["windows"]), float(r["alpha_star_sqrt_c"]) / float(r["k1"]))
+                     for r in slack if (r["service_time"], r["threshold"], r["patience"]) == key)
+        q = float(key[0]) / float(key[1])
+        ax2.plot(*zip(*pts), color=shade[q], lw=1.2, marker=marker[key[2]], ms=3)
+    ax2.axhline(1.0, color="#e34948", lw=1.5, ls="--")
+    for q in (ratios[0], ratios[-1]):
+        ax2.plot([], [], color=shade[q], lw=2, label=f"S/T = {q:.2g}")
+    ax2.plot([], [], color=MUTED, marker="o", ls="", label="patience mean 30")
+    ax2.plot([], [], color=MUTED, marker="s", ls="", label="patience mean 120")
+    ax2.set_xscale("log")
+    ax2.set_ylim(0, 1.15)
+    ax2.set_xlabel("Open windows c (log scale)")
+    ax2.set_ylabel("α*(c)·√c / K₁")
+    ax2.set_title("Walk-out boundary α* → K₁/√c", loc="left")
+    ax2.legend(loc="lower right", fontsize=7.5)
+
+    # (c) Three orders of the correction above the fluid staffing
+    styles = {"exp30": ("G(T) = 0.39 > α (mean 30)", "#2a78d6"),
+              "exp120": ("G(T) = 0.118, just above α (mean 120)", "#1baf7a"),
+              "exp_kink": ("G(T) = α (mean 142)", "#eda100"),
+              "exp300": ("G(T) = 0.049 < α (mean 300)", "#e34948")}
+    for name, (label, color) in styles.items():
+        pts = [(float(r["load"]), float(r["excess"])) for r in order if r["patience"] == name]
+        ax3.plot(*zip(*pts), color=color, marker="o", ms=4, lw=1.6, label=label)
+    loads = np.array([50, 5000])
+    ax3.plot(loads, 0.26 * np.sqrt(loads), color=MUTED, ls=":", lw=1.2,
+             label="predicted 0.26 √R")
+    ax3.axhline(1.0, color=MUTED, lw=0.8, ls="--")
+    ax3.set_xscale("log")
+    ax3.set_yscale("log")
+    ax3.set_xlabel("Offered load R (Erlangs, log scale)")
+    ax3.set_ylabel("Windows above fluid staffing (1 − d)R")
+    ax3.set_title("Extra windows above the fluid limit", loc="left")
+    ax3.legend(loc="upper left", fontsize=7.5)
+    fig.tight_layout()
+    save(fig, "fig11_log_regime.png")
+
+
 if __name__ == "__main__":
     fig_gap_heatmap()
     fig_hourly()
@@ -550,3 +619,4 @@ if __name__ == "__main__":
     fig_appointments()
     fig_abandonment()
     fig_regimes()
+    fig_log_regime()

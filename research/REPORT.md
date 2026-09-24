@@ -21,6 +21,7 @@ The target is that at most 10% of each hour's arrivals wait more than 15 minutes
 - **Appointments save staff through shifts, not hours (Round 3).** Moving demand to appointments barely changes the hour-by-hour staffing need: at most −6.5% even with 75% of demand booked. But booked into the quiet hours, appointments flatten demand enough for full-day shifts to fit it. That cut an 8-Erlang office's roster from 100 to 76 paid hours (−24%), against −4% when bookings follow the demand curve. A small office saw no change. Appointment holders waited less than walk-ins in every setting.
 - **A served-citizens metric rewards understaffing (Round 4).** When walk-ins can leave, the usual ticket-log metric (the late share of *served* citizens) is met with 18–27% fewer staff-hours than the citizen view (late *or* left), while 11–19% of the busiest hour's arrivals walk out. If leavers must come back for a mandatory service, those savings become repeat visits: 18 per 100 transactions in the office, and at 8 Erlangs a plan below the raw workload that collapses. Returners who "come back first thing" swamp the opening hour. Whether a visible line loses more citizens than a hidden ticket queue depends on the shape of patience, as a Jensen argument predicts, but the visible line always has the higher failure rate. Erlang-A staffing was safe except where its exponential-patience assumption failed.
 - **When leaving helps and when it hurts (Round 5).** Abandonment lowers the staffing need only if the target is lenient relative to the office's size. At fixed staffing it raises the failure rate below a crossover utilization ρ\*(c) and lowers it above. A strict 2% target makes abandonment cost 12–15% more staff; a 20% target saves up to 16%. For large offices a fluid limit predicts the saving as min(α, G(T)) of the load, where G is the patience CDF: 10.5% measured at 32 Erlangs against 10% predicted, and 0.4% against 0.35% for patient citizens. With mandatory returns the saving is exactly zero.
+- **Large offices with a fixed threshold (Round 6).** Exact models up to 10,000 windows correct Round 5's scaling. The crossover slack grows like (S/2T)·ln c, not like √c. Abandonment can raise a large office's staffing only when the target α is below K₁/√c, a closed form that does not depend on the threshold. How fast the fluid saving is reached depends on where α sits against G(T): within one window above it, O(√R) extra windows below it, and O(√(R ln R)) exactly at it. Convergence is slow for patient citizens facing short thresholds, where two of the pre-registered tolerances failed.
 - **Independent validation (Round 2).** An independent implementation in the open-source Ciw library agrees with CivicQ: 0 of 54 tests reject under constant staffing, and CivicQ stays within Ciw's bounds in all 25 hours tested under changing staffing. Along the way we found that Ciw's hourly schedules silently add overtime capacity at every shift boundary, which halves the measured lateness if used naively.
 
 ## 1. Background and gap
@@ -116,6 +117,35 @@ Walk-ins may now leave. Two behaviours share one patience distribution. In a **h
 - **H16 (a strict target reverses the sign).** At α = 0.02, abandonment (exponential, mean 30) **raises** the staff-hours needed in both the office and the 8-Erlang office. At α = 0.20 it lowers or leaves them unchanged in both.
 - **H17 (small offices feel only the early leavers).** Many-server theory says a moderately loaded system depends on patience mainly through its density near zero (Zeltyn & Mandelbaum 2005). Prediction for the office's plan: exponential patience at means 30, 60 and 120 raises the worst hour's failure rate above its no-abandonment late rate. Lognormal patience (CV 0.5, density 0 at zero) at means 60 and 120 changes it by less than 1 point.
 - **H18 (returns remove the discount).** In the stationary per-hour model with returns at probability r, staffing per unit of offered load converges to (1 − d)/(1 − rd) as load grows: 0.90, 0.947 and 1.00 for r = 0, 0.5 and 1 with exponential patience.
+
+**Round 6** (stated before running E9; derived analytically below). §5.9 read the crossover as Halfin–Whitt scaling, 1 − ρ\* ≈ β\*/√c. But β\* kept falling with c, from 0.6 to 0.2. A re-reading of the published E8a table showed that the slack δ\* = c − R\* at the crossover grows like ln c instead, with a slope near S/(2T) for every patience level. We give a derivation, and then predictions tested only at window counts, service times, thresholds and patience levels that E8a did not cover.
+
+*Derivation (hidden queue, exponential service mean S and patience mean θ⁻¹, threshold T fixed as c grows).*
+- **Erlang-C side.** P(W > T) = C(c, R)·e^{−δT/S}. For this to reach a fixed small target, δ need only be O(log c). Then β = δ/√c → 0 and C → 1.
+- **Erlang-A side, near critical load.** Write the number in system as c + √c·X. X is a diffusion with drift −X/S below zero (servers) and −θX above zero (abandonment), and infinitesimal variance 2/S.
+  - Its stationary density is ∝ e^{−x²/2} for x < 0 and ∝ e^{−r²x²/2} for x > 0, where r = √(θS).
+  - So P(wait) → 1/(1 + r) and E[Q] = √c·E[X⁺].
+  - Hence P(abandon) = θE[Q]/λ → K₁/√c, with **K₁ = r·√(2/π)/(1 + r)**.
+  - Waits are O(S/√c) ≪ T, so served-late citizens are exponentially rare, and the failure rate is ≈ K₁/√c.
+- **Crossover.** Setting e^{−δT/S} = K₁/√c gives
+
+  δ\*·T/S = ½ ln c − ln K₁(θS) + o(1),  and  α\*(c) = K₁(θS)/√c · (1 + o(1)).
+
+  Convergence is slow, because the neglected terms are O(β\*) = O((S/T) ln c/√c).
+
+*Order of the large-office correction.* Let x(R) = c_req − (1 − d)R be the extra windows above the fluid staffing of §5.9, with d = min(α, G(T)). The throughput identity λ(1 − P(ab)) = μ·E[busy] ≤ cμ gives P(ab) ≥ 1 − c/R, so x > 0 whenever d = α. In the fluid regime, the stationary queue fluctuates by √(λ/θ). Together with each citizen's own service randomness, that gives the wait a spread σ_w ≈ √(S(θ⁻¹ + T)/R) around its fluid value w\*, where G(w\*) = 1 − c/R.
+- **G(T) > α.** w\* < T by a fixed margin, so late service is exponentially rare and idle windows are exponentially rare. One window above (1 − α)R suffices: **x ≤ 1**.
+- **G(T) < α.** w\* sits at T. Late service must be held to α − G(T) by pushing w\* below T by z·σ_w, where z is the standard normal quantile at α − G(T). That costs **x ≈ z·g(T)·√(S(θ⁻¹ + T))·√R** windows, where g is the patience density.
+- **G(T) = α.** Both constraints bind together, and x grows faster than √R, like √(R ln R).
+
+*Hypotheses.*
+- **H19 (logarithmic slack).** For S ∈ {4, 8, 16, 32}, T ∈ {5, 15, 30} and patience means 30 and 120 (exponential), the slope of δ\* against ln c, fitted over c = 1,000–10,000, lies within 10% of S/(2T) in every case where β\* < 0.15 at c = 10,000. For fixed θS, curves of δ\*·T/S against ln c for different T coincide within 0.1 at c ≥ 1,000: patience shifts the intercept, and S/T scales the whole curve.
+- **H20 (the walk-out boundary falls like 1/√c and does not depend on T).** α\*(c)·√c rises monotonically toward K₁(θS) (0.272 for S = 8, mean 30; 0.164 for mean 120). At c = 10,000 it lies within 15% of K₁ in every case with β\* < 0.15. At that c, α\* differs by less than 15% across T = 5, 15 and 30 for the same S and patience. Abandonment can therefore raise the requirement of a large office only when α < K₁/√c, whatever the threshold.
+- **H21 (three orders of the fluid correction).** Stationary per-hour failure-target staffing, hidden queue, S = 8, T = 15, α = 0.10, R from 50 to 5,000 Erlangs:
+  - (a) exponential patience, mean 30 (G(T) = 0.39): x ∈ (0, 1] at every R ≥ 50;
+  - (b) mean 300 (G(T) = 0.049): x/√R converges, and lies in 0.15–0.40 (predicted 0.26) at R ≥ 1,000;
+  - (c) mean 142.4 (G(T) = α exactly): x/√R keeps rising from R = 300 to 5,000;
+  - (d) mean 120 (G(T) = 0.1175, just above α): x > 1 up to R = 500, then falls back to x ≤ 1 by R = 5,000. The derivation places the turnover where the margin T − G⁻¹(α) = 2.4 min reaches about 3.5 σ_w, near R ≈ 2,000–3,000.
 
 *Change after pre-registration (Round 2):* while testing H7 we found that Ciw cannot express CivicQ's staffing-change rule (see §5.6). H7 was therefore split into a strict test for constant staffing and a bounds test for changing staffing *before* E5 was run. This deviation is disclosed here.
 
@@ -392,7 +422,7 @@ For each window count c there is a crossover utilization ρ\*(c). Below it early
 | ρ\* (exponential patience, mean 30) | 0.42 | 0.58 | 0.66 | 0.72 | 0.86 | 0.94 | 0.98 |
 | Erlang-C P(W > 15) at ρ\* | 0.14 | 0.09 | 0.07 | 0.06 | 0.04 | 0.03 | 0.02 |
 
-Below ρ\* waits are short and rare, so there is little queue to thin, while any citizen who waits might leave early. Above it the queue is long enough that removing people from it matters. ρ\* rises toward 1 like 1 − β\*/√c, the Halfin–Whitt scaling, with β\* ≈ 0.6 falling slowly to 0.2 as c grows. Less patient citizens move the boundary up, since there are more early leavers (ρ\* = 0.48 at c = 1 for mean 15 against 0.35 for mean 120). The office's plan has 6 of its 8 hours below the boundary. The 8-Erlang office's plan has 5 of 8 above it, and two of those run *over* capacity (ρ = 1.14 and 1.01), which is feasible only because the office opens empty.
+Below ρ\* waits are short and rare, so there is little queue to thin, while any citizen who waits might leave early. Above it the queue is long enough that removing people from it matters. ρ\* rises toward 1 as c grows. *Correction (Round 6):* this sentence first read the rise as Halfin–Whitt scaling, 1 − β\*/√c, with β\* "falling slowly" from 0.6 to 0.2. §5.10 shows that it is not: with a fixed threshold the slack c(1 − ρ\*) grows like (S/2T)·ln c, so β\* → 0. Less patient citizens move the boundary up, since there are more early leavers (ρ\* = 0.48 at c = 1 for mean 15 against 0.35 for mean 120). The office's plan has 6 of its 8 hours below the boundary. The 8-Erlang office's plan has 5 of 8 above it, and two of those run *over* capacity (ρ = 1.14 and 1.01), which is feasible only because the office opens empty.
 
 **When the requirement itself moves.** A per-hour requirement can rise only if abandonment pushes a feasible staffing over the target. That needs a staffing in the "raises" region whose Erlang-C late rate is just under α. Since the Erlang-C late rate at ρ\* is α\*(c) (bottom row of the table), abandonment can raise the requirement only when **α < α\*(c)**. Counted over 160 loads from 0.1 to 16 Erlangs (exponential, mean 30):
 
@@ -461,12 +491,69 @@ With exponential patience the penalty scales with 1/θ, which is the patience de
 
 A "saving" from abandonment is only real if the people who leave do not need to come back.
 
+### 5.10 Large offices with a fixed wait threshold (E9)
+
+Round 5 described the crossover with Halfin–Whitt scaling. Round 6 tests a different claim, pre-registered in §4 with its derivation. When T stays fixed while the office grows, the slack at the crossover grows like ln c rather than √c, and the walk-out boundary falls like 1/√c. E9 uses only exact stationary models, with no simulation:
+- **E9a** is the crossover for 4 service times × 3 thresholds × 2 patience levels, at c = 10 to 10,000.
+- **E9b** is the staffing above the fluid limit at loads from 50 to 5,000 Erlangs.
+
+To reach these sizes, the Erlang-A model now applies the matrix exponential to a vector with a sparse generator. It matches the previous dense computation to 7 × 10⁻¹⁵, and E8a reproduces byte for byte.
+
+![Log regime](figures/fig11_log_regime.png)
+
+**The crossover slack grows like ln c (Fig. 11a).** The table gives the fitted slope of δ\* against ln c over c = 1,000–10,000, as a share of the predicted S/(2T), for the 20 cases with β\* < 0.15 at c = 10,000:
+
+| | T = 5 | T = 15 | T = 30 |
+|---|---|---|---|
+| S = 4, patience 30 / 120 | 0.95 / **0.84** | 0.98 / 0.95 | 0.99 / 0.97 |
+| S = 8, patience 30 / 120 | 0.94 / **0.81** | 0.98 / 0.94 | 0.99 / 0.97 |
+| S = 16, patience 30 / 120 | — | 0.99 / 0.93 | 0.99 / 0.96 |
+| S = 32, patience 30 / 120 | — | 1.00 / 0.92 | 1.00 / 0.96 |
+
+- In 18 of the 20 cases the slope is within 10% of S/(2T). The threshold scales the whole curve, as the derivation says.
+- The two misses are patient citizens (mean 120) with a 5-minute threshold. There the slope is still 16–19% short at c = 10,000.
+- The collapse across thresholds holds for patience 30: δ\*·T/S differs by at most 0.09 between T = 5, 15 and 30 at every c ≥ 1,000. It does not hold for patience 120: 0.24–0.40 apart at c = 1,000, still 0.09–0.15 at c = 10,000.
+- When T is short relative to S (S/T ≥ 2 with c ≤ 20), there is no crossover at all. Almost anyone who waits is late anyway, so no leaver could have been served on time, and abandonment lowers failures at every load.
+
+**H19: partly supported, rejected as stated.** The ln c law with slope S/(2T) holds, but it is not reached by c = 10,000 for patient citizens facing a short threshold.
+
+**The walk-out boundary falls like K₁/√c (Fig. 11b).**
+- α\*(c)·√c rises monotonically toward K₁ in all 24 cases.
+- At c = 10,000 it is within 15% of K₁ in 17 of the 20 cases with β\* < 0.15. The closest is 1.7% below (S = 4, T = 30, patience 30).
+- The three misses are all patience 120: S = 4 and 8 at T = 5 (16% and 24% below), and S = 32 at T = 15 (20% below).
+- Where the curves for different thresholds have converged, α\* barely depends on T: it differs by 4–14% across thresholds for S = 4, for S = 8 with patience 30, and for S = 16 and 32 at T = 15 and 30. The exception is S = 8 with patience 120, at 20%.
+
+**H20: partly supported.** The limit is right. Convergence toward it is slow for patient citizens.
+
+*What controls the convergence (post hoc, not pre-registered).* We chose β\* < 0.15 as the convergence criterion. The misses line up better with Erlang-A's own heavy-traffic parameter, β̂ = β\*/√(θS) (Garnett, Mandelbaum & Reiman 2002), which grows as patience lengthens. Every case with β̂ < 0.19 has its slope within 7.3% and its limit within 15%. Every miss has β̂ ≥ 0.24. Long patience makes √(θS) small, so the asymptotic regime starts only at much larger offices.
+
+**Three orders of the fluid correction (E9b, Fig. 11c).** Windows above the fluid staffing (1 − d)R; S = 8, T = 15, α = 0.10:
+
+| Load R (Erlangs) | 50 | 100 | 300 | 1,000 | 2,000 | 5,000 |
+|---|---|---|---|---|---|---|
+| G(T) = 0.39 > α (patience 30) | 1 | 1 | 1 | 1 | 1 | 1 |
+| G(T) = 0.118, just above α (patience 120) | 3 | 3 | 4 | 4 | **1** | 1 |
+| G(T) = α (patience 142) | 3 | 4 | 8 | 16 | 23 | 39 |
+| G(T) = 0.049 < α (patience 300) | 2.4 | 2.9 | 4.6 | 7.8 | 11.5 | 17.9 |
+
+- **G(T) > α.** One window above (1 − α)R always suffices, at every load up to 5,000 Erlangs. At R = 5,000, c = 4,500 is infeasible by less than 10⁻¹³, below the models' numerical precision. The throughput bound settles it exactly: c ≤ (1 − α)R is always infeasible. `required_windows` now starts from that bound.
+- **G(T) < α.** x/√R settles at 0.25–0.26 for R ≥ 1,000, where 0.26 was predicted from the diffusion argument.
+- **G(T) = α.** x/√R keeps rising, from 0.46 at R = 300 to 0.55 at R = 5,000. x/√(R ln R) stays at 0.19 over the whole range, as derived.
+- **Just above the kink.** The office behaves like the kink case until the wait margin exceeds a few standard deviations. It then drops to a single window between R = 1,000 and 2,000, somewhat earlier than the estimated 2,000–3,000.
+
+**H21: supported in all four cases.**
+
+**What changes.**
+1. **A correction to §5.9.** The crossover is not Halfin–Whitt. With a fixed threshold, the slack c − R\* grows like (S/2T)·ln c, so 1 − ρ\* falls like ln c/c.
+2. **A closed-form boundary.** Abandonment can raise a large office's requirement only when α < K₁/√c, with K₁ = r·√(2/π)/(1 + r) and r = √(S/mean patience). The threshold T drops out. For S = 8 and patience 30 that means α < 0.027 at 100 windows and α < 0.0086 at 1,000.
+3. **The fluid saving arrives at different speeds.** How fast the fluid saving is reached depends on which side of the kink α = G(T) an office sits. If citizens who give up within the threshold outnumber the target share, the saving is exact to within one window. If they are fewer, the office must keep O(√R) windows in reserve. At the kink it needs more, O(√(R ln R)).
+
 ## 6. Threats to validity
 - **Synthetic demand.** Arrival rates follow a stylized double-peak profile. There are no public arrival-count data for walk-in offices; the CA DMV data contain only waits.
 - **Exponential service in E1.** This favours the Erlang-C rules, which assume it. With CV < 1, as is typical for lognormal service, the analytic rules would overstaff even more (E2).
 - **Fixed service threshold.** T = 15 min is the same for every S. The same target is harder to meet with S = 32 than with S = 4.
 - **Fixed schedule structure.** One-hour blocks. §5.5 adds shifts, but without lunch breaks, part-time limits or labor rules. Rounds 1–2 have no abandonment or appointments, and every round has a single service type.
-- **The regime analysis (§5.9) is per hour and stationary.** The crossover and the fluid limit come from steady-state models. The time-varying tests agree with them, but the office's own +1 h is a marginal effect near the target, not a stationary one. The fluid limit is an asymptotic argument; the table shows how fast each case converges.
+- **The regime analysis (§5.9) is per hour and stationary.** The crossover and the fluid limit come from steady-state models. The time-varying tests agree with them, but the office's own +1 h is a marginal effect near the target, not a stationary one. The fluid limit is an asymptotic argument; the table shows how fast each case converges. Round 6 (§5.10) is also stationary, per hour, and limited to exponential patience and service. Its diffusion constants are heuristic, and the variable that governs convergence (β̂) was identified only after the results were in.
 - **Abandonment is stylized (§5.8).** Patience distributions are assumed, not calibrated; no public data measure walk-away behaviour at government offices. Balkers judge the wait from the line with the true mean service time and ignore people ahead who would leave. There is no mixed behaviour (balking *and* reneging) and no priority or callback. In E7c every leaver returns (r = 1) with the same patience, either following the demand curve or all at opening; real return timing lies somewhere between, and the fixed point assumes a stationary day-to-day regime.
 - **Appointments are simplified.** They are served FIFO, with no priority for booked citizens. No-shows are independent with a fixed rate, bookings are evenly spaced within each hour, and there are no walk-in balking or booking-lead-time effects.
 - **Integrated search is a local search.** It is multi-started and never worse than its two-step start, but it is not proven optimal for large offices.
@@ -484,7 +571,7 @@ A "saving" from abandonment is only real if the people who leave do not need to 
 7. **Plan shifts, not hours, and plan them with simulation.** Converting an hourly requirement into shifts wastes up to 15% of paid hours in medium and large offices. Searching over shift schedules directly avoids it, and helps more than adding new shift types.
 8. **If you offer appointments, fill the quiet hours first.** Booking against the demand curve lets full-day shifts fit the day, saving up to about a quarter of paid hours at 8 Erlangs. Booking in proportion to demand saves almost nothing. Adjust for no-shows by overbooking.
 9. **Count the citizens who leave, not only those you serve.** A late rate computed from served tickets improves as people give up. Log walk-outs and abandoned tickets, and set the target on "late or left". For a mandatory service, every walk-out is a repeat visit, often at opening the next day, so staff the first hour for returners.
-10. **Don't assume walk-outs save staff.** They do only in larger offices with lenient targets, by at most the target share α and at most the share of citizens who would give up within the threshold. With strict targets or in small offices they cost staff, and for a mandatory service the long-run saving is zero.
+10. **Don't assume walk-outs save staff.** They do only in larger offices with lenient targets, by at most the target share α and at most the share of citizens who would give up within the threshold. With strict targets or in small offices they cost staff, and for a mandatory service the long-run saving is zero. For an office with c windows, "strict" means α < K₁/√c (§5.10): about 0.03 at 100 windows when service takes 8 min and patience averages 30.
 11. **Don't pick Erlang-A's patience model by habit.** Its exponential assumption can understaff when few people leave early. If the line is visible, a balking model with a realistic patience distribution is exact and was safe here.
 12. **If you use Ciw for time-varying staffing, merge consecutive equal shifts.** Otherwise each shift boundary adds phantom overtime capacity.
 
@@ -493,7 +580,7 @@ A "saving" from abandonment is only real if the people who leave do not need to 
 g++ -std=c++17 -O2 -static -Icpp/include -o cpp/build/queue_sim.exe cpp/src/simulation.cpp cpp/src/main.cpp
 pip install -r research/requirements.txt   # numpy, matplotlib, scipy, ciw
 python research/test_research.py
-python research/experiments.py --all     # about 60 minutes on 8 cores (E7 takes 25, E8a 3, E8b 5)
+python research/experiments.py --all     # about 65 minutes on 8 cores (E7 takes 25, E8a 3, E8b 5, E9 5)
 python research/figures.py
 ```
 

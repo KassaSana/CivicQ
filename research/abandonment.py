@@ -25,7 +25,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
-from scipy.linalg import expm
+from scipy.sparse import diags
+from scipy.sparse.linalg import expm_multiply
 from scipy.stats import poisson
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -84,7 +85,7 @@ def _state_cap(c: int, lam: float, theta: float) -> int:
 
 
 def renege_metrics(c: int, lam: float, mean_service: float, mean_patience: float,
-                   threshold: float) -> HourMetrics:
+                   threshold: float, offered: bool = True) -> HourMetrics:
     """
     Erlang-A (M/M/c+M) at arrival rate `lam` per minute.
 
@@ -104,15 +105,24 @@ def renege_metrics(c: int, lam: float, mean_service: float, mean_patience: float
     J = max(1, int(np.searchsorted(-tail[c:], -1e-13)))   # j = 0..J-1 waiting ahead
     j = np.arange(J)
     advance = c * mu + j * theta
-    # Tagged citizen who may leave (rate theta); last state: served
-    Q = np.zeros((J + 1, J + 1))
-    Q[j, j] = -(advance + theta)
-    Q[j[1:], j[1:] - 1] = advance[1:]
-    Q[0, J] = advance[0]
-    within_T = expm(Q * threshold)[:J, J]           # P(served by T | j ahead)
+    served_state = np.zeros(J + 1)
+    served_state[J] = 1.0
+
+    def absorbed_by_T(leave_rate):
+        # Tagged citizen who may leave at `leave_rate`; last state: served.
+        # Only the column into "served" is needed, so apply the (sparse,
+        # bidiagonal) generator's exponential to a vector; large offices
+        # have thousands of queue states
+        diag = np.concatenate([-(advance + leave_rate), [0.0]])
+        below = np.concatenate([advance[1:], [0.0]])   # j -> j - 1; "served" absorbs
+        Q = diags([diag, below], [0, -1], shape=(J + 1, J + 1), format="lil")
+        Q[0, J] = advance[0]
+        return expm_multiply(Q.tocsr() * threshold, served_state)[:J]
+
+    within_T = absorbed_by_T(theta)                 # P(served by T | j ahead)
     # Same chain for a citizen who never leaves: P(offered wait V <= T | j ahead)
-    Q[j, j] = -advance
-    offered_within_T = expm(Q * threshold)[:J, J]
+    # (skipped with offered=False, which halves the cost for large offices)
+    offered_within_T = absorbed_by_T(0.0) if offered else None
     eventually = np.cumprod(advance / (advance + theta))  # P(served eventually | j ahead)
     immediate = pi[:c].sum()
     wait_pi = pi[c:c + J]
@@ -121,7 +131,8 @@ def renege_metrics(c: int, lam: float, mean_service: float, mean_patience: float
     return HourMetrics(fail=1.0 - ok, abandon=1.0 - served,
                        served_late=(served - ok) / served,
                        mean_queue=float((np.maximum(n - c, 0) * pi).sum()),
-                       offered_late=float((wait_pi * (1.0 - offered_within_T)).sum()))
+                       offered_late=(float((wait_pi * (1.0 - offered_within_T)).sum())
+                                     if offered else float("nan")))
 
 
 def balk_metrics(c: int, lam: float, mean_service: float, mean_patience: float,
@@ -158,7 +169,7 @@ def hour_metrics(mode: str, c: int, rate_per_hour: float, mean_service: float,
     if mode == "renege":
         # Exact only for exponential patience; other families use an exponential
         # with the same mean (the usual Erlang-A practice)
-        return renege_metrics(c, lam, mean_service, mean_patience, threshold)
+        return renege_metrics(c, lam, mean_service, mean_patience, threshold, offered=False)
     if mode == "balk":
         return balk_metrics(c, lam, mean_service, mean_patience, threshold,
                             patience_dist, patience_cv)
@@ -184,7 +195,11 @@ def required_windows(rate_per_hour: float, mean_service: float, threshold: float
     hi = max(2, int(load + 6 * math.sqrt(load) + 6))
     while not ok(hi):
         hi *= 2
-    lo = 0                                   # ok(lo) is False (no windows, everyone fails)
+    # ok(lo) is False: throughput lambda (1 - P(leave)) = mu E[busy] < c mu
+    # (some window is idle with positive probability), so with
+    # c <= (1 - alpha) R more than alpha of arrivals leave (Erlang-C: c <= R).
+    # This also settles ties the models can only resolve to ~1e-13 (E9b)
+    lo = max(0, math.floor((1.0 - alpha) * load + 1e-9))
     while hi - lo > 1:
         mid = (lo + hi) // 2
         lo, hi = (lo, mid) if ok(mid) else (mid, hi)
