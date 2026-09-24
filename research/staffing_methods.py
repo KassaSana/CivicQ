@@ -44,9 +44,19 @@ EVAL_REPS = 1000
 
 # Office demand shape (citizens/hour) and its normalized deviations z (max |z| = 1)
 OFFICE_RATES = [12.0, 15.0, 10.0, 8.0, 8.0, 12.0, 14.0, 10.0]
-_mean = sum(OFFICE_RATES) / SLOTS
-_dev = [r - _mean for r in OFFICE_RATES]
-OFFICE_SHAPE = [d / max(abs(x) for x in _dev) for d in _dev]
+
+
+def _shape(rates: list) -> list:
+    mean = sum(rates) / len(rates)
+    dev = [r - mean for r in rates]
+    return [d / max(abs(x) for x in dev) for d in dev]
+
+
+OFFICE_SHAPE = _shape(OFFICE_RATES)
+# Robustness shapes (Round 7): one midday peak, and a morning-heavy ramp
+SHAPES = {"double": OFFICE_SHAPE,
+          "single": _shape([8.0, 10.0, 12.0, 14.0, 14.0, 12.0, 10.0, 8.0]),
+          "ramp": _shape([14.0, 13.0, 12.0, 11.0, 10.0, 9.0, 8.0, 7.0])}
 
 
 # ============================================================================

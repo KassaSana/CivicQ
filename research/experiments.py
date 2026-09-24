@@ -3,7 +3,8 @@ Experiments for the CivicQ staffing study. Every result is written to
 research/results/*.csv and is reproducible from fixed seeds.
 
     python research/experiments.py --all
-    python research/experiments.py e1b e1      # or any subset: e1b e1 e2 e2b e3a e3b e4 e5 e6 e7a e7 e7c e8a e8b e9a e9b
+    python research/experiments.py e1b e1      # or any subset: e1b e1 e2 e2b e3a e3b e4 e5 e6 e7a e7 e7c e8a e8b e9a e9b e10a-h
+    (run e10b before e10a, e10c, e10d and e10e: they read its fluid constants)
 
 Design seeds (DESIGN_SEED..) choose plans; evaluation seeds (EVAL_SEED..) score
 them, so no reported number is biased by the search that produced the plan.
@@ -1028,10 +1029,271 @@ def run_e9b():
             f"{r['load']}:{r['excess']:g}" for r in rows if r["patience"] == name))
 
 
+# ============================================================================
+# E10: a finite-horizon fluid theory of the walk-in day (Round 7, H22-H25)
+# ============================================================================
+
+E10_SHAPES = ("double", "single", "ramp")
+
+
+def _fluid_case(case):
+    """Fluid constants for one (shape, A, S, T): alpha = 0 LP and the alpha MILP."""
+    from fluid import fluid_day, fluid_staffing
+    from staffing_methods import SHAPES
+    shape, amp, s, t = case
+    rates = arrival_profile(1.0, s, amp, SHAPES[shape])       # 1 Erlang; scales with R
+    row = {"shape": shape, "amplitude": amp, "service_time": s, "threshold": t,
+           "load_by_hour": json.dumps([round(r / 60 * s, 4) for r in rates])}
+    for tag, a in (("f0", 0.0), ("f_alpha", ALPHA)):
+        sol = fluid_staffing(rates, s, t, a, time_limit=900)
+        day = fluid_day(sol["plan"], rates, s, t, dt=min(0.25, s / 32))
+        dt = day["t"][1] - day["t"][0]
+        c = np.array(sol["plan"])[np.minimum((day["t"] // 60).astype(int), SLOTS - 1)]
+        idle = float(np.sum(np.maximum(c - day["X"], 0.0)) * dt)     # window-minutes
+        backlog = float(day["X"][-1] + (rates[-1] / 60 - min(day["X"][-1], sol["plan"][-1])
+                                       / s) * dt)                 # X at closing
+        row.update({tag: round(sol["cost"] / SLOTS, 5),
+                    f"{tag}_plan": json.dumps([round(x, 4) for x in sol["plan"]]),
+                    f"{tag}_optimal": sol["optimal"],
+                    f"{tag}_idle_share": round(idle / (SLOTS * 60), 5),
+                    f"{tag}_backlog_share": round(s * backlog / (SLOTS * 60), 5),
+                    f"{tag}_worst_fluid_late": round(max(day["late"]), 4)})
+    return row
+
+
+def run_e10b():
+    """Fluid constants f = window-hours / (8R) for every shape, swing and service time."""
+    print("E10b: fluid constants (T = 15, and T = 1.875 S for the D2 settings)")
+    cases = [(sh, a, s, THRESHOLD) for sh in E10_SHAPES for a in AMPLITUDES
+             for s in SERVICE_TIMES]
+    cases += [("double", 0.6, s, 1.875 * s) for s in SERVICE_TIMES if s != 8.0]
+    rows = pmap_processes(_fluid_case, cases)
+    write_csv("e10b_fluid_constants.csv", rows)
+    for r in rows:
+        print(f"  {r['shape']:<6} A={r['amplitude']:<4} S={r['service_time']:<4g} "
+              f"T={r['threshold']:<5g}: f0 {r['f0']:.4f}, f_alpha {r['f_alpha']:.4f} "
+              f"(idle {r['f_alpha_idle_share']:.4f}, backlog {r['f_alpha_backlog_share']:.4f})")
+
+
+def _fluid_row(shape, amp, s, t):
+    """E10b's fluid constants for one setting; solved directly if E10b has not run yet."""
+    path = RESULTS / "e10b_fluid_constants.csv"
+    rows = load_results(path.name) if path.exists() else []
+    for r in rows:
+        if (r["shape"], float(r["amplitude"]), float(r["service_time"]),
+                float(r["threshold"])) == (shape, amp, s, t):
+            return r
+    return _fluid_case((shape, amp, s, t))
+
+
+def load_results(name):
+    with open(RESULTS / name) as f:
+        return list(csv.DictReader(f))
+
+
+def _method_rows(label, rates, s, t, fluid_plan_1e, load, extra=None):
+    """SIPP / Lag-SIPP / OL-avg / SGS / SGS-UCB for one setting, scored on eval days."""
+    plans = analytic_plans(rates, s, t, ALPHA)
+    plans["SGS"], _ = simulation_staffing(rates, s, t, ALPHA)
+    plans["SGS-UCB"], _ = simulation_staffing(rates, s, t, ALPHA, start=plans["SGS"],
+                                              criterion="ucb")
+    fluid = [x * load for x in fluid_plan_1e]
+    names = list(plans)
+    evals = pmap(lambda n: evaluate(plans[n], rates, s, t), names)
+    ucb = sum(plans["SGS-UCB"])
+    rows = []
+    for name, ev in zip(names, evals):
+        rows.append({"setting": label, "mean_load": load, "service_time": s, "threshold": t,
+                     **(extra or {}), "method": name, "plan": json.dumps(plans[name]),
+                     "staff_hours": ev.staff_hours,
+                     "gap_vs_ucb_pct": round(100 * (ev.staff_hours - ucb) / ucb, 2),
+                     "fluid_hours": round(sum(fluid), 2),
+                     "corr_with_fluid": round(float(np.corrcoef(plans[name], fluid)[0, 1]), 4),
+                     "worst_late": round(max(ev.late_prob), 4),
+                     "hours_significantly_over": ev.hours_missing(ALPHA),
+                     "late_by_hour": json.dumps([round(p, 4) for p in ev.late_prob])})
+    print(f"  {label}: " + ", ".join(f"{n} {sum(plans[n])}h" for n in names)
+          + f" | fluid {sum(fluid):.1f}h")
+    return rows
+
+
+def run_e10a():
+    """H22 (D2): the E1 comparison at 24 E with T/S held at 15/8."""
+    print("E10a: analytic rules vs SGS-UCB at 24 E, A = 0.6, T = 1.875 S")
+    rows = []
+    for s in SERVICE_TIMES:
+        t = 1.875 * s
+        rates = arrival_profile(24.0, s, 0.6)
+        fluid = json.loads(_fluid_row("double", 0.6, s, t)["f_alpha_plan"])
+        rows += _method_rows(f"R24_S{s:g}_T{t:g}", rates, s, t, fluid, 24.0)
+    write_csv("e10a_threshold_ratio.csv", rows)
+
+
+def run_e10c():
+    """H23: SGS-UCB against the fluid constant at 64 and 128 Erlangs (S = 8, A = 0.6)."""
+    print("E10c: SGS-UCB at 64 and 128 Erlangs against the fluid")
+    s = OFFICE_S
+    fluid = json.loads(_fluid_row("double", 0.6, s, THRESHOLD)["f_alpha_plan"])
+    slack = s / THRESHOLD * math.log(1 / ALPHA)          # Round 6 stationary slack per hour
+    rows = []
+    for load in (64.0, 128.0):
+        rates = arrival_profile(load, s, 0.6)
+        start = [math.ceil(x * load + slack) for x in fluid]
+        plan, calls = simulation_staffing(rates, s, THRESHOLD, ALPHA, start=start,
+                                          criterion="ucb")
+        ev = evaluate(plan, rates, s, THRESHOLD)
+        rows.append({"mean_load": load, "plan": json.dumps(plan), "staff_hours": sum(plan),
+                     "start": json.dumps(start), "simulator_calls": calls,
+                     "worst_late": round(max(ev.late_prob), 4),
+                     "hours_significantly_over": ev.hours_missing(ALPHA)})
+        print(f"  R={load:g}: {plan} ({sum(plan)} h, from {sum(start)} h, {calls} calls), "
+              f"worst hour {max(ev.late_prob):.3f}")
+    write_csv("e10c_scaling.csv", rows)
+
+
+def run_e10d():
+    """H24 robustness: the two new demand shapes at 24 E (S = 8 and 32, A = 0.6)."""
+    from staffing_methods import SHAPES
+    print("E10d: new demand shapes at 24 E")
+    rows = []
+    for shape in ("single", "ramp"):
+        for s in (8.0, 32.0):
+            rates = arrival_profile(24.0, s, 0.6, SHAPES[shape])
+            fluid = json.loads(_fluid_row(shape, 0.6, s, THRESHOLD)["f_alpha_plan"])
+            rows += _method_rows(f"{shape}_R24_S{s:g}", rates, s, THRESHOLD, fluid, 24.0,
+                                 {"shape": shape})
+    write_csv("e10d_shapes.csv", rows)
+
+
+def _fluid_roster_case(case):
+    from fluid import fluid_staffing
+    from shifts import FLEXIBLE, STANDARD, Menu
+    menu_name, s = case
+    menu = Menu(STANDARD if menu_name == "standard" else FLEXIBLE)
+    rates = arrival_profile(1.0, s, 0.6)
+    sol = fluid_staffing(rates, s, THRESHOLD, ALPHA, menu=menu, time_limit=900)
+    return {"menu": menu_name, "service_time": s, "roster_per_erlang": round(sol["cost"], 5),
+            "units": json.dumps([round(x, 4) for x in sol["units"]]),
+            "profile": json.dumps([round(x, 4) for x in sol["plan"]]),
+            "optimal": sol["optimal"]}
+
+
+def run_e10e():
+    """H25: fluid rosters against the E4 integrated-search rosters."""
+    print("E10e: fluid rosters (paid hours per Erlang) vs E4")
+    rows = pmap_processes(_fluid_roster_case,
+                          [(m, s) for m in ("standard", "flexible") for s in (8.0, 32.0)])
+    e4 = load_results("e4_shifts.csv")
+    e1 = load_results("e1_methods.csv")
+    out = []
+    for r in rows:
+        s = r["service_time"]
+        hourly = 8 * float(_fluid_row("double", 0.6, s, THRESHOLD)["f_alpha"])
+        for load in (8.0, 24.0):
+            setting = f"R{load:g}_S{s:g}_A0.6"
+            iss = next(int(x["paid_hours"]) for x in e4 if x["setting"] == setting
+                       and x["menu"] == r["menu"] and x["method"] == "ISS")
+            best_two = min(int(x["paid_hours"]) for x in e4 if x["setting"] == setting
+                           and x["menu"] == r["menu"] and x["method"] != "ISS")
+            ucb = next(int(x["staff_hours"]) for x in e1 if x["method"] == "SGS-UCB"
+                       and float(x["mean_load"]) == load and float(x["service_time"]) == s
+                       and float(x["amplitude"]) == 0.6)
+            fluid_roster, fluid_hourly = r["roster_per_erlang"] * load, hourly * load
+            out.append({**r, "mean_load": load, "fluid_roster_hours": round(fluid_roster, 2),
+                        "fluid_hourly_hours": round(fluid_hourly, 2), "iss_paid_hours": iss,
+                        "best_two_step_hours": best_two, "sgs_ucb_hours": ucb,
+                        "iss_over_fluid_pct": round(100 * (iss / fluid_roster - 1), 2),
+                        "ucb_over_fluid_pct": round(100 * (ucb / fluid_hourly - 1), 2),
+                        "fluid_price_of_shifts_pct": round(100 * (fluid_roster / fluid_hourly - 1), 2),
+                        "measured_price_of_shifts_pct": round(100 * (iss / ucb - 1), 2)})
+            print(f"  {r['menu']:<9} {setting}: fluid roster {fluid_roster:.1f} h vs ISS {iss} h "
+                  f"({out[-1]['iss_over_fluid_pct']:+.1f}%); SGS-UCB {ucb} h vs fluid hourly "
+                  f"{fluid_hourly:.1f} h ({out[-1]['ucb_over_fluid_pct']:+.1f}%)")
+    write_csv("e10e_rosters.csv", out)
+
+
+def _fluid_np_case(case):
+    """Corrected fluid (closing windows finish their citizen), alpha = 0; plans per Erlang."""
+    from fluid import fluid_staffing_nonpreemptive
+    from shifts import FLEXIBLE, STANDARD, Menu
+    from staffing_methods import SHAPES
+    shape, amp, s, t, menu_name = case
+    menu = {"hourly": None, "standard": Menu(STANDARD), "flexible": Menu(FLEXIBLE)}[menu_name]
+    rates = arrival_profile(1.0, s, amp, SHAPES[shape])
+    sol = fluid_staffing_nonpreemptive(rates, s, t, 0.0, menu=menu, time_limit=900)
+    return {"shape": shape, "amplitude": amp, "service_time": s, "threshold": t,
+            "menu": menu_name, "cost_per_erlang": round(sol["cost"], 5),
+            "f0_np": round(sol["cost"] / SLOTS, 5) if menu is None else "",
+            "plan": json.dumps([round(x, 4) for x in sol["plan"]]), "optimal": sol["optimal"]}
+
+
+def run_e10f():
+    """Post hoc (Round 7b): constants of the corrected, non-preemptive fluid."""
+    print("E10f: corrected fluid (non-preemptive closing), alpha = 0")
+    cases = [(sh, a, s, THRESHOLD, "hourly") for sh in E10_SHAPES for a in AMPLITUDES
+             for s in SERVICE_TIMES]
+    cases += [("double", 0.6, s, 1.875 * s, "hourly") for s in SERVICE_TIMES if s != 8.0]
+    cases += [("double", 0.6, s, THRESHOLD, m) for m in ("standard", "flexible")
+              for s in (8.0, 32.0)]
+    rows = pmap_processes(_fluid_np_case, cases)
+    write_csv("e10f_fluid_nonpreemptive.csv", rows)
+    for r in rows:
+        print(f"  {r['shape']:<6} A={r['amplitude']:<4} S={r['service_time']:<4g} "
+              f"T={r['threshold']:<5g} {r['menu']:<9}: {r['cost_per_erlang']:.4f} per Erlang")
+
+
+def run_e10g():
+    """H26 (confirmatory): SGS-UCB at 256 Erlangs against the corrected fluid."""
+    print("E10g: SGS-UCB at 256 Erlangs")
+    s, load = OFFICE_S, 256.0
+    row = next(r for r in load_results("e10f_fluid_nonpreemptive.csv")
+               if r["shape"] == "double" and float(r["amplitude"]) == 0.6
+               and float(r["service_time"]) == s and float(r["threshold"]) == THRESHOLD
+               and r["menu"] == "hourly")
+    fluid = json.loads(row["plan"])
+    rates = arrival_profile(load, s, 0.6)
+    start = [math.ceil(x * load) + 4 for x in fluid]      # Neutral start: E(start) ~ 32
+    plan, calls = simulation_staffing(rates, s, THRESHOLD, ALPHA, start=start, criterion="ucb")
+    ev = evaluate(plan, rates, s, THRESHOLD)
+    excess = sum(plan) - 8 * load * float(row["f0_np"])
+    write_csv("e10g_confirm.csv", [{
+        "mean_load": load, "plan": json.dumps(plan), "staff_hours": sum(plan),
+        "start": json.dumps(start), "simulator_calls": calls,
+        "fluid_hours": round(8 * load * float(row["f0_np"]), 2), "excess": round(excess, 2),
+        "worst_late": round(max(ev.late_prob), 4),
+        "hours_significantly_over": ev.hours_missing(ALPHA)}])
+    print(f"  R=256: {plan} ({sum(plan)} h from {sum(start)} h, {calls} calls), "
+          f"excess over fluid {excess:.1f}, worst hour {max(ev.late_prob):.3f}")
+
+
+def run_e10h():
+    """Validation: the corrected fluid plan at 256 Erlangs, scaled by +-5%, in the simulator."""
+    print("E10h: corrected fluid plan x (1 +- 5%) at 256 Erlangs, simulated")
+    s, load = OFFICE_S, 256.0
+    row = next(r for r in load_results("e10f_fluid_nonpreemptive.csv")
+               if r["shape"] == "double" and float(r["amplitude"]) == 0.6
+               and float(r["service_time"]) == s and float(r["threshold"]) == THRESHOLD
+               and r["menu"] == "hourly")
+    rates = arrival_profile(load, s, 0.6)
+    rows = []
+    for scale in (0.95, 1.0, 1.05):
+        plan = [round(x * load * scale) for x in json.loads(row["plan"])]
+        ev = evaluate(plan, rates, s, THRESHOLD)
+        rows.append({"scale": scale, "plan": json.dumps(plan), "staff_hours": sum(plan),
+                     "late_by_hour": json.dumps([round(p, 4) for p in ev.late_prob]),
+                     "worst_late": round(max(ev.late_prob), 4),
+                     "hours_over_alpha": sum(p > ALPHA for p in ev.late_prob)})
+        print(f"  x{scale}: {sum(plan)} h, late by hour "
+              + ", ".join(f"{p:.3f}" for p in ev.late_prob))
+    write_csv("e10h_fluid_validation.csv", rows)
+
+
 EXPERIMENTS = {"e1b": run_e1b, "e1": run_e1, "e2": run_e2, "e2b": run_e2b,
                "e3a": run_e3a, "e3b": run_e3b, "e4": run_e4, "e5": run_e5, "e6": run_e6,
                "e7a": run_e7a, "e7": run_e7, "e7c": run_e7c, "e8a": run_e8a, "e8b": run_e8b,
-               "e9a": run_e9a, "e9b": run_e9b}
+               "e9a": run_e9a, "e9b": run_e9b,
+               "e10b": run_e10b, "e10a": run_e10a, "e10c": run_e10c, "e10d": run_e10d,
+               "e10e": run_e10e, "e10f": run_e10f, "e10g": run_e10g, "e10h": run_e10h}
 
 
 def main():

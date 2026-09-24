@@ -608,6 +608,113 @@ def fig_log_regime():
     save(fig, "fig11_log_regime.png")
 
 
+def fig_fluid_day(load_=24.0, s=32.0, amp=0.6):
+    from fluid import fluid_day
+    fluid = next(r for r in load("e10b_fluid_constants.csv") if r["shape"] == "double"
+                 and float(r["amplitude"]) == amp and float(r["service_time"]) == s
+                 and float(r["threshold"]) == 15.0)
+    e1 = [r for r in load("e1_methods.csv") if float(r["mean_load"]) == load_
+          and float(r["service_time"]) == s and float(r["amplitude"]) == amp]
+    rates = arrival_profile(load_, s, amp)
+    plan = [x * load_ for x in json.loads(fluid["f_alpha_plan"])]
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 3.9))
+    x = np.arange(8)
+    ax1.bar(x, [r / 60 * s for r in rates], color=GRID, width=0.8, label="offered load λᵢS")
+    for m in ("SIPP", "SGS-UCB"):
+        r = next(r for r in e1 if r["method"] == m)
+        ax1.plot(x, json.loads(r["plan"]), color=METHOD_COLOR[m], marker=METHOD_MARKER[m],
+                 lw=2, ms=6, label=f"{m} ({r['staff_hours']} h)")
+    ax1.plot(x, plan, color=INK, lw=2, ls="--", marker="o", ms=4,
+             label=f"fluid optimum ({sum(plan):.0f} h)")
+    ax1.set_xticks(x)
+    ax1.set_xticklabels(HOURS)
+    ax1.set_xlabel("Hour (8AM-4PM)")
+    ax1.set_ylabel("Open windows")
+    ax1.set_title("The fluid plan tracks simulation, not SIPP", loc="left")
+    ax1.legend(fontsize=8, loc="upper center", bbox_to_anchor=(0.5, -0.15), ncol=2)
+
+    day = fluid_day(plan, rates, s, 15.0)            # On the grid the plan was solved on
+    c = np.array(plan)[np.minimum((day["t"] // 60).astype(int), 7)]
+    ax2.plot(day["t"] / 60, day["X"], color="#2a78d6", lw=1.8, label="in office X(t)")
+    ax2.plot(day["t"] / 60, c, color=INK, lw=1.2, ls="--", label="open windows c(t)")
+    ax2.set_xlabel("Hours after opening")
+    ax2.set_ylabel("Citizens / windows")
+    tw = ax2.twinx()
+    tw.plot(day["t"] / 60, day["wait"], color="#e34948", lw=1.5, label="fluid wait w(t)")
+    tw.axhline(15, color="#e34948", lw=0.8, ls=":")
+    tw.set_ylabel("Wait (min)", color="#e34948")
+    tw.set_ylim(0, 30)
+    tw.grid(False)
+    ax2.set_title("Backlog carried through the peaks (≤ α late per hour)", loc="left")
+    h1, l1 = ax2.get_legend_handles_labels()
+    h2, l2 = tw.get_legend_handles_labels()
+    ax2.legend(h1 + h2, l1 + l2, fontsize=8, loc="upper left")
+    fig.tight_layout()
+    save(fig, "fig12_fluid_day.png")
+
+
+def fig_fluid_scaling():
+    fluid = next(r for r in load("e10b_fluid_constants.csv") if r["shape"] == "double"
+                 and float(r["amplitude"]) == 0.6 and float(r["service_time"]) == 8.0
+                 and float(r["threshold"]) == 15.0)
+    f = float(fluid["f_alpha"])
+    pts = [(float(r["mean_load"]), int(r["no_abandonment_hours"]))
+           for r in load("e8b_regimes.csv")
+           if r["patience"] == "exp30" and float(r["alpha"]) == 0.10 and r["office"] != "office"]
+    pts += [(float(r["mean_load"]), int(r["staff_hours"])) for r in load("e10c_scaling.csv")]
+    pts += [(float(r["mean_load"]), int(r["staff_hours"])) for r in load("e10g_confirm.csv")]
+    pts = sorted(set(pts))
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 3.9))
+    R = np.array([p[0] for p in pts])
+    hours = np.array([p[1] for p in pts])
+    ax1.plot(R, hours / (8 * R), color=METHOD_COLOR["SGS-UCB"], marker="P", ms=7, lw=2,
+             label="SGS-UCB (simulation)")
+    f_np = next(float(r["f0_np"]) for r in load("e10f_fluid_nonpreemptive.csv")
+                if r["shape"] == "double" and float(r["amplitude"]) == 0.6
+                and float(r["service_time"]) == 8.0 and float(r["threshold"]) == 15.0
+                and r["menu"] == "hourly")
+    grid = np.geomspace(1, 256, 100)
+    e128 = hours[R == 128][0] - 8 * 128 * f_np
+    ax1.plot(grid, f_np + e128 * np.sqrt(grid / 128) / (8 * grid), color=INK_2, ls="--",
+             lw=1.2, label="corrected fluid + κ√R windows")
+    ax1.axhline(f, color=MUTED, lw=1.2, ls=":", label=f"registered fluid f = {f:.3f}")
+    ax1.axhline(f_np, color=INK, lw=1.2, label=f"corrected fluid f = {f_np:.3f}")
+    ax1.axhline(1.0, color=GRID, lw=1)
+    ax1.set_xscale("log", base=2)
+    ax1.set_ylim(0.88, 1.6)
+    ax1.set_xlabel("Mean offered load R (Erlangs)")
+    ax1.set_ylabel("Window-hours / raw workload 8R")
+    ax1.set_title("Large offices converge to the fluid, below the workload", loc="left")
+    ax1.legend(fontsize=8)
+
+    rows = load("e10e_rosters.csv")
+    labels = [f"{r['menu'][:4]} R{float(r['mean_load']):g} S{float(r['service_time']):g}"
+              for r in rows]
+    y = np.arange(len(rows))
+    npf = load("e10f_fluid_nonpreemptive.csv")
+
+    def corrected_price(r):
+        cost = {m: next(float(x["cost_per_erlang"]) for x in npf if x["shape"] == "double"
+                        and float(x["amplitude"]) == 0.6 and x["menu"] == m
+                        and float(x["service_time"]) == float(r["service_time"])
+                        and float(x["threshold"]) == 15.0) for m in (r["menu"], "hourly")}
+        return 100 * (cost[r["menu"]] / cost["hourly"] - 1)
+
+    ax2.barh(y - 0.27, [float(r["measured_price_of_shifts_pct"]) for r in rows], height=0.27,
+             color="#2a78d6", label="measured: ISS vs SGS-UCB")
+    ax2.barh(y, [corrected_price(r) for r in rows], height=0.27, color=INK,
+             label="corrected fluid (post hoc)")
+    ax2.barh(y + 0.27, [float(r["fluid_price_of_shifts_pct"]) for r in rows], height=0.27,
+             color=AXIS, label="registered fluid")
+    ax2.set_yticks(y)
+    ax2.set_yticklabels(labels, fontsize=8)
+    ax2.set_xlabel("Price of shifts (% more paid hours)")
+    ax2.set_title("The fluid predicts the price of shifts", loc="left")
+    ax2.legend(fontsize=8, loc="upper center", bbox_to_anchor=(0.5, -0.15), ncol=3)
+    fig.tight_layout()
+    save(fig, "fig13_fluid_scaling.png")
+
+
 if __name__ == "__main__":
     fig_gap_heatmap()
     fig_hourly()
@@ -620,3 +727,5 @@ if __name__ == "__main__":
     fig_abandonment()
     fig_regimes()
     fig_log_regime()
+    fig_fluid_day()
+    fig_fluid_scaling()

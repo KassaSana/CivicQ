@@ -21,6 +21,7 @@ from abandonment import (  # noqa: E402
     balk_metrics, fluid_discount, hour_metrics, renege_abandon, renege_metrics,
     required_windows, required_windows_with_returns, return_rates, score,
 )
+from fluid import fluid_day, fluid_staffing  # noqa: E402
 
 SIMULATOR = find_simulator()
 
@@ -275,6 +276,66 @@ class TestAbandonmentSimulator(unittest.TestCase):
         arrivals = lambda r: [sum(x) + sum(y) for x, y in zip(r.daily_arrivals, r.daily_abandoned)]
         self.assertEqual(arrivals(a), arrivals(b))
         self.assertGreater(sum(map(sum, a.daily_abandoned)), sum(map(sum, b.daily_abandoned)))
+
+
+class TestFluid(unittest.TestCase):
+    RATES = [9.0, 12.0, 7.5, 6.0, 6.0, 9.0, 10.5, 7.5]     # about 1.1 Erlangs at S = 8
+
+    def test_empty_start_follows_offered_load(self):
+        # With windows to spare nobody queues and X(t) is the offered load m(t)
+        day = fluid_day([10] * 8, self.RATES, 8.0, 15.0, dt=0.25)
+        t, m = offered_load(self.RATES, 8.0)
+        self.assertLess(np.max(np.abs(day["X"] - np.interp(day["t"], t, m))), 0.01)
+        self.assertEqual(max(day["late"]), 0.0)
+
+    def test_overload_grows_the_queue_linearly(self):
+        # 2 windows, 30 per hour at S = 8: the queue grows at 0.5 - 2/8 = 0.25 per minute
+        day = fluid_day([2] * 8, [30.0] * 8, 8.0, 15.0, dt=0.1)
+        q = day["queue"]
+        k = np.searchsorted(day["t"], [120.0, 180.0])
+        self.assertAlmostEqual((q[k[1]] - q[k[0]]) / 60.0, 0.25, places=3)
+        # 15-minute wait reached when the queue holds 15 * 2/8 = 3.75 citizens
+        self.assertGreater(day["late"][1], 0.9)
+
+    def test_lp_plan_is_feasible_and_below_workload(self):
+        sol = fluid_staffing(self.RATES, 8.0, 15.0, 0.0, dt=1.0)
+        day = fluid_day(sol["plan"], self.RATES, 8.0, 15.0, dt=0.25)
+        self.assertLess(max(day["late"]), 0.02)       # grid error only
+        workload = sum(r / 60 * 8.0 for r in self.RATES)
+        self.assertLess(sol["cost"], workload)       # opens empty, drains free
+
+    def test_work_conservation(self):
+        # 60 * window-hours = S * (arrivals - backlog at closing) + idle window-minutes
+        sol = fluid_staffing(self.RATES, 8.0, 15.0, 0.0, dt=1.0)
+        day = fluid_day(sol["plan"], self.RATES, 8.0, 15.0, dt=0.05)
+        c = np.array(sol["plan"])[np.minimum((day["t"] // 60).astype(int), 7)]
+        idle = np.sum(np.maximum(c - day["X"], 0.0)) * 0.05
+        arrivals = sum(self.RATES)
+        self.assertAlmostEqual(60 * sol["cost"], 8.0 * (arrivals - day["X"][-1]) + idle,
+                               delta=0.02 * 60 * sol["cost"])
+
+    def test_nonpreemptive_closing_is_cheaper_and_converges(self):
+        from fluid import fluid_day_nonpreemptive, fluid_staffing_nonpreemptive
+        # Closing windows that finish their citizen can only add capacity
+        drop = fluid_staffing(self.RATES, 8.0, 15.0, 0.0, dt=1.0)
+        finish = fluid_staffing_nonpreemptive(self.RATES, 8.0, 15.0, 0.0, dt=1.0)
+        self.assertLessEqual(finish["cost"], drop["cost"] + 1e-6)
+        # Waits on the solver's own grid overshoot T by a few steps at most, and
+        # the overshoot shrinks with the grid
+        over = []
+        for dt in (1.0, 0.5):
+            sol = fluid_staffing_nonpreemptive(self.RATES, 8.0, 15.0, 0.0, dt=dt)
+            day = fluid_day_nonpreemptive(sol["plan"], self.RATES, 8.0, 15.0, dt=dt)
+            over.append(float(np.max(day["wait"])) - 15.0)
+        self.assertLess(over[0], 4 * 1.0)
+        self.assertLess(over[1], over[0])
+
+    def test_late_allowance_never_costs_more(self):
+        lp = fluid_staffing(self.RATES, 8.0, 15.0, 0.0, dt=2.0)
+        mip = fluid_staffing(self.RATES, 8.0, 15.0, 0.10, dt=2.0)
+        self.assertLessEqual(mip["cost"], lp["cost"] + 1e-6)
+        day = fluid_day(mip["plan"], self.RATES, 8.0, 15.0, dt=0.25)
+        self.assertLessEqual(max(day["late"]), 0.10 + 0.05)
 
 
 if __name__ == "__main__":
