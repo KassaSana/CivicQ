@@ -7,6 +7,9 @@
  * - Staffing changes on the hour: newly opened windows pull from the queue at
  *   once, a closing window finishes its current citizen.
  * - Doors close at `duration`; everyone inside is served (overtime).
+ * - Optional appointments: each booked citizen shows with probability
+ *   1 - noShow and arrives at the booked time plus Normal(0, punctualitySd),
+ *   then joins the same FIFO line as walk-ins.
  */
 import { exponential, gamma, makeRng, normal } from './rng';
 import { NUM_SLOTS, SLOT_MINUTES, type SimConfig, slotOf } from './model';
@@ -14,6 +17,7 @@ import { NUM_SLOTS, SLOT_MINUTES, type SimConfig, slotOf } from './model';
 const ARRIVAL = 0;
 const DEPARTURE = 1;
 const STAFFING = 2;
+const APPOINTMENT = 3;
 
 interface Event {
   time: number;
@@ -71,6 +75,7 @@ export interface Citizen {
   start: number;
   departure: number;
   window: number;
+  booked: boolean;
 }
 
 export interface DayResult {
@@ -84,12 +89,17 @@ export interface DayResult {
   arrivalsBySlot: number[];
   lateBySlot: number[];
   utilization: number[];
+  /** Booked citizens who showed up, how many of them waited over the threshold, and their total wait. */
+  apptArrived: number;
+  apptLate: number;
+  apptWaitSum: number;
 }
 
 export function simulateDay(cfg: SimConfig, seed: number): DayResult {
   const arrivalRng = makeRng(seed, 1);
   const serviceRng = makeRng(seed, 2);
   const rateRng = makeRng(seed, 3);
+  const apptRng = makeRng(seed, 4);
   const { plan, duration } = cfg;
 
   // Day-level demand multiplier M ~ Gamma(1/cv^2, cv^2): mean 1, CV = rateCv
@@ -138,6 +148,13 @@ export function simulateDay(cfg: SimConfig, seed: number): DayResult {
   for (let s = 1; s < NUM_SLOTS; s++) {
     if (s * SLOT_MINUTES < duration) push(s * SLOT_MINUTES, STAFFING);
   }
+  // Both draws are always taken so the stream stays aligned across settings
+  for (const booked of cfg.appointments) {
+    const u = apptRng();
+    const z = normal(apptRng);
+    if (u < cfg.noShow) continue;
+    push(Math.min(Math.max(booked + cfg.punctualitySd * z, 0), duration), APPOINTMENT);
+  }
   const first = nextArrival();
   if (first <= duration) push(first, ARRIVAL);
 
@@ -172,13 +189,17 @@ export function simulateDay(cfg: SimConfig, seed: number): DayResult {
     }
   };
 
+  const admit = (booked: boolean) => {
+    citizens.push({ arrival: now, service: drawService(), start: -1, departure: -1, window: -1, booked });
+    queue.push(citizens.length - 1);
+    serveWaiting();
+  };
+
   while (heap.size) {
     const ev = heap.pop();
     now = ev.time;
     if (ev.type === ARRIVAL) {
-      citizens.push({ arrival: now, service: drawService(), start: -1, departure: -1, window: -1 });
-      queue.push(citizens.length - 1);
-      serveWaiting();
+      admit(false);
       const next = nextArrival();
       if (next <= duration) push(next, ARRIVAL);
     } else if (ev.type === DEPARTURE) {
@@ -188,6 +209,8 @@ export function simulateDay(cfg: SimConfig, seed: number): DayResult {
       addBusy(c.start, now);
       busy[ev.window] = false;
       serveWaiting();
+    } else if (ev.type === APPOINTMENT) {
+      admit(true);
     } else {
       serveWaiting();
     }
@@ -197,6 +220,7 @@ export function simulateDay(cfg: SimConfig, seed: number): DayResult {
   const lateBySlot = new Array<number>(NUM_SLOTS).fill(0);
   const waits: number[] = new Array(citizens.length);
   let total = 0;
+  let apptArrived = 0, apptLate = 0, apptWaitSum = 0;
   for (let i = 0; i < citizens.length; i++) {
     const c = citizens[i];
     const w = c.start - c.arrival;
@@ -205,6 +229,11 @@ export function simulateDay(cfg: SimConfig, seed: number): DayResult {
     const s = slotOf(c.arrival);
     arrivalsBySlot[s]++;
     if (w > cfg.threshold) lateBySlot[s]++;
+    if (c.booked) {
+      apptArrived++;
+      apptWaitSum += w;
+      if (w > cfg.threshold) apptLate++;
+    }
   }
   const sorted = waits.slice().sort((a, b) => a - b);
   const rank = Math.ceil(0.9 * sorted.length);
@@ -224,6 +253,9 @@ export function simulateDay(cfg: SimConfig, seed: number): DayResult {
     arrivalsBySlot,
     lateBySlot,
     utilization,
+    apptArrived,
+    apptLate,
+    apptWaitSum,
   };
 }
 

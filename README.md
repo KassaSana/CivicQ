@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/KassaSana/CivicQ/actions/workflows/ci.yml/badge.svg)](https://github.com/KassaSana/CivicQ/actions/workflows/ci.yml)
 
-A discrete-event simulation (C++) coupled with parameter optimization (Python) to support staffing decisions at a government service center.
+A discrete-event simulation (C++) coupled with parameter optimization (Python) to support staffing decisions at a government service center, plus an [interactive web visualizer](web/README.md) that runs the same model in the browser.
 
 ## Overview
 
@@ -26,7 +26,7 @@ This project models a municipal permit and licensing office with multiple identi
 | **Time Horizon** | One 8-hour operating day; doors close at 480 minutes |
 
 ### Key Assumptions
-- No appointments
+- Walk-ins only by default. Appointments are optional (`--appointments`, `--no-show`, `--punctuality-sd`); booked citizens join the same FIFO queue.
 - No balking/reneging (citizens wait indefinitely)
 - All service windows are identical
 - Citizens are served to completion
@@ -65,7 +65,10 @@ CivicQ/
 │       └── main.cpp
 ├── python/
 │   ├── optimizer.py
+│   ├── roster.py
 │   └── test_validation.py
+├── research/            # Staffing-methods study (REPORT.md, experiments, figures)
+├── web/                 # Interactive visualizer (TypeScript port of the simulator)
 ├── outputs/
 │   └── staffing_analysis.png
 └── README.md
@@ -359,14 +362,20 @@ The study also showed that 30 confirmation days gave P90 CIs of about ±4 minute
 python research/experiments.py --all && python research/figures.py
 ```
 
+## Web Visualizer
+
+[`web/`](web/README.md) is a static React site. The simulator is ported to TypeScript and runs in a Web Worker, so you can edit the staffing plan, demand, service times and appointment share and see simulated and Erlang-C results update live. Its tests cross-check the port against the C++ executable.
+
+```bash
+cd web && npm install && npm run dev
+```
+
 ## Scope Boundaries
 
 **Intentionally Excluded:**
-- Appointment scheduling
 - Multiple service types / skill-based routing
 - Balking / reneging behavior
 - External datasets
-- GUI / web dashboard
 - Metaheuristics (GA, SA)
 
 **Constraints:**

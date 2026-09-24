@@ -1,7 +1,7 @@
 import { type Dispatch, useMemo } from 'react';
 import { SectionHead, pct } from '../components/ui';
 import { analyticPlans } from '../sim/analytic';
-import { HOUR_RANGES, OPTIMIZED_PLAN, type SimConfig, sum } from '../sim/model';
+import { HOUR_RANGES, OPTIMIZED_PLAN, type SimConfig, expectedRates, sum } from '../sim/model';
 import { meanCi } from '../sim/stats';
 import type { Action, Params } from '../state';
 import { useCompare } from '../useSim';
@@ -21,7 +21,7 @@ function MiniBars({ plan }: { plan: number[] }) {
 
 export function ComparePlans({ params, dispatch, cfg }: { params: Params; dispatch: Dispatch<Action>; cfg: SimConfig }) {
   const candidates = useMemo(() => {
-    const a = analyticPlans(cfg.arrivals, cfg.meanService, cfg.threshold, params.alpha, 1);
+    const a = analyticPlans(expectedRates(cfg), cfg.meanService, cfg.threshold, params.alpha, 1);
     const list: { names: string[]; plan: number[] }[] = [];
     const add = (name: string, plan: number[]) => {
       const hit = list.find((x) => x.plan.join() === plan.join());
@@ -34,7 +34,7 @@ export function ComparePlans({ params, dispatch, cfg }: { params: Params; dispat
     add('OL-max', a['OL-max']);
     add('Optimized (README)', OPTIMIZED_PLAN);
     return list;
-  }, [cfg.arrivals, cfg.meanService, cfg.threshold, params.alpha, params.plan]);
+  }, [cfg, params.alpha, params.plan]);
 
   const { result, progress } = useCompare(cfg, candidates.map((c) => c.plan), COMPARE_DAYS, params.seed);
   const ready = result && result.length === candidates.length ? result : null;

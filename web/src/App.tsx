@@ -8,6 +8,7 @@ import { MathExplained } from './sections/MathExplained';
 import { PlanEditor } from './sections/PlanEditor';
 import { Results } from './sections/Results';
 import { sippHourly } from './sim/analytic';
+import { expectedRates } from './sim/model';
 import { fromUrl, reducer, toConfig, toUrl } from './state';
 import { useRun } from './useSim';
 
@@ -56,16 +57,18 @@ export function App() {
   useEffect(() => { history.replaceState(null, '', toUrl(params)); }, [params]);
 
   const cfg = useMemo(() => toConfig(params), [params]);
-  const hourly = useMemo(() => sippHourly(params.plan, cfg.arrivals, cfg.meanService, cfg.threshold), [params.plan, cfg]);
+  // Analytic views see walk-ins plus expected booked shows
+  const rates = useMemo(() => expectedRates(cfg), [cfg]);
+  const hourly = useMemo(() => sippHourly(params.plan, rates, cfg.meanService, cfg.threshold), [params.plan, rates, cfg]);
   const { result: agg, progress } = useRun(cfg, params.days, params.seed);
   const updating = progress !== null;
 
   // Erlang-C mean wait (arrival-weighted) until the simulation for this plan lands
   const erlangWait = useMemo(() => {
     let s = 0, n = 0;
-    hourly.forEach((h, i) => { s += h.meanWait * cfg.arrivals[i]; n += cfg.arrivals[i]; });
+    hourly.forEach((h, i) => { s += h.meanWait * rates[i]; n += rates[i]; });
     return s / n;
-  }, [hourly, cfg]);
+  }, [hourly, rates]);
 
   return (
     <>
@@ -109,7 +112,7 @@ export function App() {
 
         <main className="main">
           <LiveQueue cfg={cfg} seed={params.seed} />
-          <PlanEditor params={params} dispatch={dispatch} hourly={hourly} arrivals={cfg.arrivals}
+          <PlanEditor params={params} dispatch={dispatch} hourly={hourly} arrivals={rates}
             meanWait={!updating && agg ? agg.meanWait : erlangWait} meanWaitSimulated={!updating && !!agg} />
           <Results agg={agg} hourly={hourly} alpha={params.alpha} threshold={params.threshold} updating={updating} />
           <MathExplained params={params} dispatch={dispatch} hourly={hourly} agg={agg} cfg={cfg} />

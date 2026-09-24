@@ -28,6 +28,12 @@ export interface SimConfig {
   /** A citizen is "late" if they wait longer than this many minutes. */
   threshold: number;
   duration: number;
+  /** Booked arrival times in minutes from opening (walk-ins are `arrivals`). */
+  appointments: number[];
+  /** Probability a booked citizen does not come. */
+  noShow: number;
+  /** SD (minutes) of arrival around the booked time. */
+  punctualitySd: number;
 }
 
 export function makeConfig(partial: Partial<SimConfig> = {}): SimConfig {
@@ -40,8 +46,63 @@ export function makeConfig(partial: Partial<SimConfig> = {}): SimConfig {
     rateCv: 0,
     threshold: 15,
     duration: DAY_MINUTES,
+    appointments: [],
+    noShow: 0,
+    punctualitySd: 0,
     ...partial,
   };
+}
+
+export type Placement = 'proportional' | 'flat' | 'counter';
+
+/**
+ * Move `share` of expected daily demand to appointments (port of
+ * research/experiments.py appointment_book). Returns walk-in hourly rates and
+ * booked times, overbooked by 1/(1 - noShow) so expected shows equal the
+ * demand moved. Placement of expected shows per hour:
+ *   proportional  same shape as demand
+ *   flat          evenly across the day
+ *   counter       water-filled into quiet hours so walk-ins plus shows are as flat as possible
+ */
+export function appointmentBook(
+  rates: readonly number[], share: number, placement: Placement, noShow: number,
+): { walk: number[]; times: number[] } {
+  const walk = rates.map((r) => r * (1 - share));
+  const moved = share * sum(rates);
+  let shows: number[];
+  if (placement === 'proportional') shows = rates.map((r) => share * r);
+  else if (placement === 'flat') shows = rates.map(() => moved / rates.length);
+  else {
+    let lo = Math.min(...walk), hi = Math.max(...walk) + moved;
+    for (let i = 0; i < 100; i++) { // bisection on the water level
+      const level = (lo + hi) / 2;
+      if (sum(walk.map((w) => Math.max(0, level - w))) > moved) hi = level;
+      else lo = level;
+    }
+    shows = walk.map((w) => Math.max(0, lo - w));
+    const total = sum(shows);
+    shows = shows.map((x) => (total > 0 ? (x * moved) / total : 0));
+  }
+  const wanted = shows.map((x) => x / (1 - noShow));
+  const total = Math.round(sum(wanted));
+  const counts = wanted.map((w) => Math.floor(w)); // largest-remainder rounding
+  const order = wanted.map((_, i) => i).sort((a, b) => wanted[b] - counts[b] - (wanted[a] - counts[a]));
+  for (const i of order) {
+    if (sum(counts) >= total) break;
+    counts[i]++;
+  }
+  const times: number[] = [];
+  counts.forEach((c, i) => {
+    for (let k = 0; k < c; k++) times.push(SLOT_MINUTES * i + (SLOT_MINUTES * (k + 0.5)) / c);
+  });
+  return { walk, times };
+}
+
+/** Expected arrivals per hour, walk-ins plus booked citizens who show (for the analytic rules). */
+export function expectedRates(cfg: SimConfig): number[] {
+  const r = cfg.arrivals.slice();
+  for (const t of cfg.appointments) r[slotOf(t)] += 1 - cfg.noShow;
+  return r;
 }
 
 export function slotOf(time: number): number {

@@ -1,7 +1,7 @@
 import { type Dispatch, useMemo, useState } from 'react';
 import { SectionHead, pct, useTip } from '../components/ui';
 import { erlangC, offeredLoad, type sippHourly } from '../sim/analytic';
-import { DAY_MINUTES, HOUR_RANGES, type SimConfig } from '../sim/model';
+import { DAY_MINUTES, HOUR_RANGES, type SimConfig, expectedRates } from '../sim/model';
 import { type Aggregate, QUEUE_BIN } from '../sim/stats';
 import type { Action, Params } from '../state';
 
@@ -35,7 +35,7 @@ export function MathExplained({ params, dispatch, hourly, agg, cfg }: {
   const [hour, setHour] = useState(0);
   const h = hourly[hour];
   const c = params.plan[hour];
-  const lam = cfg.arrivals[hour];
+  const lam = expectedRates(cfg)[hour];
   const sim = agg?.lateByHour[hour];
   const simCi = agg?.lateCi[hour];
 
@@ -55,7 +55,7 @@ export function MathExplained({ params, dispatch, hourly, agg, cfg }: {
   const sippPath = lq.map((v, i) => `${i ? 'L' : 'M'}${xm(i * 60)},${yq(Number.isFinite(v) ? v : qMax)} L${xm(i * 60 + 60)},${yq(Number.isFinite(v) ? v : qMax)}`).join(' ');
 
   // Offered load m(t) vs the hourly λ/μ steps
-  const ol = useMemo(() => offeredLoad(cfg.arrivals, cfg.meanService, cfg.serviceDist, cfg.serviceCv, 2), [cfg]);
+  const ol = useMemo(() => offeredLoad(expectedRates(cfg), cfg.meanService, cfg.serviceDist, cfg.serviceCv, 2), [cfg]);
   const mMax = Math.ceil(Math.max(...ol.m, ...hourly.map((x) => x.load), ...params.plan) + 0.3);
   const ym = (v: number) => BASE - (v / mMax) * (BASE - TOP);
   const mPts = ol.t.map((t, i) => `${xm(t)},${ym(ol.m[i])}`).join(' ');

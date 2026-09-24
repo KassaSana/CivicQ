@@ -73,6 +73,13 @@ export interface Aggregate {
   /** Per-day values, kept for paired (common random numbers) comparisons. */
   dailyMeanWait: number[];
   dailyP90: number[];
+  /** Late share and mean wait for booked citizens and for walk-ins (null if none of that class arrived). */
+  apptLate: number | null;
+  apptMeanWait: number | null;
+  walkinLate: number | null;
+  walkinMeanWait: number | null;
+  /** Booked citizens who showed, per day. */
+  apptPerDay: number;
 }
 
 /** Streams days in and summarizes them. */
@@ -87,6 +94,10 @@ export class Accumulator {
   private hist = new Array<number>(HIST_LABELS.length).fill(0);
   private queue = new Array<number>(DAY_MINUTES / QUEUE_BIN).fill(0);
   private okDays = 0;
+  private waitSum = 0;
+  private apptArrived = 0;
+  private apptLate = 0;
+  private apptWait = 0;
   constructor(private threshold: number) {}
 
   add(d: DayResult) {
@@ -100,6 +111,10 @@ export class Accumulator {
     }
     this.overtime += d.overtime;
     this.arrivals += d.citizens.length;
+    this.waitSum += d.meanWait * d.citizens.length;
+    this.apptArrived += d.apptArrived;
+    this.apptLate += d.apptLate;
+    this.apptWait += d.apptWaitSum;
     for (const w of d.waits) {
       let b = 0;
       if (w > 1e-9) {
@@ -132,6 +147,7 @@ export class Accumulator {
       for (const x of this.late[s]) totL += x;
       for (const x of this.arr[s]) totA += x;
     }
+    const walkins = totA - this.apptArrived;
     const histTotal = this.hist.reduce((a, b) => a + b, 0) || 1;
     return {
       days: this.meanW.length,
@@ -150,6 +166,11 @@ export class Accumulator {
       queueCurve: this.queue.map((q) => q / (n * QUEUE_BIN)),
       dailyMeanWait: this.meanW,
       dailyP90: this.p90s,
+      apptLate: this.apptArrived ? this.apptLate / this.apptArrived : null,
+      apptMeanWait: this.apptArrived ? this.apptWait / this.apptArrived : null,
+      walkinLate: walkins ? (totL - this.apptLate) / walkins : null,
+      walkinMeanWait: walkins ? (this.waitSum - this.apptWait) / walkins : null,
+      apptPerDay: this.apptArrived / n,
     };
   }
 }

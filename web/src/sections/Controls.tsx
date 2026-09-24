@@ -1,5 +1,5 @@
 import { type Dispatch, useState } from 'react';
-import type { ServiceDist } from '../sim/model';
+import type { Placement, ServiceDist } from '../sim/model';
 import type { Action, Params } from '../state';
 
 function Slider({ id, label, value, min, max, step, format, onChange }: {
@@ -54,6 +54,29 @@ export function Controls({ params, dispatch }: { params: Params; dispatch: Dispa
         format={(v) => `${v} min`} onChange={(v) => set({ threshold: v })} />
       <Slider id="alpha" label="Allowed late share α" value={params.alpha} min={0.02} max={0.3} step={0.01}
         format={(v) => `${Math.round(v * 100)}%`} onChange={(v) => set({ alpha: v })} />
+      <div className="divider" />
+      <span style={{ fontWeight: 600 }}>Appointments</span>
+      <Slider id="appt" label="Share of demand booked" value={params.apptShare} min={0} max={0.75} step={0.05}
+        format={(v) => (v ? `${Math.round(v * 100)}%` : 'Walk-ins only')} onChange={(v) => set({ apptShare: v })} />
+      {params.apptShare > 0 && (
+        <>
+          <div className="field">
+            <label htmlFor="place" style={{ fontSize: 13 }}>Where bookings go</label>
+            <select id="place" value={params.placement} onChange={(e) => set({ placement: e.target.value as Placement })}>
+              <option value="counter">Quiet hours first (counter-cyclical)</option>
+              <option value="flat">Evenly across the day</option>
+              <option value="proportional">Same shape as demand</option>
+            </select>
+          </div>
+          <Slider id="ns" label="No-show rate" value={params.noShow} min={0} max={0.3} step={0.05}
+            format={(v) => `${Math.round(v * 100)}%`} onChange={(v) => set({ noShow: v })} />
+          <Slider id="punct" label="Punctuality SD" value={params.punctualitySd} min={0} max={15} step={1}
+            format={(v) => `${v} min`} onChange={(v) => set({ punctualitySd: v })} />
+          <div className="card-sub" style={{ lineHeight: 1.5 }}>
+            Slots are overbooked by 1/(1 − no-show) so expected arrivals stay the same; walk-ins shrink by the booked share.
+          </div>
+        </>
+      )}
       <div className="divider" />
       <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: 10 }}>
         <div className="field">

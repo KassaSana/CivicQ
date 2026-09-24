@@ -163,6 +163,21 @@ export function Results({ agg, hourly, alpha, threshold, updating }: {
         <Utilization agg={agg} hourly={hourly} />
       </div>
       <LateByHour agg={agg} hourly={hourly} alpha={alpha} threshold={threshold} />
+      {agg.apptMeanWait !== null && agg.walkinMeanWait !== null && (
+        <div className="card">
+          <div className="card-title">Booked citizens vs walk-ins</div>
+          <div className="card-sub">
+            <span className="num">{agg.apptPerDay.toFixed(1)}</span> booked citizens show up per day. Evenly spaced
+            bookings avoid the random clusters that make walk-ins wait, unless they are moved into hours this plan staffs thinly.
+          </div>
+          <div className="grid2" style={{ marginTop: 10 }}>
+            <Tile variant="flat" label="Booked · waiting over T" value={<Num value={(agg.apptLate ?? 0) * 100} digits={1} suffix="%" />}
+              sub={`mean wait ${agg.apptMeanWait.toFixed(2)} min`} />
+            <Tile variant="flat" label="Walk-ins · waiting over T" value={<Num value={(agg.walkinLate ?? 0) * 100} digits={1} suffix="%" />}
+              sub={`mean wait ${agg.walkinMeanWait.toFixed(2)} min`} />
+          </div>
+        </div>
+      )}
       <div className="card-sub">
         Overtime to clear the line after closing: <span className="num">{agg.overtime.toFixed(1)} min</span> on average ·
         {' '}<span className="num">{agg.arrivalsPerDay.toFixed(1)}</span> citizens per day.

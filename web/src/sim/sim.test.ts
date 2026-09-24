@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { analyticPlans, erlangC, mmcMeanWait, probWaitExceeds } from './analytic';
-import { DEFAULT_ARRIVALS, DEFAULT_PLAN, makeConfig } from './model';
+import { DEFAULT_ARRIVALS, DEFAULT_PLAN, appointmentBook, expectedRates, makeConfig, sum } from './model';
 import { simulateDay } from './simulate';
 import { meanCi, runDays, tCritical95 } from './stats';
 
@@ -83,6 +83,74 @@ describe('simulator', () => {
   });
 });
 
+describe('appointments', () => {
+  const slotCounts = (times: number[]) => {
+    const c = new Array(8).fill(0);
+    for (const t of times) c[Math.floor(t / 60)]++;
+    return c;
+  };
+
+  it('books like research/experiments.appointment_book', () => {
+    // Reference: appointment_book(OFFICE_RATES, 0.5, placement, 0.15)
+    const ref = {
+      proportional: [7, 9, 6, 5, 4, 7, 8, 6],
+      flat: [7, 7, 7, 7, 6, 6, 6, 6],
+      counter: [6, 4, 7, 9, 8, 6, 5, 7],
+    } as const;
+    for (const [placement, counts] of Object.entries(ref)) {
+      const { walk, times } = appointmentBook(DEFAULT_ARRIVALS, 0.5, placement as keyof typeof ref, 0.15);
+      expect(slotCounts(times)).toEqual(counts);
+      expect(walk).toEqual(DEFAULT_ARRIVALS.map((r) => r / 2));
+    }
+    expect(appointmentBook(DEFAULT_ARRIVALS, 0.5, 'counter', 0.15).times.slice(0, 2)).toEqual([5, 15]);
+  });
+
+  it('keeps expected arrivals unchanged', () => {
+    const { walk, times } = appointmentBook(DEFAULT_ARRIVALS, 0.5, 'counter', 0.15);
+    const rates = expectedRates(makeConfig({ arrivals: walk, appointments: times, noShow: 0.15 }));
+    expect(Math.abs(sum(rates) - sum(DEFAULT_ARRIVALS))).toBeLessThan(1);
+  });
+
+  it('gives zero waits for perfectly spaced bookings with fixed service', () => {
+    const times = Array.from({ length: 48 }, (_, k) => 10 * k);
+    const d = simulateDay(makeConfig({
+      plan: new Array(8).fill(1), arrivals: new Array(8).fill(0), serviceDist: 'det', appointments: times,
+    }), 3);
+    expect(d.citizens.length).toBe(48);
+    expect(d.apptArrived).toBe(48);
+    expect(Math.max(...d.waits)).toBe(0);
+  });
+
+  it('shows up at the rate 1 - no-show', () => {
+    const times = Array.from({ length: 40 }, (_, k) => 12 * k);
+    const cfg = makeConfig({ arrivals: new Array(8).fill(0), appointments: times, noShow: 0.2, punctualitySd: 5 });
+    let shown = 0;
+    for (let s = 0; s < 500; s++) shown += simulateDay(cfg, s).apptArrived;
+    expect(Math.abs(shown / (500 * 40) - 0.8)).toBeLessThan(0.01);
+  });
+
+  it('leaves the walk-in stream untouched (common random numbers)', () => {
+    const base = simulateDay(makeConfig(), 11);
+    const withAppts = simulateDay(makeConfig({ appointments: [30, 90, 150], noShow: 0.1, punctualitySd: 5 }), 11);
+    const walkins = withAppts.citizens.filter((c) => !c.booked).map((c) => c.arrival);
+    expect(walkins).toEqual(base.citizens.map((c) => c.arrival));
+    expect(base.apptArrived).toBe(0);
+  });
+
+  it('aggregates booked and walk-in waits separately', () => {
+    // Proportional placement keeps the plan's fit, so booked citizens (evenly spaced) wait less:
+    // research/REPORT.md §5.7 finding 4
+    const { walk, times } = appointmentBook(DEFAULT_ARRIVALS, 0.5, 'proportional', 0.15);
+    const agg = runDays(makeConfig({ arrivals: walk, appointments: times, noShow: 0.15, punctualitySd: 5 }), 1000, 1);
+    expect(agg.apptPerDay).toBeGreaterThan(40);
+    expect(agg.apptLate!).toBeLessThan(agg.walkinLate!);
+    expect(agg.apptMeanWait!).toBeLessThan(agg.walkinMeanWait!);
+    const blended = (agg.apptMeanWait! * agg.apptPerDay + agg.walkinMeanWait! * (agg.arrivalsPerDay - agg.apptPerDay)) / agg.arrivalsPerDay;
+    // Pooled mean vs mean of daily means: close, not identical
+    expect(Math.abs(blended - agg.meanWait)).toBeLessThan(0.1);
+  });
+});
+
 // Cross-check against the C++ executable when it has been built
 const exeCandidates = ['queue_sim.exe', 'queue_sim', 'Release/queue_sim.exe'].map((p) =>
   resolve(__dirname, '../../../cpp/build', p),
@@ -108,4 +176,23 @@ describe.skipIf(!exe)('cross-check with the C++ simulator', () => {
       }
     });
   }
+
+  it('mean and P90 agree with 50% counter-cyclical appointments', () => {
+    const { walk, times } = appointmentBook(DEFAULT_ARRIVALS, 0.5, 'counter', 0.15);
+    const csv = execFileSync(exe!, [
+      '--staffing', DEFAULT_PLAN.join(','), '--arrivals', walk.join(','), '--appointments', times.join(','),
+      '--no-show', '0.15', '--punctuality-sd', '5', '--replications', '600', '--seed', '5000', '--per-replication',
+    ], { encoding: 'utf8' });
+    const rows = csv.trim().split(/\r?\n/).slice(1).map((l) => l.split(',').map(Number));
+    const cpp = { mean: meanCi(rows.map((r) => r[1])), p90: meanCi(rows.map((r) => r[2])), appt: meanCi(rows.map((r) => r[32])) };
+    const ts = runDays(makeConfig({ arrivals: walk, appointments: times, noShow: 0.15, punctualitySd: 5 }), 600, 900000);
+    for (const [a, b] of [
+      [ts.meanWait, cpp.mean],
+      [ts.p90, cpp.p90],
+      [ts.apptPerDay, cpp.appt],
+    ] as const) {
+      const hw = (b.ci[1] - b.ci[0]) / 2;
+      expect(Math.abs(a - b.mean)).toBeLessThan(3 * hw * Math.SQRT2 / 1.96 + 1e-9);
+    }
+  });
 });
