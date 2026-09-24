@@ -75,6 +75,8 @@ void QueueSimulator::reset() {
 
     citizens_.clear();
     slot_busy_time_.assign(NUM_SLOTS, 0.0);
+    spill_minutes_ = 0.0;
+    overtime_busy_minutes_ = 0.0;
 
     // Reseed independent streams (common random numbers across staffing plans)
     std::seed_seq arrival_seed{static_cast<unsigned>(config_.random_seed), 1u};
@@ -270,6 +272,22 @@ void QueueSimulator::add_busy_time(double start, double end) {
     }
 }
 
+void QueueSimulator::add_unpaid_time(int window_id, double start, double end) {
+    // Service time no staffing slot pays for: after the doors close, and on a
+    // window whose slot has closed it (open windows are indices < staffing)
+    double close = config_.simulation_duration;
+    overtime_busy_minutes_ += std::max(0.0, end - std::max(start, close));
+    end = std::min(end, close);
+    for (int slot = get_current_slot(start); slot < NUM_SLOTS && start < end; ++slot) {
+        double slot_end = (slot == NUM_SLOTS - 1) ? end
+                                                  : std::min(end, (slot + 1) * SLOT_LENGTH);
+        if (slot_end > start && window_id >= config_.staffing_per_slot[slot]) {
+            spill_minutes_ += slot_end - start;
+        }
+        start = std::max(start, slot_end);
+    }
+}
+
 void QueueSimulator::admit_citizen(bool is_appointment) {
     // Citizen ids are assigned in arrival order and index citizens_. The
     // service requirement is drawn now so that, for given arrivals, citizen k
@@ -349,6 +367,7 @@ void QueueSimulator::process_departure(const Event& event) {
 
     // Track utilization, split across the slots the service spanned
     add_busy_time(citizens_[citizen_id].service_start_time, current_time_);
+    add_unpaid_time(window_id, citizens_[citizen_id].service_start_time, current_time_);
 
     // Free the window
     windows_[window_id].is_busy = false;
@@ -409,6 +428,8 @@ SimulationResults QueueSimulator::compute_results() const {
     results.appointment_wait_sum = 0.0;
     results.abandoned_per_slot.assign(NUM_SLOTS, 0);
     results.abandoned_wait_sum = 0.0;
+    results.spill_minutes = spill_minutes_;
+    results.overtime_busy_minutes = overtime_busy_minutes_;
 
     std::vector<double> wait_times;
     std::vector<double> service_times;

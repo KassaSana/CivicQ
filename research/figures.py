@@ -715,6 +715,95 @@ def fig_fluid_scaling():
     save(fig, "fig13_fluid_scaling.png")
 
 
+def fig_paid_overtime():
+    fluid = load("e11a_fluid_paid.csv")
+    fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(15, 4.3))
+    services = [4.0, 8.0, 16.0, 32.0]
+
+    # (a) Paying for unpaid work removes the "below the workload" effect
+    styles = {0.0: ("overtime free", "#e34948", "o"), 1.0: ("paid (κ = 1)", INK, "s"),
+              1.5: ("time and a half (κ = 1.5)", "#2a78d6", "^")}
+    for kappa, (label, color, marker) in styles.items():
+        ys = [next(float(r["f_paid"]) for r in fluid if r["shape"] == "double"
+                   and float(r["service_time"]) == s and float(r["threshold"]) == 15.0
+                   and float(r["kappa"]) == kappa) for s in services]
+        ax1.plot(services, ys, color=color, marker=marker, lw=2, label=label)
+    ax1.axhline(1.0, color=GRID, lw=1)
+    ax1.set_xscale("log", base=2)
+    ax1.set_xticks(services)
+    ax1.set_xticklabels(["4", "8", "16", "32"])
+    ax1.set_xlabel("Mean service time S (min)")
+    ax1.set_ylabel("Fluid cost / raw workload")
+    ax1.set_title("Below-workload staffing was unpaid work", loc="left")
+    ax1.legend(fontsize=8)
+
+    # (b) SIPP's excess: free vs paid overtime, at fixed T and at fixed T/S
+    def sipp_excess(rows, key):
+        out = []
+        for s in services:
+            sub = [r for r in rows if float(r["service_time"]) == s and key(r)]
+            out.append(next(float(r["excess_pct"]) for r in sub if r["method"] == "SIPP"))
+        return out
+
+    e1 = load("e1_methods.csv")
+    free_t15 = []
+    for s in services:
+        sub = {r["method"]: int(r["staff_hours"]) for r in e1 if float(r["mean_load"]) == 24.0
+               and float(r["service_time"]) == s and float(r["amplitude"]) == 0.6}
+        free_t15.append(100 * (sub["SIPP"] / sub["SGS-UCB"] - 1))
+    free_ratio = [next(float(r["gap_vs_ucb_pct"]) for r in load("e10a_threshold_ratio.csv")
+                       if float(r["service_time"]) == s and r["method"] == "SIPP")
+                  for s in services]
+    paid_t15 = sipp_excess(load("e11c_paid_e1.csv"), lambda r: True)
+    paid_ratio = sipp_excess(load("e11b_paid_threshold_ratio.csv"),
+                             lambda r: float(r["kappa"]) == 1.0)
+    for ys, label, color, ls in [(free_t15, "T = 15, overtime free", "#e34948", "--"),
+                                 (paid_t15, "T = 15, paid", "#e34948", "-"),
+                                 (free_ratio, "T = 1.875 S, overtime free", "#2a78d6", "--"),
+                                 (paid_ratio, "T = 1.875 S, paid", "#2a78d6", "-")]:
+        ax2.plot(services, ys, color=color, ls=ls, marker="o", ms=4, lw=1.8, label=label)
+    ax2.set_xscale("log", base=2)
+    ax2.set_xticks(services)
+    ax2.set_xticklabels(["4", "8", "16", "32"])
+    ax2.set_xlabel("Mean service time S (min)")
+    ax2.set_ylabel("SIPP's excess over the optimum (%)")
+    ax2.set_title("SIPP's excess still grows with S when paid", loc="left")
+    ax2.legend(fontsize=8)
+
+    # (c) Excess over the fluid: grows like sqrt(R) when overtime is free, flat when paid
+    f_np = next(float(r["f0_np"]) for r in load("e10f_fluid_nonpreemptive.csv")
+                if r["shape"] == "double" and float(r["amplitude"]) == 0.6
+                and float(r["service_time"]) == 8.0 and float(r["threshold"]) == 15.0
+                and r["menu"] == "hourly")
+    free = [(float(r["mean_load"]), int(r["no_abandonment_hours"]))
+            for r in load("e8b_regimes.csv") if r["patience"] == "exp30"
+            and float(r["alpha"]) == 0.10 and r["office"] != "office"
+            and float(r["mean_load"]) >= 4]
+    free += [(float(r["mean_load"]), int(r["staff_hours"])) for r in load("e10c_scaling.csv")]
+    free += [(float(r["mean_load"]), int(r["staff_hours"])) for r in load("e10g_confirm.csv")]
+    free = sorted(set(free))
+    ax3.plot([R for R, _ in free], [h - 8 * R * f_np for R, h in free], color="#e34948",
+             marker="o", lw=1.8, label="overtime free (Round 7)")
+    f1 = next(float(r["f_paid"]) for r in fluid if r["shape"] == "double"
+              and float(r["service_time"]) == 8.0 and float(r["threshold"]) == 15.0
+              and float(r["kappa"]) == 1.0)
+    paid = [(float(r["mean_load"]), float(r["paid_cost"]))
+            for name in ("e11d_paid_scaling.csv", "e11e_paid_confirm.csv")
+            for r in load(name) if r["method"] == "paid optimum"]
+    paid = sorted(paid)
+    ax3.plot([R for R, _ in paid], [c - 8 * R * f1 for R, c in paid], color=INK, marker="s",
+             lw=1.8, label="paid overtime (Round 8)")
+    ax3.axhline(8 * 8.0 / 15.0 * np.log(10), color=MUTED, ls=":", lw=1.2,
+                label="8 (S/T) ln(1/α) = 9.8")
+    ax3.set_xscale("log", base=2)
+    ax3.set_xlabel("Mean offered load R (Erlangs)")
+    ax3.set_ylabel("Optimum − 8R × fluid constant (window-hours)")
+    ax3.set_title("Excess over the fluid: free vs paid overtime", loc="left")
+    ax3.legend(fontsize=8)
+    fig.tight_layout()
+    save(fig, "fig14_paid_overtime.png")
+
+
 if __name__ == "__main__":
     fig_gap_heatmap()
     fig_hourly()
@@ -729,3 +818,4 @@ if __name__ == "__main__":
     fig_log_regime()
     fig_fluid_day()
     fig_fluid_scaling()
+    fig_paid_overtime()

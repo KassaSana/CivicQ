@@ -221,7 +221,7 @@ int main(int argc, char* argv[]) {
         for (int j = 0; j < 8; ++j) {
             std::cout << ",aband_" << j;
         }
-        std::cout << ",aband_wait_sum";
+        std::cout << ",aband_wait_sum,spill_busy,overtime_busy";
         std::cout << "\n";
         for (size_t r = 0; r < results.size(); ++r) {
             const auto& res = results[r];
@@ -243,7 +243,8 @@ int main(int argc, char* argv[]) {
             for (int j = 0; j < 8; ++j) {
                 std::cout << "," << res.abandoned_per_slot[j];
             }
-            std::cout << "," << res.abandoned_wait_sum;
+            std::cout << "," << res.abandoned_wait_sum << "," << res.spill_minutes << ","
+                      << res.overtime_busy_minutes;
             std::cout << "\n";
         }
         return 0;

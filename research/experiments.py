@@ -3,7 +3,7 @@ Experiments for the CivicQ staffing study. Every result is written to
 research/results/*.csv and is reproducible from fixed seeds.
 
     python research/experiments.py --all
-    python research/experiments.py e1b e1      # or any subset: e1b e1 e2 e2b e3a e3b e4 e5 e6 e7a e7 e7c e8a e8b e9a e9b e10a-h
+    python research/experiments.py e1b e1      # or any subset: e1b e1 e2 e2b e3a e3b e4 e5 e6 e7a e7 e7c e8a e8b e9a e9b e10a-h e11a-e
     (run e10b before e10a, e10c, e10d and e10e: they read its fluid constants)
 
 Design seeds (DESIGN_SEED..) choose plans; evaluation seeds (EVAL_SEED..) score
@@ -1288,12 +1288,128 @@ def run_e10h():
     write_csv("e10h_fluid_validation.csv", rows)
 
 
+# ============================================================================
+# E11: paying for overtime and spill (Round 8, H27-H30)
+# ============================================================================
+
+KAPPAS = (1.0, 1.5)
+
+
+def _fluid_paid_case(case):
+    from overtime import fluid_paid
+    from staffing_methods import SHAPES
+    shape, amp, s, t, kappa = case
+    sol = fluid_paid(arrival_profile(1.0, s, amp, SHAPES[shape]), s, t, kappa, time_limit=900)
+    return {"shape": shape, "amplitude": amp, "service_time": s, "threshold": t,
+            "kappa": kappa, "f_paid": round(sol["paid_cost"] / SLOTS, 5),
+            "window_share": round(sol["window_hours"] / SLOTS, 5),
+            "spill_share": round(sol["spill_hours"] / SLOTS, 5),
+            "overtime_share": round(sol["overtime_hours"] / SLOTS, 5),
+            "plan": json.dumps([round(x, 4) for x in sol["plan"]]), "optimal": sol["optimal"]}
+
+
+def run_e11a():
+    """Paid-overtime fluid constants (theory): paid cost / (8R)."""
+    print("E11a: fluid with unpaid work charged at kappa")
+    cases = [(sh, 0.6, s, THRESHOLD, k) for sh in E10_SHAPES for s in SERVICE_TIMES
+             for k in (0.0,) + KAPPAS]
+    cases += [("double", 0.6, s, 1.875 * s, k) for s in SERVICE_TIMES if s != 8.0
+              for k in (0.0,) + KAPPAS]
+    rows = pmap_processes(_fluid_paid_case, cases)
+    write_csv("e11a_fluid_paid.csv", rows)
+    for r in rows:
+        print(f"  {r['shape']:<6} S={r['service_time']:<4g} T={r['threshold']:<5g} "
+              f"kappa={r['kappa']:<4g}: {r['f_paid']:.4f} (windows {r['window_share']:.4f}, "
+              f"spill {r['spill_share']:.4f}, overtime {r['overtime_share']:.4f})")
+
+
+def _paid_rows(label, rates, s, t, load, window_opt, kappa, extra=None):
+    """Paid cost of every rule's plan and of the paid-cost optimum, on the eval days."""
+    from overtime import paid_evaluation, paid_staffing
+    plans = analytic_plans(rates, s, t, ALPHA)
+    plans["SGS-UCB (window-hours)"] = window_opt
+    plans["paid optimum"], calls = paid_staffing(rates, s, t, ALPHA, kappa, window_opt)
+    names = list(plans)
+    evals = pmap(lambda n: paid_evaluation(plans[n], rates, s, t, kappa), names)
+    best = evals[names.index("paid optimum")]["paid_cost"]
+    rows = []
+    for name, ev in zip(names, evals):
+        rows.append({"setting": label, "mean_load": load, "service_time": s, "threshold": t,
+                     "kappa": kappa, **(extra or {}), "method": name,
+                     "plan": json.dumps(plans[name]), "window_hours": ev["window_hours"],
+                     "spill_hours": round(ev["spill_hours"], 3),
+                     "overtime_hours": round(ev["overtime_hours"], 3),
+                     "paid_cost": round(ev["paid_cost"], 3),
+                     "paid_cost_all_stay": round(ev["paid_cost_all_stay"], 3),
+                     "excess_pct": round(100 * (ev["paid_cost"] / best - 1), 2),
+                     "worst_late": round(max(ev["late"]), 4),
+                     "hours_significantly_over": sum(lo > ALPHA for lo, _ in ev["late_ci"]),
+                     "search_calls": calls if name == "paid optimum" else ""})
+    print(f"  {label} kappa={kappa:g}: " + ", ".join(
+        f"{n} {e['paid_cost']:.1f}" for n, e in zip(names, evals)))
+    return rows
+
+
+def run_e11b():
+    """H27 (D2 with paid overtime): the fixed-T/S settings of E10a."""
+    print("E11b: 24 E, A = 0.6, T = 1.875 S, unpaid work charged")
+    ucb = {float(r["service_time"]): json.loads(r["plan"])
+           for r in load_results("e10a_threshold_ratio.csv") if r["method"] == "SGS-UCB"}
+    rows = []
+    for kappa in KAPPAS:
+        for s in SERVICE_TIMES:
+            rows += _paid_rows(f"R24_S{s:g}_T{1.875 * s:g}", arrival_profile(24.0, s, 0.6), s,
+                               1.875 * s, 24.0, ucb[s], kappa)
+    write_csv("e11b_paid_threshold_ratio.csv", rows)
+
+
+def run_e11c():
+    """H28: E1's 24 E settings (T = 15, A = 0.6) with paid overtime."""
+    print("E11c: E1 settings at 24 E, A = 0.6, T = 15, unpaid work charged at 1")
+    e1 = load_results("e1_methods.csv")
+    rows = []
+    for s in SERVICE_TIMES:
+        ucb = next(json.loads(r["plan"]) for r in e1 if r["method"] == "SGS-UCB"
+                   and float(r["mean_load"]) == 24.0 and float(r["service_time"]) == s
+                   and float(r["amplitude"]) == 0.6)
+        rows += _paid_rows(f"R24_S{s:g}_T15", arrival_profile(24.0, s, 0.6), s, THRESHOLD,
+                           24.0, ucb, 1.0)
+    write_csv("e11c_paid_e1.csv", rows)
+
+
+def run_e11d():
+    """H29: the paid optimum against the paid fluid as the office grows (S = 8, A = 0.6)."""
+    print("E11d: paid optimum at 8, 32 and 128 Erlangs")
+    e8b = {float(r["mean_load"]): json.loads(r["no_abandonment_plan"])
+           for r in load_results("e8b_regimes.csv")
+           if r["patience"] == "exp30" and float(r["alpha"]) == 0.10 and r["office"] != "office"}
+    starts = {8.0: e8b[8.0], 32.0: e8b[32.0],
+              128.0: json.loads(next(r["plan"] for r in load_results("e10c_scaling.csv")
+                                     if float(r["mean_load"]) == 128.0))}
+    rows = []
+    for load, start in starts.items():
+        rows += _paid_rows(f"R{load:g}_S8_T15", arrival_profile(load, OFFICE_S, 0.6), OFFICE_S,
+                           THRESHOLD, load, start, 1.0)
+    write_csv("e11d_paid_scaling.csv", rows)
+
+
+def run_e11e():
+    """H31 (confirmatory): the paid optimum at 256 Erlangs against the paid fluid."""
+    print("E11e: paid optimum at 256 Erlangs")
+    start = json.loads(load_results("e10g_confirm.csv")[0]["plan"])
+    rows = _paid_rows("R256_S8_T15", arrival_profile(256.0, OFFICE_S, 0.6), OFFICE_S,
+                      THRESHOLD, 256.0, start, 1.0)
+    write_csv("e11e_paid_confirm.csv", rows)
+
+
 EXPERIMENTS = {"e1b": run_e1b, "e1": run_e1, "e2": run_e2, "e2b": run_e2b,
                "e3a": run_e3a, "e3b": run_e3b, "e4": run_e4, "e5": run_e5, "e6": run_e6,
                "e7a": run_e7a, "e7": run_e7, "e7c": run_e7c, "e8a": run_e8a, "e8b": run_e8b,
                "e9a": run_e9a, "e9b": run_e9b,
                "e10b": run_e10b, "e10a": run_e10a, "e10c": run_e10c, "e10d": run_e10d,
-               "e10e": run_e10e, "e10f": run_e10f, "e10g": run_e10g, "e10h": run_e10h}
+               "e10e": run_e10e, "e10f": run_e10f, "e10g": run_e10g, "e10h": run_e10h,
+               "e11a": run_e11a, "e11b": run_e11b, "e11c": run_e11c, "e11d": run_e11d,
+               "e11e": run_e11e}
 
 
 def main():

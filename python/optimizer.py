@@ -122,6 +122,8 @@ class SimulationResult:
     daily_appt_wait_sum: list = field(default_factory=list) # Their total wait, per day
     daily_abandoned: list = field(default_factory=list)     # [rep][slot] walk-ins who left unserved
     daily_abandoned_wait: list = field(default_factory=list)  # Minutes those citizens spent inside
+    daily_spill: list = field(default_factory=list)     # Service minutes on just-closed windows
+    daily_overtime_busy: list = field(default_factory=list)  # Service minutes after closing
     mean_service: float = 0.0
     # (result, mean cost difference, 95% CI) for finalists statistically tied with this one
     tied_alternatives: list = field(default_factory=list)
@@ -267,6 +269,8 @@ def run_simulation(
         daily_appt_wait_sum=[row['appt_wait_sum'] for row in rows],
         daily_abandoned=[[int(row[f'aband_{i}']) for i in range(8)] for row in rows],
         daily_abandoned_wait=[row['aband_wait_sum'] for row in rows],
+        daily_spill=[row['spill_busy'] for row in rows],
+        daily_overtime_busy=[row['overtime_busy'] for row in rows],
         mean_service=mean(column('mean_service'))
     )
 

@@ -107,6 +107,9 @@ struct SimulationResults {
     double appointment_wait_sum;               // Total wait of booked citizens (minutes)
     std::vector<int> abandoned_per_slot;       // Walk-ins who balked or reneged, by arrival hour
     double abandoned_wait_sum;                 // Minutes spent in the office by those who left
+    double spill_minutes;                      // Service on windows already closed (a closing
+                                               // window finishing its citizen), before closing
+    double overtime_busy_minutes;              // Service delivered after the doors close
     std::vector<double> utilization_per_slot;  // 8 hourly slots
     std::vector<double> all_wait_times;        // For distribution analysis
 };
@@ -206,6 +209,8 @@ private:
 
     // Statistics tracking
     std::vector<double> slot_busy_time_;  // Cumulative busy time per slot
+    double spill_minutes_;                // Busy time on closed windows before closing
+    double overtime_busy_minutes_;        // Busy time after closing
 
     // Helper methods
     double get_arrival_rate(double time) const;
@@ -224,6 +229,7 @@ private:
     void start_service(int citizen_id, int window_id);
     void serve_waiting_citizens();
     void add_busy_time(double start, double end);
+    void add_unpaid_time(int window_id, double start, double end);
     int find_free_window();
 
     SimulationResults compute_results() const;

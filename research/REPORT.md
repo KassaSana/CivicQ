@@ -23,6 +23,7 @@ The target is that at most 10% of each hour's arrivals wait more than 15 minutes
 - **When leaving helps and when it hurts (Round 5).** Abandonment lowers the staffing need only if the target is lenient relative to the office's size. At fixed staffing it raises the failure rate below a crossover utilization ρ\*(c) and lowers it above. A strict 2% target makes abandonment cost 12–15% more staff; a 20% target saves up to 16%. For large offices a fluid limit predicts the saving as min(α, G(T)) of the load, where G is the patience CDF: 10.5% measured at 32 Erlangs against 10% predicted, and 0.4% against 0.35% for patient citizens. With mandatory returns the saving is exactly zero.
 - **Large offices with a fixed threshold (Round 6).** Exact models up to 10,000 windows correct Round 5's scaling. The crossover slack grows like (S/2T)·ln c, not like √c. Abandonment can raise a large office's staffing only when the target α is below K₁/√c, a closed form that does not depend on the threshold. How fast the fluid saving is reached depends on where α sits against G(T): within one window above it, O(√R) extra windows below it, and O(√(R ln R)) exactly at it. Convergence is slow for patient citizens facing short thresholds, where two of the pre-registered tolerances failed.
 - **A fluid model of the whole day (Round 7).** A deterministic fluid of the finite day shows that a large office needs *less* than its raw workload (0.93 of it for the studied demand at S = 8). Only the two ends of the day explain this: the backlog absorbed by unpaid service after closing, net of the idle time from opening empty. Simulation sits about 3√R windows above that fluid, confirmed out of sample at 256 Erlangs. The same boundary effect, not lag or threshold stringency, is why SIPP's excess grows with service time: holding T/S fixed, it still rises from 1.5% to 33%. Three of the five registered tests failed, two because the first fluid ignored that a closing window finishes its citizen. Against the corrected fluid, integrated shift search leaves no measurable slack.
+- **Paying for unpaid work (Round 8).** When service after closing and at closing windows is paid, a large office needs its full workload plus a small constant slack, about 8·(S/T)·ln(1/α) window-hours. Round 7's below-workload result and its √R correction both came from that free work. SIPP's excess still grows with service time, but now through threshold stringency and lag. Who stays after closing (staff leaving when idle, or everyone waiting for the last citizen) moves paid costs by up to 16%, more than a time-and-a-half premium does.
 - **Independent validation (Round 2).** An independent implementation in the open-source Ciw library agrees with CivicQ: 0 of 54 tests reject under constant staffing, and CivicQ stays within Ciw's bounds in all 25 hours tested under changing staffing. Along the way we found that Ciw's hourly schedules silently add overtime capacity at every shift boundary, which halves the measured lateness if used naively.
 
 ## 1. Background and gap
@@ -182,6 +183,27 @@ Two structural facts come out of the computation:
 A corrected fluid (`fluid_staffing_nonpreemptive`) splits citizens in service into those at open windows and those finishing at windows that just closed, and it measures waits exactly by FIFO counts. It gives f₀ = 0.933 for this office, against 0.967 (converged in the time step to ±0.0002; the α version is too slow to solve to optimality here, and α was worth 0.0005 in the original model). With it, E(R) = SGS-UCB − 8R·f₀ is 11.1, 12.3, 15.6, 19.2, 26.3 and 32.7 at R = 4 … 128. It grows, with a log-log slope of about 0.4 from R = 32 to 128, which is closer to H23a than to H23b. That reading is post hoc, so it is tested on a new point:
 
 - **H26 (confirmatory; the √R correction above the corrected fluid).** SGS-UCB at R = 256 (same office and settings as E10c) has an excess E(256) = SGS-UCB − 2048·f₀ in [38, 52]. That band is the extrapolations R^0.38 (42.6) and √R (46.2) from E(128), with about 10% added for search noise. Equivalently, E(256)/E(128) ∈ [1.15, 1.6]. A saturating correction (E(256) ≤ 35) would reject it.
+
+**Round 8** (stated after E11a and fixed before E11b–E11d were launched). *Disclosure:* a failed file edit meant the E11b–E11d runs started before this text reached the report. It was written unchanged from the version prepared before launch. The first result, E11c at S = 4, appeared at about the time of writing, so it cannot be shown to have come after; no wording was changed in light of it. Every other E11 result arrived later.
+
+Rounds 1–7 counted only staffed hours. Two kinds of service were free: service after the doors close, and a closing window finishing its citizen after its hour ends. Round 7 showed that this free work is what puts large offices below their raw workload. Round 8 charges it at κ times the regular rate (κ = 1 or 1.5).
+
+Staff are assumed to leave once nobody is left for them, so the unpaid work is exactly the service delivered outside paid window time. The simulator now records it per day, and its existing outputs are unchanged. For every plan, paid cost = window-hours + κ × unpaid work, and **with κ = 1 this equals total service work plus idle window-time**. Total work is fixed by demand, so the cheapest plan is the one that idles least while meeting the target.
+
+*Computed before this pre-registration* (E11a: the corrected fluid with the charge, which is theory). For κ = 1, the fluid paid cost per unit of workload is 1.000–1.021 for every shape, service time and threshold studied. Before the charge the range was 0.59–0.97, and the S = 32, T = 60 case goes from 0.587 to exactly 1.000. For κ = 1.5 it is 1.004–1.064.
+
+- **H27 (the service-time trend at fixed T/S was the free drain).** On E10a's settings (24 E, A = 0.6, T = 1.875S), with κ = 1:
+  - SIPP's excess in paid cost over the paid optimum spans less than 6 points across S = 4 … 32 (in E10a, with free overtime, it ran from 1.5% to 33%);
+  - with κ = 1.5 the span is under 8 points.
+- **H28 (at fixed T the trend survives, and it is threshold stringency).** On E1's settings (24 E, A = 0.6, T = 15), with κ = 1: SIPP's paid excess at S = 32 exceeds that at S = 4 by at least 5 points.
+  - Rationale: Erlang-C's stationary slack (S/T)·ln(1/α) per hour grows with S at fixed T. Priced overtime removes only the drain.
+  - Together, H27 and H28 would say that once work is paid, the trend in E1 is threshold stringency.
+- **H29 (the paid fluid is the leading order).** Double peak, S = 8, A = 0.6, T = 15, κ = 1, at R = 8, 32 and 128. Let E(R) be the paid optimum minus 8R·f₁ (f₁ = 1.0069). E(R) grows like √R: E(128)/E(32) ∈ [1.6, 2.4]. The rationale is Round 7's stochastic correction, which with paid work is all idle time.
+- **H30 (optimizing staffed hours when overtime is paid is costly for long services).** With κ = 1, the plan that minimizes staffed hours (the window-hours SGS-UCB plan) costs at least 3% more than the paid optimum at S = 32, and less than 2% more at S = 4, in E1's settings.
+
+*Round 8b* (stated after E11d, before running E11e). H29 failed. With paid overtime the excess of the paid optimum over the paid fluid was 10.1, 11.0 and 9.5 window-hours at R = 8, 32 and 128. That is flat, and close to 8·(S/T)·ln(1/α) = 9.8, the stationary slack of Round 6. So once all work is paid, the √R correction of Round 7 appears to go away.
+
+- **H31 (confirmatory; with paid work the correction is Round 6's stationary slack).** At R = 256 (same office, κ = 1), the paid optimum exceeds 2048·f₁ by E(256) ∈ [5.9, 13.7] (9.8 ± 40%). Growth like √R from R = 128 would give about 13.4–15, so the band's upper edge is set below 15, the value at which the reading would be rejected.
 
 *Change after pre-registration (Round 2):* while testing H7 we found that Ciw cannot express CivicQ's staffing-change rule (see §5.6). H7 was therefore split into a strict test for constant staffing and a bounds test for changing staffing *before* E5 was run. This deviation is disclosed here.
 
@@ -658,6 +680,51 @@ Taken at face value, integrated search leaves nothing measurable on the table re
 3. **Unpaid overtime is a first-order modelling choice.** With a long threshold it is worth up to 40% of the workload in the fluid (§6).
 4. **The fluid model needs the simulator's staffing-change rule.** An instant capacity drop was the one approximation we flagged, and it was large enough to overturn two pre-registered tests.
 
+### 5.12 Paying for unpaid work (E11)
+
+Round 8 charges the service that Rounds 1–7 got for free: work after closing, and closing windows finishing their citizen. It is charged at κ = 1 (the same wage) or 1.5 (time and a half). Staff are assumed to leave once nobody is left for them. The simulator records this work per day, and its existing outputs are byte-identical. A new local search (`research/overtime.py`) minimizes paid cost under the same per-hour UCB target. All its plans meet the target on the evaluation days with no significant misses; one has a point estimate of 11.9% in its worst hour (S = 32, T = 60, κ = 1.5).
+
+![Paid overtime](figures/fig14_paid_overtime.png)
+
+**The fluid (E11a, theory).** Paying for all work turns every fluid constant into workload plus idle time: 1.000–1.021 for κ = 1, against 0.59–0.97 with free work (Fig. 14a). The "below the raw workload" result of §5.11 was therefore **entirely unpaid work**. With it paid, the only thing left above the workload is idle time, mostly from opening empty.
+
+**H27: rejected.** At fixed T/S (24 E, A = 0.6), SIPP's paid excess over the paid optimum still rises steeply with S:
+
+| S, T (minutes) | 4, 7.5 | 8, 15 | 16, 30 | 32, 60 |
+|---|---|---|---|---|
+| Overtime free (E10a) | +1.5% | +3.6% | +10.9% | +33% |
+| Paid, κ = 1 | +1.7% | +4.2% | +9.4% | +18.2% |
+| Paid, κ = 1.5 | +1.8% | +4.5% | +8.8% | +17.3% |
+
+Paying for the drain halves SIPP's excess at S = 32, but a 16-point trend remains, against the fewer than 6 predicted. With T/S fixed and all work paid, the remaining dependence on S can only come from S relative to the one-hour planning period. That is the lag mechanism of §1, which H1 and H2 were about.
+
+**H28: supported.** At fixed T = 15, SIPP's paid excess rises from 2.2% at S = 4 to 13.3% at S = 32 (E1, free: 2.1% → 14.5%). Paying for overtime barely changes it.
+
+Putting H27 and H28 together, the growth of SIPP's excess with service time has three sources:
+- **threshold stringency**, (S/T)·ln(1/α) per hour, which sets the trend at fixed T;
+- **lag**, which shows at fixed T/S once work is paid;
+- **the free drain**, which roughly doubles the excess at S = 32 when T/S is fixed and T is long.
+
+**H29: rejected; H31 (confirmatory): supported.** Excess of the paid optimum over 8R times the paid fluid constant (f₁ = 1.0069); S = 8, A = 0.6, T = 15, κ = 1:
+
+| R (Erlangs) | 8 | 32 | 128 | **256** |
+|---|---|---|---|---|
+| Excess (window-hours) | 10.1 | 11.0 | 9.5 | **6.2** |
+
+H29's √R prediction (E(128)/E(32) ∈ [1.6, 2.4]) failed: the ratio was 0.87. H31 was registered after that and before the R = 256 run. It predicted E(256) ∈ [5.9, 13.7], and the result, 6.2, falls inside the band, near its lower edge.
+
+With all work paid, the office needs the fluid plus a correction that **does not grow**. It stays close to 8·(S/T)·ln(1/α) = 9.8, Round 6's stationary slack, and may even shrink slowly. This points to the free drain as the source of §5.11's √R growth; one confirmatory load supports it, and a mechanism is proposed below but not tested. In the fluid, arrivals near closing are allowed to wait exactly T, because their service after closing costs nothing. The stochastic system must protect that knife edge against day-to-day randomness, which costs O(√R). Once that service is paid, the fluid no longer leans on it, and only the ordinary per-hour slack remains.
+
+**H30: rejected.** At κ = 1 the plan minimizing staffed hours is within 0–0.9% of the paid optimum in every setting of E11b–E11e, including 0.2% at S = 32 in E1's setting (≥ 3% was predicted). Only with time and a half and a long threshold does it matter: 4.0% at S = 32, T = 60, κ = 1.5. Both searches are local and the paid search starts from the staffed-hours plan, so this small gap may partly reflect a shared local optimum.
+
+**Who stays after closing matters more than the wage.** Under a second accounting, every window open in the last hour stays until the last citizen leaves. That raises paid costs by 2% (S = 4) to 16% (S = 32, T = 15) over "staff leave when idle". It can even reverse which plan is cheaper: at S = 32, T = 60, κ = 1.5 the staffed-hours plan costs 266 h against the paid optimum's 282 h.
+
+**What changes.**
+1. **Large offices need their workload, not less.** §5.11's "0.93 of the workload" holds only when service after hours and at closing windows costs nothing. Paying for it gives workload plus opening idle plus an O(1) slack.
+2. **The √R correction was an artefact of free overtime.** With work paid, Round 7's fluid and Round 6's stationary slack combine into one description: paid fluid + 8·(S/T)·ln(1/α).
+3. **SIPP's excess over service time has three sources.** Threshold stringency sets the trend at fixed T; with T/S fixed and all work paid, what remains is lag; and a free drain roughly doubles it when T is long.
+4. **Optimizing staffed hours is nearly optimal for paid cost when overtime is paid at the regular rate.** It is not when overtime carries a premium and the threshold is long. The rule for who stays after closing matters more than either.
+
 ## 6. Threats to validity
 - **Synthetic demand.** Arrival rates follow a stylized double-peak profile. There are no public arrival-count data for walk-in offices; the CA DMV data contain only waits.
 - **Exponential service in E1.** This favours the Erlang-C rules, which assume it. With CV < 1, as is typical for lognormal service, the analytic rules would overstaff even more (E2).
@@ -669,7 +736,7 @@ Taken at face value, integrated search leaves nothing measurable on the table re
 - **Integrated search is a local search.** It is multi-started and never worse than its two-step start, but it is not proven optimal for large offices.
 - **The Ciw bounds test is weak for long-service, large offices** (§5.6); the strict constant-staffing test is the main evidence.
 - **SGS optimality** is shown only for small instances, and relies on the monotonicity assumption used to derive the lower bounds.
-- **Overtime is free (all rounds).** Staff-hours count only the eight open hours, while service after closing continues at the last hour's staffing without cost. The fluid shows this is a first-order modelling choice: it supplies 4% of the workload at S = 8 and T = 15, and up to 40% when T = 60 (§5.11). Charging overtime would raise every plan's last hour and cut the savings attributed to a long threshold.
+- **Overtime is free (all rounds).** Staff-hours count only the eight open hours, while service after closing continues at the last hour's staffing without cost. The fluid shows this is a first-order modelling choice: it supplies 4% of the workload at S = 8 and T = 15, and up to 40% when T = 60 (§5.11). Charging overtime would raise every plan's last hour and cut the savings attributed to a long threshold. *Round 8 (§5.12) tests this:* paid, the below-workload effect vanishes, the ranking of rules is unchanged, and SIPP's excess falls by up to half at long thresholds. The paid search is local and starts from the staffed-hours plan. The rule for who stays after closing is itself an assumption that moves costs by up to 16%.
 - **The fluid (§5.11)** covers exponential service only. Its corrected version and the √R reading were fixed after the registered tests failed, and were confirmed at one new load only. Five α-programs were not solved to optimality, and the comparison of shift rosters with the corrected fluid was not pre-registered.
 - **Rate uncertainty** is modelled as a single daily multiplier. Correlated within-day forecast errors could matter more.
 
@@ -692,7 +759,7 @@ Taken at face value, integrated search leaves nothing measurable on the table re
 g++ -std=c++17 -O2 -static -Icpp/include -o cpp/build/queue_sim.exe cpp/src/simulation.cpp cpp/src/main.cpp
 pip install -r research/requirements.txt   # numpy, matplotlib, scipy, ciw
 python research/test_research.py
-python research/experiments.py --all     # about 2 hours on 8 cores (E7 takes 25, E8a 3, E8b 5, E9 5, E10 60)
+python research/experiments.py --all     # about 2.5 hours on 8 cores (E7 takes 25, E8a 3, E8b 5, E9 5, E10 60, E11 20)
 python research/figures.py
 ```
 

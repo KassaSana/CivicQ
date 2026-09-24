@@ -160,6 +160,24 @@ class TestSimulatorExtensions(unittest.TestCase):
                  for d, cv in [("det", 1.0), ("lognormal", 0.5), ("exp", 1.0), ("lognormal", 1.5)]]
         self.assertEqual(waits, sorted(waits))
 
+    def test_unpaid_service_accounting(self):
+        # Every service minute is in a paid slot (utilization) or after closing
+        plan = [3, 5, 2, 2, 4, 1, 3, 2]
+        r = run_simulation(plan, [20.0, 30, 12, 12, 25, 8, 18, 12], replications=50)
+        util = np.array(r.utilization)          # averaged over days
+        in_day = float(np.sum(util * np.array(plan) * 60.0))
+        total = r.mean_service * r.avg_served
+        after = float(np.mean(r.daily_overtime_busy))
+        self.assertAlmostEqual(in_day + after, total, delta=0.02 * total)
+        self.assertGreater(np.mean(r.daily_spill), 0.0)     # Staffing drops at 9-10, 12-1
+
+    def test_no_spill_without_staffing_cuts_and_overtime_is_r_times_s(self):
+        # With spare windows, the office at closing holds Poisson(R) citizens,
+        # each needing S more minutes on average: overtime service = R * S
+        r = run_simulation([12] * 8, [30.0] * 8, replications=4000, seed=11)
+        self.assertEqual(max(r.daily_spill), 0.0)
+        self.assertAlmostEqual(np.mean(r.daily_overtime_busy), 4.0 * 8.0, delta=1.5)
+
     def test_rate_cv_keeps_mean_demand(self):
         base = run_simulation([3] * 8, replications=1000)
         mixed = run_simulation([3] * 8, replications=1000, rate_cv=0.2)
@@ -329,6 +347,21 @@ class TestFluid(unittest.TestCase):
             over.append(float(np.max(day["wait"])) - 15.0)
         self.assertLess(over[0], 4 * 1.0)
         self.assertLess(over[1], over[0])
+
+    def test_paid_fluid(self):
+        from fluid import fluid_staffing_nonpreemptive
+        from overtime import fluid_paid
+        free = fluid_staffing_nonpreemptive(self.RATES, 8.0, 15.0, 0.0, dt=1.0)
+        self.assertAlmostEqual(fluid_paid(self.RATES, 8.0, 15.0, 0.0, dt=1.0)["paid_cost"],
+                               free["cost"], places=4)
+        # Paying for all work: cost = work + idle >= work
+        workload = sum(r / 60 * 8.0 for r in self.RATES)
+        one = fluid_paid(self.RATES, 8.0, 15.0, 1.0, dt=1.0)
+        self.assertGreaterEqual(one["paid_cost"], workload - 1e-6)
+        self.assertAlmostEqual(one["paid_cost"], one["window_hours"] + one["spill_hours"]
+                               + one["overtime_hours"], places=6)
+        self.assertGreaterEqual(fluid_paid(self.RATES, 8.0, 15.0, 1.5, dt=1.0)["paid_cost"],
+                                one["paid_cost"] - 1e-9)
 
     def test_late_allowance_never_costs_more(self):
         lp = fluid_staffing(self.RATES, 8.0, 15.0, 0.0, dt=2.0)
