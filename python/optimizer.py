@@ -120,6 +120,8 @@ class SimulationResult:
     daily_appt_arrived: list = field(default_factory=list)  # Booked citizens who came, per day
     daily_appt_late: list = field(default_factory=list)     # Of those, waited > threshold
     daily_appt_wait_sum: list = field(default_factory=list) # Their total wait, per day
+    daily_abandoned: list = field(default_factory=list)     # [rep][slot] walk-ins who left unserved
+    daily_abandoned_wait: list = field(default_factory=list)  # Minutes those citizens spent inside
     mean_service: float = 0.0
     # (result, mean cost difference, 95% CI) for finalists statistically tied with this one
     tied_alternatives: list = field(default_factory=list)
@@ -143,7 +145,11 @@ def run_simulation(
     wait_threshold: float = 15.0,
     appointments: Optional[list] = None,
     no_show: float = 0.0,
-    punctuality_sd: float = 0.0
+    punctuality_sd: float = 0.0,
+    abandonment: str = "none",
+    patience: float = 30.0,
+    patience_dist: str = "exp",
+    patience_cv: float = 1.0
 ) -> SimulationResult:
     """
     Execute C++ simulator with given staffing configuration.
@@ -168,6 +174,11 @@ def run_simulation(
         appointments: Booked arrival times in minutes from opening (served FIFO)
         no_show: Probability a booked citizen does not come
         punctuality_sd: SD in minutes of arrival around the booked time
+        abandonment: "none", "renege" (hidden queue) or "balk" (visible queue);
+            walk-ins who leave are excluded from served-citizen metrics
+        patience: Mean walk-in patience in minutes
+        patience_dist: "exp", "lognormal" or "det"
+        patience_cv: Patience CV (lognormal only)
 
     Returns:
         SimulationResult with aggregated metrics and 95% CIs
@@ -198,6 +209,9 @@ def run_simulation(
     if appointments:
         cmd += ["--appointments", ",".join(f"{t:.4f}" for t in appointments),
                 "--no-show", str(no_show), "--punctuality-sd", str(punctuality_sd)]
+    if abandonment != "none":
+        cmd += ["--abandonment", abandonment, "--patience", str(patience),
+                "--patience-dist", patience_dist, "--patience-cv", str(patience_cv)]
 
     try:
         result = subprocess.run(
@@ -251,6 +265,8 @@ def run_simulation(
         daily_appt_arrived=[int(row['appt_arrived']) for row in rows],
         daily_appt_late=[int(row['appt_late']) for row in rows],
         daily_appt_wait_sum=[row['appt_wait_sum'] for row in rows],
+        daily_abandoned=[[int(row[f'aband_{i}']) for i in range(8)] for row in rows],
+        daily_abandoned_wait=[row['aband_wait_sum'] for row in rows],
         mean_service=mean(column('mean_service'))
     )
 

@@ -181,11 +181,22 @@ def ratio_ci(late: np.ndarray, arrivals: np.ndarray, z: float = 1.96) -> tuple:
 
 
 def evaluate(staffing: list, rates: list, mean_service: float, threshold: float = 15.0,
-             reps: int = EVAL_REPS, seed: int = EVAL_SEED, **sim_kwargs) -> Evaluation:
+             reps: int = EVAL_REPS, seed: int = EVAL_SEED, metric: str = "late",
+             **sim_kwargs) -> Evaluation:
+    """
+    metric="late": late / served (the only choice without abandonment).
+    metric="fail": (late + abandoned) / (served + abandoned), for runs with
+                   walk-in abandonment (see abandonment.py).
+    """
     r = run_simulation(list(staffing), rates, replications=reps, seed=seed,
                        mean_service=mean_service, wait_threshold=threshold, **sim_kwargs)
     arr = np.array(r.daily_arrivals, dtype=float)
     late = np.array(r.daily_late, dtype=float)
+    if metric == "fail":
+        aband = np.array(r.daily_abandoned, dtype=float)
+        arr, late = arr + aband, late + aband
+    elif metric != "late":
+        raise ValueError(metric)
     per_hour = [ratio_ci(late[:, i], arr[:, i]) for i in range(SLOTS)]
     overall, _ = ratio_ci(late.sum(axis=1), arr.sum(axis=1))
     return Evaluation(

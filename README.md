@@ -30,7 +30,7 @@ This project models a municipal permit and licensing office with multiple identi
 
 ### Key Assumptions
 - Walk-ins only by default. Appointments are optional (`--appointments`, `--no-show`, `--punctuality-sd`); booked citizens join the same FIFO queue.
-- No balking/reneging (citizens wait indefinitely)
+- No abandonment by default: citizens wait until served. Optionally walk-ins renege from a hidden queue or balk at a visible one (`--abandonment renege|balk`, `--patience`, `--patience-dist`, `--patience-cv`); booked citizens never leave.
 - All service windows are identical
 - Citizens are served to completion
 - **Closing time:** no one enters after 480 minutes, but everyone already inside is served. The time needed to clear the queue is reported as *overtime*.
@@ -121,6 +121,9 @@ cmake --build cpp/build
 
 # One CSV row per replication (used by the optimizer for confidence intervals)
 ./queue_sim --replications 30 --per-replication
+
+# Walk-ins leave a hidden queue after 30 minutes' patience on average
+./queue_sim --abandonment renege --patience 30
 
 # Full options
 ./queue_sim --help
@@ -358,6 +361,8 @@ python python/test_validation.py
 - Real shifts (4h/8h) add 14-68% paid hours over an ideal hour-by-hour plan; searching over shift schedules with simulation is up to 15% cheaper than the textbook "hourly requirement, then shifts" method.
 - Appointments cut the staffing need mainly through shifts: booking 75% of demand into quiet hours shrinks an 8-Erlang office's roster by 24%, but barely changes the hour-by-hour need.
 - The simulator is cross-validated against the independent [Ciw](https://github.com/CiwPython/Ciw) library (0 of 54 tests reject).
+- When citizens can leave, a late rate computed from served tickets is met with 18–27% fewer staff-hours than the citizen view (late or left), while up to 19% of the busiest hour's arrivals walk out. For a mandatory service those walk-outs come back as repeat visits: 18 per 100 transactions in the office. Validated against exact Erlang-A and balking models (all |z| < 1.2).
+- Whether walk-outs save or cost staff depends on the target and the office's size. A strict 2% target makes them cost 12–15% more staff, and a 20% target saves up to 16%. For large offices a fluid limit predicts the saving as min(α, share of citizens who give up within the threshold): 10.5% measured at 32 Erlangs against 10% predicted. For a mandatory service, where leavers must return, the long-run saving is zero.
 
 The study also showed that 30 confirmation days gave P90 CIs of about ±4 minutes and misreported the 18-hour plan as missing the target. The optimizer now confirms with 300 days and reports statistical ties.
 
@@ -379,7 +384,6 @@ cd web && npm install && npm run dev
 
 **Intentionally Excluded:**
 - Multiple service types / skill-based routing
-- Balking / reneging behavior
 - External datasets
 - Metaheuristics (GA, SA)
 
@@ -387,7 +391,7 @@ cd web && npm install && npm run dev
 - Grid search only (no external solvers)
 
 ## Future Work
-- **Abandonment (Erlang-A).** Walk-in offices do lose citizens who give up. Modeling this needs a patience distribution calibrated on real walk-away data, and a separate "% abandoned" limit. Without those, abandonment shortens the queue and can hide understaffing.
+- **Calibrated abandonment.** The simulator supports balking and reneging ([research/REPORT.md](research/REPORT.md) §5.8), but the patience distributions are assumptions. The results depend on patience shape, so real walk-away data from an office would matter.
 - **Iterative Staffing Algorithm.** A simulation-based method for staffing time-varying queues to meet a time-stable service level (Feldman, Mandelbaum, Massey & Whitt, 2008).
 - **Multiple service types.** Different transaction types with their own service times, as in the Virginia DMV staffing study.
 - **Local search.** Replace the exhaustive search if the decision space grows, for example with more slots or larger offices.

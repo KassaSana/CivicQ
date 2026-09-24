@@ -31,9 +31,27 @@ void print_usage() {
               << "  --appointments t1,t2,...   Booked arrival times in minutes from opening\n"
               << "  --no-show P                Probability a booked citizen does not come (default: 0)\n"
               << "  --punctuality-sd MINUTES   SD of arrival around the booked time (default: 0)\n"
+              << "  --abandonment MODE         none | renege (hidden queue) | balk (visible queue)\n"
+              << "  --patience MINUTES         Mean walk-in patience (default: 30)\n"
+              << "  --patience-dist NAME       exp | lognormal | det (default: exp)\n"
+              << "  --patience-cv CV           Patience CV for lognormal (default: 1.0)\n"
               << "  --per-replication          One CSV row per replication instead of averages\n"
               << "  --output-waits             Include all wait times in output\n"
               << "  --help                     Show this help\n";
+}
+
+bool parse_dist(const std::string& name, ServiceDist& out) {
+    if (name == "exp") {
+        out = ServiceDist::EXPONENTIAL;
+    } else if (name == "lognormal") {
+        out = ServiceDist::LOGNORMAL;
+    } else if (name == "det") {
+        out = ServiceDist::DETERMINISTIC;
+    } else {
+        std::cerr << "Error: unknown distribution '" << name << "'\n";
+        return false;
+    }
+    return true;
 }
 
 std::vector<int> parse_int_list(const std::string& s) {
@@ -95,15 +113,7 @@ int main(int argc, char* argv[]) {
             config.simulation_duration = std::stod(argv[++i]);
         }
         else if (arg == "--service-dist" && i + 1 < argc) {
-            std::string name = argv[++i];
-            if (name == "exp") {
-                config.service_dist = ServiceDist::EXPONENTIAL;
-            } else if (name == "lognormal") {
-                config.service_dist = ServiceDist::LOGNORMAL;
-            } else if (name == "det") {
-                config.service_dist = ServiceDist::DETERMINISTIC;
-            } else {
-                std::cerr << "Error: unknown service distribution '" << name << "'\n";
+            if (!parse_dist(argv[++i], config.service_dist)) {
                 return 1;
             }
         }
@@ -124,6 +134,30 @@ int main(int argc, char* argv[]) {
         }
         else if (arg == "--punctuality-sd" && i + 1 < argc) {
             config.punctuality_sd = std::stod(argv[++i]);
+        }
+        else if (arg == "--abandonment" && i + 1 < argc) {
+            std::string mode = argv[++i];
+            if (mode == "none") {
+                config.abandonment = Abandonment::NONE;
+            } else if (mode == "renege") {
+                config.abandonment = Abandonment::RENEGE;
+            } else if (mode == "balk") {
+                config.abandonment = Abandonment::BALK;
+            } else {
+                std::cerr << "Error: unknown abandonment mode '" << mode << "'\n";
+                return 1;
+            }
+        }
+        else if (arg == "--patience" && i + 1 < argc) {
+            config.mean_patience = std::stod(argv[++i]);
+        }
+        else if (arg == "--patience-dist" && i + 1 < argc) {
+            if (!parse_dist(argv[++i], config.patience_dist)) {
+                return 1;
+            }
+        }
+        else if (arg == "--patience-cv" && i + 1 < argc) {
+            config.patience_cv = std::stod(argv[++i]);
         }
         else if (arg == "--per-replication") {
             per_replication = true;
@@ -156,6 +190,10 @@ int main(int argc, char* argv[]) {
         std::cerr << "Error: no-show must be in [0, 1) and punctuality SD non-negative\n";
         return 1;
     }
+    if (config.mean_patience <= 0.0 || config.patience_cv <= 0.0) {
+        std::cerr << "Error: patience mean and CV must be positive\n";
+        return 1;
+    }
     if (replications < 1) {
         std::cerr << "Error: replications must be at least 1\n";
         return 1;
@@ -180,6 +218,10 @@ int main(int argc, char* argv[]) {
             std::cout << ",late_" << j;
         }
         std::cout << ",appt_arrived,appt_late,appt_wait_sum";
+        for (int j = 0; j < 8; ++j) {
+            std::cout << ",aband_" << j;
+        }
+        std::cout << ",aband_wait_sum";
         std::cout << "\n";
         for (size_t r = 0; r < results.size(); ++r) {
             const auto& res = results[r];
@@ -198,6 +240,10 @@ int main(int argc, char* argv[]) {
             }
             std::cout << "," << res.appointments_arrived << "," << res.appointments_late
                       << "," << res.appointment_wait_sum;
+            for (int j = 0; j < 8; ++j) {
+                std::cout << "," << res.abandoned_per_slot[j];
+            }
+            std::cout << "," << res.abandoned_wait_sum;
             std::cout << "\n";
         }
         return 0;

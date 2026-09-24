@@ -14,9 +14,13 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from staffing_methods import (  # noqa: E402
     OFFICE_RATES, analytic_plans, evaluate, lagged_rates, offered_load,
-    prob_wait_exceeds, ratio_ci,
+    prob_wait_exceeds, ratio_ci, servers_for_load,
 )
 from optimizer import find_simulator, run_simulation, sipp_staffing  # noqa: E402
+from abandonment import (  # noqa: E402
+    balk_metrics, fluid_discount, hour_metrics, renege_abandon, renege_metrics,
+    required_windows, required_windows_with_returns, return_rates, score,
+)
 
 SIMULATOR = find_simulator()
 
@@ -168,6 +172,99 @@ class TestSimulatorExtensions(unittest.TestCase):
         low, high = ev.late_ci[7]           # Slot 7 covers minutes 420..20000
         self.assertLessEqual(low, expected)
         self.assertGreaterEqual(high, expected)
+
+
+class TestAbandonmentModels(unittest.TestCase):
+    def test_erlang_a_abandonment_identity(self):
+        # P(abandon) = theta * E[queue] / lambda for M/M/c+M
+        for c, lam, patience in [(2, 15, 30), (3, 15, 30), (4, 40, 20)]:
+            m = renege_metrics(c, lam / 60, 8.0, patience, 15.0)
+            self.assertAlmostEqual(m.abandon, m.mean_queue / patience / (lam / 60), places=8)
+
+    def test_long_patience_reduces_to_erlang_c(self):
+        expected = prob_wait_exceeds(3, 2.0, 8.0, 15.0)
+        self.assertAlmostEqual(renege_metrics(3, 0.25, 8.0, 3000, 15.0).fail, expected, delta=0.002)
+        self.assertAlmostEqual(balk_metrics(3, 0.25, 8.0, 1e6, 15.0).fail, expected, places=5)
+
+    def test_offered_wait_splits_the_failure_rate(self):
+        # fail = P(V > T) + P(left early with V <= T), both parts non-negative
+        m = renege_metrics(3, 0.25, 8.0, 30, 15.0)
+        self.assertGreater(m.offered_late, 0.0)
+        self.assertGreater(m.fail - m.offered_late, 0.0)
+        self.assertAlmostEqual(renege_abandon(3, 0.25, 8.0, 30), m.abandon, places=9)
+
+    def test_required_windows_matches_sipp_without_abandonment(self):
+        for rate in (6.0, 12.0, 15.0, 40.0):
+            self.assertEqual(required_windows(rate, 8.0, 15.0, 0.10),
+                             servers_for_load(rate / 60 * 8, 8.0, 15.0, 0.10))
+
+    def test_fluid_discount(self):
+        self.assertAlmostEqual(fluid_discount(15.0, 0.10, 30.0), 0.10)
+        self.assertAlmostEqual(fluid_discount(15.0, 0.10, 60.0, "lognormal", 0.5), 0.0035,
+                               delta=0.0002)
+        self.assertEqual(fluid_discount(15.0, 0.10, 30.0, "det"), 0.0)
+
+    def test_returns_fixed_point(self):
+        # No returns reproduces the plain requirement; returns never need fewer windows
+        for load in (4.0, 25.0):
+            rate = load / 8 * 60
+            plain = required_windows(rate, 8.0, 15.0, 0.10, "renege", 30.0)
+            c0, x0 = required_windows_with_returns(rate, 8.0, 15.0, 0.10, 30.0, 0.0)
+            c1, x1 = required_windows_with_returns(rate, 8.0, 15.0, 0.10, 30.0, 1.0)
+            self.assertEqual(c0, plain)
+            self.assertAlmostEqual(x0, rate, places=6)
+            self.assertGreaterEqual(c1, c0)
+            self.assertGreater(x1, rate)
+
+    def test_return_rates_add_the_returners(self):
+        self.assertAlmostEqual(sum(return_rates(OFFICE_RATES, 9.0, "profile")),
+                               sum(OFFICE_RATES) + 9.0, places=9)
+        self.assertEqual(return_rates(OFFICE_RATES, 9.0, "opening")[0], OFFICE_RATES[0] + 9.0)
+
+
+@unittest.skipUnless(SIMULATOR.exists(), f"simulator not built at {SIMULATOR}")
+class TestAbandonmentSimulator(unittest.TestCase):
+    """Constant demand and staffing over a long day against the exact chains."""
+
+    def _check(self, mode, c, lam, patience, dist="exp", cv=1.0):
+        ev = score([c] * 8, [lam] * 8, 8.0, reps=40, seed=7, duration=20000,
+                   abandonment=mode, patience=patience, patience_dist=dist, patience_cv=cv)
+        exact = hour_metrics(mode, c, lam, 8.0, patience, 15.0, dist, cv)
+        low, high = ev.fail_ci[7]             # Slot 7 covers minutes 420..20000
+        self.assertLessEqual(low, exact.fail, msg=(mode, c, lam, dist))
+        self.assertGreaterEqual(high, exact.fail, msg=(mode, c, lam, dist))
+        self.assertAlmostEqual(ev.abandon[7], exact.abandon, delta=0.1 * exact.abandon)
+
+    def test_renege_matches_erlang_a(self):
+        self._check("renege", 3, 15.0, 30.0)
+        self._check("renege", 2, 15.0, 30.0)   # Overloaded without abandonment
+
+    def test_balk_matches_birth_death_chain(self):
+        self._check("balk", 3, 15.0, 30.0)
+        self._check("balk", 2, 15.0, 30.0, "lognormal", 0.5)
+
+    def test_infinite_patience_changes_nothing(self):
+        base = run_simulation([2, 3, 3, 2, 2, 3, 3, 2], replications=100)
+        for mode in ("renege", "balk"):
+            r = run_simulation([2, 3, 3, 2, 2, 3, 3, 2], replications=100, abandonment=mode,
+                               patience=1e9, patience_dist="det")
+            self.assertEqual(r.daily_mean_waits, base.daily_mean_waits, msg=mode)
+            self.assertEqual(r.daily_abandoned, [[0] * 8] * 100, msg=mode)
+
+    def test_appointment_holders_never_leave(self):
+        # No walk-ins, overloaded single window, zero patience: nobody leaves
+        r = run_simulation([1] * 8, [0.0] * 8, replications=3, abandonment="renege",
+                           patience=0.01, appointments=[5.0 * i for i in range(90)])
+        self.assertEqual(sum(map(sum, r.daily_abandoned)), 0)
+        self.assertEqual(r.daily_appt_arrived, [90] * 3)
+
+    def test_abandonment_is_aligned_across_plans(self):
+        # Common random numbers: the same citizens arrive under every plan
+        a = run_simulation([2] * 8, replications=20, abandonment="renege", patience=20)
+        b = run_simulation([4] * 8, replications=20, abandonment="renege", patience=20)
+        arrivals = lambda r: [sum(x) + sum(y) for x, y in zip(r.daily_arrivals, r.daily_abandoned)]
+        self.assertEqual(arrivals(a), arrivals(b))
+        self.assertGreater(sum(map(sum, a.daily_abandoned)), sum(map(sum, b.daily_abandoned)))
 
 
 if __name__ == "__main__":

@@ -3,7 +3,7 @@ Experiments for the CivicQ staffing study. Every result is written to
 research/results/*.csv and is reproducible from fixed seeds.
 
     python research/experiments.py --all
-    python research/experiments.py e1b e1      # or any subset: e1b e1 e2 e2b e3a e3b e4 e5 e6
+    python research/experiments.py e1b e1      # or any subset: e1b e1 e2 e2b e3a e3b e4 e5 e6 e7a e7 e7c e8a e8b
 
 Design seeds (DESIGN_SEED..) choose plans; evaluation seeds (EVAL_SEED..) score
 them, so no reported number is biased by the search that produced the plan.
@@ -574,8 +574,342 @@ def run_e5(reps=2000):
     write_csv("e5_crossval.csv", rows)
 
 
+# ============================================================================
+# E7: walk-in abandonment (visible vs hidden queues, ticket-log metrics,
+#     mandatory services)
+# ============================================================================
+
+PATIENCE = [("exp30", 30.0, "exp", 1.0), ("exp60", 60.0, "exp", 1.0),
+            ("logn30", 30.0, "lognormal", 0.5)]
+MODES = ["renege", "balk"]
+
+
+def _e7_offices():
+    return [("office", OFFICE_RATES, OFFICE_S),
+            ("R8_S16_A0.6", arrival_profile(8.0, 16.0, 0.6), 16.0)]
+
+
+def _patience_kw(mode, mean, dist, cv):
+    return {"abandonment": mode, "patience": mean, "patience_dist": dist, "patience_cv": cv}
+
+
+def run_e7a(reps=200):
+    """Simulator vs exact stationary models under constant demand and staffing."""
+    from abandonment import hour_metrics, score
+    print("E7a: abandonment simulator vs exact stationary models")
+    cases = [(3, 15.0, 30.0, "exp", 1.0), (2, 15.0, 30.0, "exp", 1.0),
+             (2, 12.0, 60.0, "exp", 1.0), (4, 40.0, 20.0, "exp", 1.0),
+             (2, 15.0, 30.0, "lognormal", 0.5), (3, 15.0, 30.0, "lognormal", 0.5)]
+    rows = []
+    for mode in MODES:
+        for c, lam, pat, dist, cv in cases:
+            if mode == "renege" and dist != "exp":
+                continue          # Erlang-A is exact only for exponential patience
+            exact = hour_metrics(mode, c, lam, 8.0, pat, THRESHOLD, dist, cv)
+            ev = score([c] * SLOTS, [lam] * SLOTS, 8.0, THRESHOLD, reps=reps, seed=300_000,
+                       duration=20000, **_patience_kw(mode, pat, dist, cv))
+            row = {"mode": mode, "windows": c, "rate_per_hour": lam, "patience": pat,
+                   "patience_dist": dist, "patience_cv": cv}
+            for name, sim, ci, ex in [("fail", ev.fail[7], ev.fail_ci[7], exact.fail),
+                                      ("served_late", ev.served_late[7], ev.served_late_ci[7],
+                                       exact.served_late)]:
+                se = (ci[1] - ci[0]) / (2 * 1.96)
+                row.update({f"{name}_exact": round(ex, 5), f"{name}_sim": round(sim, 5),
+                            f"{name}_ci_low": round(ci[0], 5), f"{name}_ci_high": round(ci[1], 5),
+                            f"{name}_z": round((sim - ex) / se, 2) if se > 0 else 0.0})
+            row.update({"abandon_exact": round(exact.abandon, 5),
+                        "abandon_sim": round(ev.abandon[7], 5)})
+            rows.append(row)
+            print(f"  {mode:<6} c={c} lam={lam:g} {dist}{pat:g}: fail {ev.fail[7]:.4f} vs "
+                  f"{exact.fail:.4f} (z={row['fail_z']}), served-late {ev.served_late[7]:.4f} "
+                  f"vs {exact.served_late:.4f} (z={row['served_late_z']}), abandon "
+                  f"{ev.abandon[7]:.4f} vs {exact.abandon:.4f}")
+    write_csv("e7a_validation.csv", rows)
+
+
+def _e7_exhaustive(rates, s, sgs_plan, metric, kw, cap=4):
+    """
+    Every plan in {1..cap}^8 cheaper than SGS, checked with the SGS-UCB rule.
+    No lower bounds: the served-late metric is not monotone in staffing (extra
+    windows serve impatient citizens who would otherwise have left).
+    """
+    budget = sum(sgs_plan) - 1
+    candidates = [list(p) for p in itertools.product(range(1, cap + 1), repeat=SLOTS)
+                  if sum(p) <= budget]
+
+    def ok(p):
+        ev = evaluate(p, rates, s, THRESHOLD, reps=DESIGN_REPS, seed=DESIGN_SEED,
+                      metric=metric, **kw)
+        return all(hi <= ALPHA for _, hi in ev.late_ci)
+
+    good = [p for p, g in zip(candidates, pmap(ok, candidates, workers=16)) if g]
+    return len(candidates), good
+
+
+def run_e7():
+    from abandonment import score, sipp_abandonment
+    print("E7: staffing when walk-ins leave (served-late vs failure targets)")
+    rows, exhaustive_rows = [], []
+    for office, rates, s in _e7_offices():
+        base, _ = simulation_staffing(rates, s, THRESHOLD, ALPHA, criterion="ucb")
+        sipp_c = analytic_plans(rates, s, THRESHOLD, ALPHA)["SIPP"]
+        for pname, mean, dist, cv in PATIENCE:
+            plans = {("no-abandonment SGS-UCB", "-"): base, ("SIPP (Erlang-C)", "-"): sipp_c}
+            for mode in MODES:
+                kw = _patience_kw(mode, mean, dist, cv)
+                plans[("SIPP-A (fail)", mode)] = sipp_abandonment(
+                    rates, s, THRESHOLD, ALPHA, mode, mean, "fail", dist, cv)
+                for metric in ("late", "fail"):
+                    plan, _ = simulation_staffing(rates, s, THRESHOLD, ALPHA, criterion="ucb",
+                                                  start=sipp_c, metric=metric, **kw)
+                    plans[(f"SGS-UCB ({metric})", mode)] = plan
+                    if office == "office" and pname == "exp30":
+                        n, cheaper = _e7_exhaustive(rates, s, plan, metric, kw)
+                        exhaustive_rows.append({
+                            "mode": mode, "metric": metric, "sgs_plan": json.dumps(plan),
+                            "sgs_staff_hours": sum(plan), "candidates": n,
+                            "cheaper_feasible": len(cheaper),
+                            "example": json.dumps(cheaper[0]) if cheaper else ""})
+                        print(f"    exhaustive {mode}/{metric}: SGS {sum(plan)} h, "
+                              f"{len(cheaper)} of {n} cheaper plans feasible")
+            # Score every plan under both behaviours on the evaluation days
+            unique = {tuple(p) for p in plans.values()}
+            for plan in sorted(unique):
+                labels = [f"{m}@{b}" for (m, b), p in plans.items() if tuple(p) == plan]
+                for mode in MODES:
+                    ev = score(list(plan), rates, s, THRESHOLD,
+                               **_patience_kw(mode, mean, dist, cv))
+                    rows.append({
+                        "office": office, "service_time": s, "patience": pname,
+                        "mode": mode, "plan": json.dumps(list(plan)),
+                        "staff_hours": sum(plan), "found_by": "; ".join(labels),
+                        "worst_served_late": round(ev.worst("late"), 4),
+                        "served_late_misses": ev.misses("late", ALPHA),
+                        "worst_fail": round(ev.worst("fail"), 4),
+                        "fail_misses": ev.misses("fail", ALPHA),
+                        "overall_fail": round(ev.overall_fail, 4),
+                        "overall_abandon": round(ev.overall_abandon, 4),
+                        "worst_hour_abandon": round(max(ev.abandon), 4),
+                        "abandoned_per_day": round(ev.abandoned_per_day, 2),
+                        "wasted_min_per_leaver": round(ev.wasted_minutes_per_day
+                                                       / max(ev.abandoned_per_day, 1e-9), 2),
+                        "mean_wait_served": round(ev.mean_wait_served, 3),
+                        "served_late_by_hour": json.dumps([round(x, 4) for x in ev.served_late]),
+                        "fail_by_hour": json.dumps([round(x, 4) for x in ev.fail]),
+                    })
+            found = {k: sum(v) for k, v in plans.items()}
+            print(f"  {office:<12} {pname:<7} " + ", ".join(
+                f"{m}@{b}={h}h" for (m, b), h in found.items()))
+    write_csv("e7_abandonment.csv", rows)
+    write_csv("e7_exhaustive.csv", exhaustive_rows)
+
+
+def run_e7c():
+    """Mandatory services: citizens who leave return on a later day (r = 1)."""
+    from abandonment import return_fixed_point, score
+    print("E7c: return visits (mandatory service, exponential patience, mean 30)")
+    plans = {}
+    with open(RESULTS / "e7_abandonment.csv") as f:
+        for row in csv.DictReader(f):
+            if row["patience"] != "exp30":
+                continue
+            for label in row["found_by"].split("; "):
+                method, mode = label.split("@")
+                if method.startswith("SGS-UCB") and mode == row["mode"]:
+                    plans[(row["office"], mode, method)] = json.loads(row["plan"])
+    offices = {name: (rates, s) for name, rates, s in _e7_offices()}
+    rows = []
+    for (office, mode, method), plan in sorted(plans.items()):
+        rates, s = offices[office]
+        kw = _patience_kw(mode, 30.0, "exp", 1.0)
+        none = score(plan, rates, s, THRESHOLD, **kw)
+        for timing in ("profile", "opening"):
+            st = return_fixed_point(plan, rates, s, 1.0, timing, THRESHOLD,
+                                    reps=EVAL_REPS, **kw)
+            row = {"office": office, "mode": mode, "plan_from": method,
+                   "plan": json.dumps(plan), "staff_hours": sum(plan), "timing": timing,
+                   "stable": st.stable,
+                   "no_return_abandon": round(none.overall_abandon, 4),
+                   "no_return_worst_served_late": round(none.worst("late"), 4),
+                   "no_return_fail_hour0": round(none.fail[0], 4)}
+            if st.stable:
+                ev = st.evaluation
+                row.update({
+                    "returns_per_day": round(st.returns_per_day, 2),
+                    "repeat_visits_per_100": round(st.repeat_visits_per_100, 2),
+                    "overall_abandon": round(ev.overall_abandon, 4),
+                    "worst_served_late": round(ev.worst("late"), 4),
+                    "served_late_hours_over": sum(1 for x in ev.served_late if x > ALPHA),
+                    "served_late_misses": ev.misses("late", ALPHA),
+                    "worst_fail": round(ev.worst("fail"), 4),
+                    "fail_hour0": round(ev.fail[0], 4),
+                    "fail_by_hour": json.dumps([round(x, 4) for x in ev.fail]),
+                    "served_late_by_hour": json.dumps([round(x, 4) for x in ev.served_late]),
+                })
+            rows.append(row)
+            if st.stable:
+                print(f"  {office:<12} {mode:<6} {method:<16} {timing:<8}: "
+                      f"{row['repeat_visits_per_100']:.1f} repeat visits/100, worst served-late "
+                      f"{row['worst_served_late']:.3f} (was {row['no_return_worst_served_late']:.3f}), "
+                      f"8AM fail {row['fail_hour0']:.3f} (was {row['no_return_fail_hour0']:.3f})")
+            else:
+                print(f"  {office:<12} {mode:<6} {method:<16} {timing:<8}: UNSTABLE")
+    write_csv("e7c_returns.csv", rows)
+
+
+# ============================================================================
+# E8: when does abandonment raise or lower the staffing need? (regimes)
+# ============================================================================
+
+def _crossover_utilization(c, patience, s=8.0):
+    """
+    Utilization rho* at which abandonment (Erlang-A, exponential patience)
+    stops raising the failure rate at a fixed c: below it early leavers
+    outweigh queue thinning. Found by bisection on
+    Delta(rho) = P(late or left) - Erlang-C P(W > T).
+    """
+    from abandonment import renege_metrics
+    from staffing_methods import prob_wait_exceeds
+
+    def delta(rho):
+        load = rho * c
+        return (renege_metrics(c, load / s, s, patience, THRESHOLD).fail
+                - prob_wait_exceeds(c, load, s, THRESHOLD))
+
+    lo, hi = 0.2, 0.999
+    for _ in range(30):
+        mid = (lo + hi) / 2
+        lo, hi = (mid, hi) if delta(mid) > 0 else (lo, mid)
+    return (lo + hi) / 2
+
+
+def run_e8a():
+    """Stationary per-hour regime maps (exact models, no simulation)."""
+    from abandonment import (fluid_discount, required_windows,
+                             required_windows_with_returns)
+    from staffing_methods import prob_wait_exceeds
+    print("E8a: stationary regimes of abandonment (S = 8, T = 15)")
+    s = 8.0
+
+    rows = []
+    for patience in (15.0, 30.0, 60.0, 120.0):
+        for c in (1, 2, 3, 4, 6, 8, 10, 15, 20, 30, 40, 80):
+            rho = _crossover_utilization(c, patience, s)
+            rows.append({"patience": patience, "windows": c, "rho_star": round(rho, 4),
+                         "erlang_c_late_at_rho_star": round(prob_wait_exceeds(c, rho * c, s,
+                                                                              THRESHOLD), 4),
+                         "beta_star": round((1 - rho) * math.sqrt(c), 4)})
+        print(f"  crossover, exp {patience:g}: rho* = "
+              + ", ".join(f"{r['rho_star']:.2f}@c={r['windows']}" for r in rows[-12:][::3]))
+    write_csv("e8a_crossover.csv", rows)
+
+    loads = np.round(np.arange(0.1, 16.01, 0.1), 2)
+    rows = []
+    for patience in (30.0, 60.0):
+        for alpha in (0.2, 0.1, 0.05, 0.02, 0.01):
+            c_c = [required_windows(R / s * 60, s, THRESHOLD, alpha) for R in loads]
+            c_a = [required_windows(R / s * 60, s, THRESHOLD, alpha, "renege", patience)
+                   for R in loads]
+            diff = np.array(c_a) - np.array(c_c)
+            rows.append({"patience": patience, "alpha": alpha, "loads": len(loads),
+                         "adds_window": int((diff > 0).sum()),
+                         "removes_window": int((diff < 0).sum()),
+                         "ties": int((diff == 0).sum())})
+            print(f"  exp {patience:g}, alpha {alpha}: abandonment adds a window at "
+                  f"{rows[-1]['adds_window']} loads, removes at {rows[-1]['removes_window']}")
+    write_csv("e8a_alpha_sign.csv", rows)
+
+    cases = [("renege", 30.0, "exp", 1.0), ("renege", 120.0, "exp", 1.0),
+             ("balk", 30.0, "exp", 1.0), ("balk", 30.0, "lognormal", 0.5),
+             ("balk", 60.0, "lognormal", 0.5)]
+    rows = []
+    for load in (2, 5, 10, 25, 50, 100, 200, 400):
+        rate = load / s * 60
+        row = {"load": load, "erlang_c": round(required_windows(rate, s, THRESHOLD, ALPHA) / load, 4)}
+        for mode, patience, dist, cv in cases:
+            if mode == "renege" and patience > 60 and load > 200:
+                continue
+            row[f"{mode}_{dist}{patience:g}"] = round(
+                required_windows(rate, s, THRESHOLD, ALPHA, mode, patience, dist, cv) / load, 4)
+        for r in (0.0, 0.5, 1.0):
+            if load <= 200:
+                c, _ = required_windows_with_returns(rate, s, THRESHOLD, ALPHA, 30.0, r)
+                row[f"renege_exp30_returns{r:g}"] = round(c / load, 4)
+        rows.append(row)
+        print(f"  load {load:>3}: " + ", ".join(f"{k}={v}" for k, v in row.items() if k != "load"))
+    fluid = {"load": "fluid limit", "erlang_c": 1.0}
+    for mode, patience, dist, cv in cases:
+        fluid[f"{mode}_{dist}{patience:g}"] = round(1 - fluid_discount(THRESHOLD, ALPHA, patience,
+                                                                       dist, cv), 4)
+    d = fluid_discount(THRESHOLD, ALPHA, 30.0)
+    for r in (0.0, 0.5, 1.0):
+        fluid[f"renege_exp30_returns{r:g}"] = round((1 - d) / (1 - r * d), 4)
+    rows.append(fluid)
+    write_csv("e8a_fluid.csv", rows)
+
+
+def run_e8b():
+    """Time-varying tests of the regime predictions (H15-H17)."""
+    from abandonment import score
+    print("E8b: abandonment across office sizes and targets (time-varying, hidden queue)")
+    s = 8.0
+    patience = {"none": None, "exp30": (30.0, "exp", 1.0), "logn60": (60.0, "lognormal", 0.5)}
+
+    def plan_for(rates, alpha, pname):
+        if patience[pname] is None:
+            plan, _ = simulation_staffing(rates, s, THRESHOLD, alpha, criterion="ucb")
+            return plan
+        mean, dist, cv = patience[pname]
+        plan, _ = simulation_staffing(rates, s, THRESHOLD, alpha, criterion="ucb",
+                                      metric="fail", **_patience_kw("renege", mean, dist, cv))
+        return plan
+
+    rows = []
+    cells = [(f"R{load:g}", arrival_profile(load, s, 0.6), 0.10, load)
+             for load in (1, 2, 4, 8, 16, 32)]
+    cells += [(name, rates, alpha, load)
+              for name, rates, load in (("office", OFFICE_RATES, 1.5),
+                                        ("R8", arrival_profile(8.0, s, 0.6), 8.0))
+              for alpha in (0.02, 0.20)]
+    for name, rates, alpha, load in cells:
+        base = plan_for(rates, alpha, "none")
+        for pname in ("exp30", "logn60") if alpha == 0.10 else ("exp30",):
+            plan = plan_for(rates, alpha, pname)
+            mean, dist, cv = patience[pname]
+            ev = score(plan, rates, s, THRESHOLD, **_patience_kw("renege", mean, dist, cv))
+            rows.append({"office": name, "mean_load": load, "alpha": alpha, "patience": pname,
+                         "no_abandonment_plan": json.dumps(base),
+                         "no_abandonment_hours": sum(base),
+                         "fail_target_plan": json.dumps(plan), "fail_target_hours": sum(plan),
+                         "saving": round(1 - sum(plan) / sum(base), 4),
+                         "worst_fail": round(ev.worst("fail"), 4),
+                         "fail_misses": ev.misses("fail", alpha)})
+            print(f"  {name:<7} alpha={alpha:<4} {pname:<6}: {sum(base)} h -> {sum(plan)} h "
+                  f"({100 * rows[-1]['saving']:+.1f}% saving), worst fail {ev.worst('fail'):.3f}")
+    write_csv("e8b_regimes.csv", rows)
+
+    # H17: the office's no-abandonment plan under different patience shapes
+    base = plan_for(OFFICE_RATES, 0.10, "none")
+    ref = score(base, OFFICE_RATES, s, THRESHOLD)
+    rows = [{"patience": "none", "worst_hour_rate": round(ref.worst("late"), 4), "delta": 0.0,
+             "rate_by_hour": json.dumps([round(x, 4) for x in ref.served_late])}]
+    for label, mean, dist, cv in [("exp30", 30.0, "exp", 1.0), ("exp60", 60.0, "exp", 1.0),
+                                  ("exp120", 120.0, "exp", 1.0),
+                                  ("logn30", 30.0, "lognormal", 0.5),
+                                  ("logn60", 60.0, "lognormal", 0.5),
+                                  ("logn120", 120.0, "lognormal", 0.5)]:
+        ev = score(base, OFFICE_RATES, s, THRESHOLD, **_patience_kw("renege", mean, dist, cv))
+        rows.append({"patience": label, "worst_hour_rate": round(ev.worst("fail"), 4),
+                     "delta": round(ev.worst("fail") - ref.worst("late"), 4),
+                     "rate_by_hour": json.dumps([round(x, 4) for x in ev.fail])})
+        print(f"  office plan {base}, {label:<7}: worst-hour failure {ev.worst('fail'):.4f} "
+              f"(no abandonment: late {ref.worst('late'):.4f}, delta {rows[-1]['delta']:+.4f})")
+    write_csv("e8b_patience_shape.csv", rows)
+
+
 EXPERIMENTS = {"e1b": run_e1b, "e1": run_e1, "e2": run_e2, "e2b": run_e2b,
-               "e3a": run_e3a, "e3b": run_e3b, "e4": run_e4, "e5": run_e5, "e6": run_e6}
+               "e3a": run_e3a, "e3b": run_e3b, "e4": run_e4, "e5": run_e5, "e6": run_e6,
+               "e7a": run_e7a, "e7": run_e7, "e7c": run_e7c, "e8a": run_e8a, "e8b": run_e8b}
 
 
 def main():

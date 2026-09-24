@@ -19,6 +19,8 @@ The target is that at most 10% of each hour's arrivals wait more than 15 minutes
 - **Two methodological results.** Common random numbers cut the variance of plan-vs-plan comparisons by a median of 40×. And the choice of service-level definition alone changes the required staffing for the same office from 18 to 22 staff-hours, which is a policy decision disguised as a technical one.
 - **Shifts matter more than the staffing rule (Round 2).** Real staff work 4- and 8-hour shifts. The textbook two-step method (set an hourly requirement, then choose shifts with an integer program) costs up to **68%** more paid hours than the ideal hour-by-hour plan. Searching over shift schedules directly with simulation cuts that to **14–33%**, and is up to **15%** cheaper than the best two-step schedule. Unlike the call-center finding of Ingolfsson et al. (2002), two-step schedules here never miss the target: they are safe but expensive.
 - **Appointments save staff through shifts, not hours (Round 3).** Moving demand to appointments barely changes the hour-by-hour staffing need: at most −6.5% even with 75% of demand booked. But booked into the quiet hours, appointments flatten demand enough for full-day shifts to fit it. That cut an 8-Erlang office's roster from 100 to 76 paid hours (−24%), against −4% when bookings follow the demand curve. A small office saw no change. Appointment holders waited less than walk-ins in every setting.
+- **A served-citizens metric rewards understaffing (Round 4).** When walk-ins can leave, the usual ticket-log metric (the late share of *served* citizens) is met with 18–27% fewer staff-hours than the citizen view (late *or* left), while 11–19% of the busiest hour's arrivals walk out. If leavers must come back for a mandatory service, those savings become repeat visits: 18 per 100 transactions in the office, and at 8 Erlangs a plan below the raw workload that collapses. Returners who "come back first thing" swamp the opening hour. Whether a visible line loses more citizens than a hidden ticket queue depends on the shape of patience, as a Jensen argument predicts, but the visible line always has the higher failure rate. Erlang-A staffing was safe except where its exponential-patience assumption failed.
+- **When leaving helps and when it hurts (Round 5).** Abandonment lowers the staffing need only if the target is lenient relative to the office's size. At fixed staffing it raises the failure rate below a crossover utilization ρ\*(c) and lowers it above. A strict 2% target makes abandonment cost 12–15% more staff; a 20% target saves up to 16%. For large offices a fluid limit predicts the saving as min(α, G(T)) of the load, where G is the patience CDF: 10.5% measured at 32 Erlangs against 10% predicted, and 0.4% against 0.35% for patient citizens. With mandatory returns the saving is exactly zero.
 - **Independent validation (Round 2).** An independent implementation in the open-source Ciw library agrees with CivicQ: 0 of 54 tests reject under constant staffing, and CivicQ stays within Ciw's bounds in all 25 hours tested under changing staffing. Along the way we found that Ciw's hourly schedules silently add overtime capacity at every shift boundary, which halves the measured lateness if used naively.
 
 ## 1. Background and gap
@@ -98,6 +100,22 @@ The simulator (C++) is validated against the exact Erlang-C mean wait and per-ho
 - **H8.** Converting demand to appointments saves staff mainly by smoothing demand. Counter-cyclical placement (booking the quiet hours) saves clearly more than placement proportional to demand.
 - **H9.** With 15% no-shows and walk-ins still present, a small office (about 1.5 Erlangs) saves less than 10% of roster paid hours, even with half of demand booked.
 - **H10.** Under FIFO, appointment holders get *worse* late rates than walk-ins when placement is proportional, because they are booked into the peaks. Counter-cyclical placement reverses this.
+
+**Round 4** (stated before running E7; informed only by the stationary per-hour models in `research/abandonment.py`, not by any simulation of the office):
+
+Walk-ins may now leave. Two behaviours share one patience distribution. In a **hidden queue** (ticket number, no view of the line) a citizen *reneges* once their wait exceeds their patience. In a **visible queue** a citizen *balks*: they see q people waiting at c windows, expect to wait (q + 1)·S/c, and leave at once if that exceeds their patience. Two per-hour metrics are compared. The **served-late rate** (late / served) is what a ticket log of served citizens shows. The **failure rate** ((late + left) / everyone who came) is the citizen's view.
+
+- **H11 (ticket-log illusion).** With mean patience 30 min, the cheapest plan meeting the per-hour target on the served-late rate uses at least 10% fewer staff-hours than the cheapest plan meeting it on the failure rate, in both offices and under both behaviours. It loses at least 5% of arrivals in its worst hour.
+- **H12 (visible vs hidden queue).** For one citizen facing an uncertain wait V, a hidden queue loses them with probability E[F(V)], where F is the patience CDF. A visible queue loses them with probability F(estimate), and the estimate ignores people ahead who would have left. By Jensen's inequality, where F is concave (exponential patience) the visible queue loses **more** citizens at the same staffing. Where F is convex over typical waits (lognormal, CV 0.5, mode ≈ 21 min) the ordering may reverse. Prediction: with exponential patience the visible queue loses more citizens in ≥ 90% of plan × setting comparisons, and with lognormal patience it loses fewer in the majority.
+- **H13 (mandatory services).** A citizen who leaves still needs the permit, so they return on a later day (probability r = 1). Prediction for the served-late-optimal plan (exponential patience, mean 30): at least 5 repeat visits per 100 transactions. If returners come at opening, the opening hour's failure rate rises by at least 5 points over the no-return case. The office's own ticket log still shows the target met in every hour, so the office could not detect the problem from its own data.
+- **H14 (analytic rule under abandonment).** Per-hour SIPP built on the stationary abandonment models (Erlang-A for reneging, the balking chain for balking) meets the failure target with no significant misses in every setting.
+
+**Round 5** (stated before running E8b; derived from the stationary models and a fluid argument, §5.9). Round 4 found that abandonment raised the small office's staffing need but cut the 8-Erlang office's. The stationary analysis attributes this to two regimes. At a fixed number of windows, abandonment lowers the failure rate only above a crossover utilization ρ\*(c), which rises toward 1 with c. Below it, early leavers outweigh queue thinning. Abandonment can raise the requirement only when the target α is stricter than the Erlang-C late rate at that crossover, α\*(c), which falls from 0.14 at c = 1 to 0.02 at c = 80. For large offices a fluid limit gives the saving as a share of the offered load: d = min(α, G(T)), where G is the patience CDF. With a return probability r it becomes d(1 − r)/(1 − rd), which is zero for mandatory services.
+
+- **H15 (the saving grows with size toward the fluid limit).** Time-varying offices (S = 8, A = 0.6), hidden queue, α = 0.10. With exponential patience (mean 30), the staff-hour saving of the failure-target plan over the no-abandonment plan grows with mean load from 1 to 32 Erlangs and lies within 6–14% at 32 Erlangs. With lognormal patience (mean 60, CV 0.5; G(15) = 0.35%), the saving is at most 3% at every size.
+- **H16 (a strict target reverses the sign).** At α = 0.02, abandonment (exponential, mean 30) **raises** the staff-hours needed in both the office and the 8-Erlang office. At α = 0.20 it lowers or leaves them unchanged in both.
+- **H17 (small offices feel only the early leavers).** Many-server theory says a moderately loaded system depends on patience mainly through its density near zero (Zeltyn & Mandelbaum 2005). Prediction for the office's plan: exponential patience at means 30, 60 and 120 raises the worst hour's failure rate above its no-abandonment late rate. Lognormal patience (CV 0.5, density 0 at zero) at means 60 and 120 changes it by less than 1 point.
+- **H18 (returns remove the discount).** In the stationary per-hour model with returns at probability r, staffing per unit of offered load converges to (1 − d)/(1 − rd) as load grows: 0.90, 0.947 and 1.00 for r = 0, 0.5 and 1 with exponential patience.
 
 *Change after pre-registration (Round 2):* while testing H7 we found that Ciw cannot express CivicQ's staffing-change rule (see §5.6). H7 was therefore split into a strict test for constant staffing and a bounds test for changing staffing *before* E5 was run. This deviation is disclosed here.
 
@@ -301,11 +319,155 @@ Both are scored on the separate evaluation days. The simulator's appointment fea
 
 **H10: rejected.** Appointment holders fared better than walk-ins under every placement.
 
+### 5.8 When citizens leave (E7)
+
+Walk-ins may now abandon; booked citizens never do. Patience is exponential with mean 30 or 60 min, or lognormal with mean 30 and CV 0.5. Exponential patience is the call-center convention. Lognormal is more plausible for someone who has travelled to an office, since almost nobody leaves in the first minutes. Each behaviour (§4, Round 4) and each metric gets its own SGS-UCB plan in the office and in the 8-Erlang office with S = 16 (as in E6). Every plan is scored under both behaviours on the evaluation days. Patience has its own random stream, so common random numbers still hold, and with abandonment switched off the simulator's output is byte-identical to before.
+
+**Validation (E7a).** Under constant demand and staffing the simulator matches the exact stationary models:
+- reneging against Erlang-A (M/M/c+M) in 4 cases, including one that is overloaded without abandonment;
+- balking against its birth-death chain in 6 cases, with exponential and lognormal patience.
+
+All 20 comparisons of failure and served-late rates have |z| < 1.2. The served-late SGS optimum in the office was also certified by exhaustive search. No plan in {1..4}⁸ cheaper than SGS meets the target, for either behaviour or metric (5,115 to 44,542 candidates each). Lower bounds could not be used here, because the served-late rate is **not monotone in staffing**: an extra window serves impatient citizens who would otherwise have left, and they count as served late.
+
+![Abandonment](figures/fig9_abandonment.png)
+
+**The ticket-log illusion.** Staff-hours needed to meet the per-hour 10% target:
+
+| Setting | No abandonment | Failure target (hidden / visible) | Served-late target (hidden / visible) | Worst-hour loss on the served-late plan |
+|---|---|---|---|---|
+| Office, exp 30 | 21 | 22 / 22 | **16 / 18** | 17% / 11% |
+| Office, exp 60 | 21 | 22 / 22 | 18 / 18 | 6% / 7% |
+| Office, logn 30 | 21 | 20 / 21 | 18 / 19 | 4% / 4% |
+| 8 E, exp 30 | 77 | 71 / 73 | **57 / 57** | 19% / 18% |
+| 8 E, exp 60 | 77 | 71 / 72 | 65 / 67 | 8% / 8% |
+| 8 E, logn 30 | 77 | 72 / 74 | 69 / 71 | 3% / 6% |
+
+1. **A served-citizens metric rewards understaffing.** With exponential patience of mean 30, the plans tuned to the ticket log use 18–27% fewer staff-hours than the plans tuned to the citizen view, and lose 11–19% of arrivals in their worst hour. Judged by the citizen view, they miss the target significantly in 4 to 8 hours of the day. At the 8-Erlang office the 57 h plan is **below the raw workload** (8 Erlangs × 8 h = 64 window-hours). It is feasible on paper only because citizens give up.
+2. **The illusion depends on the patience shape.** With lognormal patience few citizens leave early, so queues are not thinned. The gap falls to 4–10% and the worst-hour loss to 3–6%.
+3. **Abandonment cuts both ways for the citizen target.** In the small office it adds a window-hour (22 vs 21 h). At 8 Erlangs it saves 4–8%. *Correction (Round 5):* the first draft of this section blamed the extra hour on early leavers raising the staffing requirement. The stationary analysis in §5.9 shows the per-hour requirement at α = 0.10 never rises. The extra hour is a marginal effect: the 21 h plan's worst hour moves from 9.2% to 10.8% (§5.9, E8b), because most of the office's hours lie in the regime where abandonment raises the failure rate at fixed staffing.
+
+**H11: supported for exponential patience, rejected for lognormal.** The gap was 18–27% (≥ 10%) with 11–19% worst-hour losses (≥ 5%) in all four exponential cells. Under lognormal patience it was 4–10% with 3–6% losses.
+
+**Visible vs hidden queues.** On identical plans and patience:
+- With exponential patience the visible queue lost more citizens in **21 of 21** comparisons (4–10% more).
+- With lognormal patience it lost fewer in **8 of 13** (ratios 0.69–1.19).
+
+This is the curvature argument of H12: judging from the line helps when the patience CDF is convex over typical waits and hurts when it is concave. One result was not predicted. The visible queue had the **higher failure rate in 34 of 34** comparisons, even where it lost fewer citizens. A citizen who joins a visible line has committed and will be served, however late; in a hidden queue the same citizen would have left and been counted once, as lost. The visible queue's advantage is time: its leavers walk out at once. Hidden-queue leavers spend 5–6 min (exponential) or about 15 min (lognormal) inside first.
+
+**H12: supported.** An unpredicted corollary: the visible queue never needed fewer staff-hours for the failure target (0 to +2 h).
+
+**Mandatory services (E7c).** The service is mandatory, so every citizen who leaves returns on a later day (r = 1). We solve the steady state R = L(R) by bisection, where R is daily returns and L(R) the daily losses. Returners either arrive like everyone else, or all come at opening.
+
+| Plan (hidden queue, exp 30) | Returns spread over the day | Returns at opening |
+|---|---|---|
+| Office, served-late plan (16 h) | 18 repeat visits / 100; ticket log's worst hour 8.5% → 13.5% | 96 / 100; 8AM: 12% → **93%** late or lost |
+| Office, failure plan (22 h) | 4.5 / 100; little change | 4.5 / 100; 8AM: 2.4% → 5.1% |
+| 8 E, served-late plan (57 h) | **158 / 100**; ticket log 99% late in the worst hour | no steady state; the backlog grows without bound |
+| 8 E, failure plan (71 h) | 9.5 / 100 | 31 / 100; 8AM: 8% → **78%** |
+
+1. **The staff saved on a ticket-log target is paid for in repeat visits.** The 16 h office plan generates 4 times the repeat visits of the 22 h plan. The 57 h plan at 8 Erlangs collapses once lost citizens must come back.
+2. **The morning is where it breaks.** "Come back early tomorrow" concentrates the returners in the first hour. That hour then fails even under the citizen-optimal plan at 8 Erlangs (78% late or lost). The office starts empty, so the 8AM hour was the one that analytic rules *over*staffed in §5.2; with returners it becomes the bottleneck.
+3. **Whether the office would notice depends on the queue.** On the office's served-late plan, returns spread over the day push the hidden queue's ticket log over target in 2 hours, but the visible queue's stays within target (worst hour 6.2%). Returners at opening show up in every ticket log.
+
+**H13: partly supported.** The served-late plan produced 18 repeat visits per 100 (≥ 5), and returns at opening raised its 8AM failure rate by 81 points (≥ 5). But the ticket log did *not* stay clean in every case: it hid the problem only for a visible queue with returns spread over the day.
+
+**Analytic staffing under abandonment.** In the office, per-hour SIPP built on the stationary abandonment models gives 22 h in every setting, the same plan as Erlang-C SIPP. At 8 Erlangs it saves 4–8 h over Erlang-C SIPP (73–77 vs 81 h) and lands 1–4 h above the simulation optimum. It met the failure target in 11 of 12 settings. The exception is the 8-Erlang office with lognormal patience and a hidden queue: Erlang-A there assumes exponential patience with the same mean, and the plan misses in 2 hours (worst 13.1%). The exponential model predicts many early leavers who shorten the line; with lognormal patience they stay, so the real queue is longer than modelled.
+
+**H14: rejected (1 of 12).** Erlang-A is safe when its patience assumption holds. It is not conservative when patience has few early leavers. The balking model uses the actual patience distribution and never missed.
+
+### 5.9 Why abandonment raises staffing in some offices and lowers it in others (E8)
+
+Round 4 found that abandonment made the small office's citizen target *more* expensive and the 8-Erlang office's *cheaper*. Round 5 explains why, predicts where the switch happens, and tests the predictions with the time-varying simulator. E8a uses only the exact stationary models (Erlang-A for a hidden queue, the balking chain for a visible one; S = 8, T = 15). E8b is simulation. All E8b plans are SGS-UCB, chosen on the design days, and none has a significant miss on the evaluation days.
+
+![Regimes](figures/fig10_regimes.png)
+
+**Two opposing effects at fixed staffing.** Abandonment changes the failure rate P(late or left) in two ways:
+- **Early leavers** raise it. A citizen whose wait would have been short still leaves if their patience is shorter still. Without abandonment that citizen would have been served on time.
+- **Queue thinning** lowers it. Each leaver shortens the wait of everyone behind them.
+
+For each window count c there is a crossover utilization ρ\*(c). Below it early leavers dominate, and above it thinning does (Fig. 10a):
+
+| Windows c | 1 | 2 | 3 | 4 | 10 | 30 | 80 |
+|---|---|---|---|---|---|---|---|
+| ρ\* (exponential patience, mean 30) | 0.42 | 0.58 | 0.66 | 0.72 | 0.86 | 0.94 | 0.98 |
+| Erlang-C P(W > 15) at ρ\* | 0.14 | 0.09 | 0.07 | 0.06 | 0.04 | 0.03 | 0.02 |
+
+Below ρ\* waits are short and rare, so there is little queue to thin, while any citizen who waits might leave early. Above it the queue is long enough that removing people from it matters. ρ\* rises toward 1 like 1 − β\*/√c, the Halfin–Whitt scaling, with β\* ≈ 0.6 falling slowly to 0.2 as c grows. Less patient citizens move the boundary up, since there are more early leavers (ρ\* = 0.48 at c = 1 for mean 15 against 0.35 for mean 120). The office's plan has 6 of its 8 hours below the boundary. The 8-Erlang office's plan has 5 of 8 above it, and two of those run *over* capacity (ρ = 1.14 and 1.01), which is feasible only because the office opens empty.
+
+**When the requirement itself moves.** A per-hour requirement can rise only if abandonment pushes a feasible staffing over the target. That needs a staffing in the "raises" region whose Erlang-C late rate is just under α. Since the Erlang-C late rate at ρ\* is α\*(c) (bottom row of the table), abandonment can raise the requirement only when **α < α\*(c)**. Counted over 160 loads from 0.1 to 16 Erlangs (exponential, mean 30):
+
+| Target α | 0.20 | 0.10 | 0.05 | 0.02 | 0.01 |
+|---|---|---|---|---|---|
+| Loads where abandonment adds a window | 0 | 0 | 4 | 118 | 147 |
+| Loads where it removes one | 135 | 116 | 38 | 0 | 0 |
+
+At the report's α = 0.10 the stationary requirement never rises. The office's extra hour comes from its time-varying plan, whose worst hour was already near 10% (see H17 below). With a strict target the sign reverses everywhere.
+
+**The fluid limit.** In a large office Erlang-C is bound by stability, not by the target: at the Erlang-C staffing for 8 Erlangs or more, P(W > 15) is only 1–2%. The office needs c ≥ R + (S/T)·ln(1/α), about R + 1.2 windows, for the queue to stay short at all. Abandonment removes that floor. In the fluid model (Whitt 2006b), with c < R windows a share 1 − c/R of arrivals must leave, and the rest wait w with G(w) = 1 − c/R, where G is the patience CDF. The failure rate is 1 − c/R while w ≤ T and 1 beyond it. So the cheapest feasible staffing is
+
+c/R → 1 − min(α, G(T)).
+
+If a fraction r of leavers returns, the fresh demand must be served eventually, so the served rate R(1 − G)/(1 − rG) equals c. The limit then becomes (1 − d)/(1 − rd), with d = min(α, G(T)). For a mandatory service (r = 1) the discount is exactly zero.
+
+Exact per-hour staffing per unit of load (Fig. 10b):
+
+| Load (Erlangs) | Erlang-C | exp 30 | logn 30 | logn 60 | exp 30, r = 0.5 | exp 30, r = 1 |
+|---|---|---|---|---|---|---|
+| 25 | 1.08 | 0.96 | 1.00 | 1.04 | 1.00 | 1.04 |
+| 100 | 1.02 | 0.91 | 0.96 | 1.01 | 0.95 | 1.01 |
+| 200 | 1.01 | 0.905 | 0.95 | 1.005 | 0.95 | 1.005 |
+| 400 | 1.005 | 0.9025 | 0.94 | 1.0025 | — | — |
+| **Fluid limit** | 1 | **0.90** | 0.90 | **0.9965** | **0.947** | **1.00** |
+
+Exponential patience reaches the limit quickly. Lognormal mean 30 converges slowly because G(15) = 0.109 is barely above α. Lognormal mean 60 has G(15) = 0.35%, so it gets essentially no discount at any size.
+
+**Time-varying offices (E8b).** Offices with S = 8 and demand swing A = 0.6, hidden queue, α = 0.10:
+
+| Mean load (Erlangs) | 1 | 2 | 4 | 8 | 16 | 32 | Fluid limit |
+|---|---|---|---|---|---|---|---|
+| Saving, exponential 30 | 0% | 0% | 4.9% | 8.3% | 8.9% | **10.5%** | 10% |
+| Saving, lognormal 60 | 0% | 0% | 0% | 1.4% | 0.7% | **0.4%** | 0.35% |
+
+**H15: supported.** The exponential saving grows with size and reaches 10.5% at 32 Erlangs (predicted 6–14%). The lognormal saving never exceeds 1.4% (predicted ≤ 3%). The same patience *mean* gives 10% or nothing depending on how much of the population gives up within 15 minutes.
+
+**A strict target reverses the sign.** Staff-hours with and without abandonment (exponential, mean 30):
+
+| Office | α = 0.02 | α = 0.10 | α = 0.20 |
+|---|---|---|---|
+| Office (1.5 E) | 26 → **30 h (+15%)** | 21 → 22 h | 18 → 18 h |
+| 8 E, S = 8 | 78 → **87 h (+12%)** | 72 → 66 h | 69 → **58 h (−16%)** |
+
+**H16: supported.** A strict target turns abandonment into a large cost in both offices, and a lenient one makes it a large saving.
+
+**What small offices respond to.** The office's no-abandonment plan [2,4,2,2,2,3,3,3] has a worst-hour late rate of 9.21%. With abandonment its worst-hour failure rate is:
+
+| Patience | exp 30 | exp 60 | exp 120 | logn 30 | logn 60 | logn 120 |
+|---|---|---|---|---|---|---|
+| Worst-hour failure | 10.77% | 9.62% | 9.31% | 8.13% | 9.06% | 9.18% |
+| Change (points) | **+1.57** | +0.42 | +0.10 | −1.08 | −0.15 | −0.03 |
+
+With exponential patience the penalty scales with 1/θ, which is the patience density at zero. Lognormal patience has zero density at zero, so its early-leaver penalty vanishes; it only helps, and barely at long means. This matches the many-server result that in moderately loaded systems patience matters mainly through its density near zero (Zeltyn & Mandelbaum 2005). It also explains why Round 4's lognormal cells behaved almost as if nobody left.
+
+**H17: supported.** All three exponential cases raise the worst hour; lognormal 60 and 120 change it by less than 1 point.
+
+**Returns (H18): supported.** The stationary fixed point converges to 0.905, 0.950 and 1.005 at 200 Erlangs for r = 0, 0.5 and 1 (predicted limits 0.90, 0.947 and 1.00). For a mandatory service, abandonment does not reduce long-run staffing at all; it only converts failures into repeat visits. This is the general reason E7c's ticket-log plans collapsed at 8 Erlangs: they relied on a discount that exists only if leavers never come back.
+
+**Visible vs hidden, revisited.** Round 4 found the visible queue had the higher failure rate on 34 of 34 plans. Per citizen with k people ahead and wait V, a hidden queue serves on time with probability E[S(V); V ≤ T], where S is patience survival. A visible queue does so with probability S(E V)·P(V ≤ T). Conditioning on V ≤ T lowers the relevant wait, and if S is convex on [0, T], Jensen's inequality adds to that. So for exponential patience the hidden queue is at least as good in *every* state: it was in all 506 states checked. For lognormal or fixed patience the visible queue wins in about 20% of states, by at most 0.7 points at mean 30. The 34-of-34 result is therefore guaranteed only for exponential patience, and is an aggregate outcome otherwise.
+
+**What this changes in practice.** Whether walk-outs make an office cheaper or dearer to run is not a property of the office alone. It depends on three things:
+1. **The target.** α against α\*(c) decides the sign.
+2. **The size.** Utilization against ρ\*(c) decides it at fixed staffing, and in large offices the fluid limit decides the size of the saving.
+3. **Who leaves early.** The patience density at zero drives small offices, and G(T) drives large ones.
+
+A "saving" from abandonment is only real if the people who leave do not need to come back.
+
 ## 6. Threats to validity
 - **Synthetic demand.** Arrival rates follow a stylized double-peak profile. There are no public arrival-count data for walk-in offices; the CA DMV data contain only waits.
 - **Exponential service in E1.** This favours the Erlang-C rules, which assume it. With CV < 1, as is typical for lognormal service, the analytic rules would overstaff even more (E2).
 - **Fixed service threshold.** T = 15 min is the same for every S. The same target is harder to meet with S = 32 than with S = 4.
-- **Fixed schedule structure.** One-hour blocks. §5.5 adds shifts, but without lunch breaks, part-time limits or labor rules. There is no abandonment, no appointments and a single service type.
+- **Fixed schedule structure.** One-hour blocks. §5.5 adds shifts, but without lunch breaks, part-time limits or labor rules. Rounds 1–2 have no abandonment or appointments, and every round has a single service type.
+- **The regime analysis (§5.9) is per hour and stationary.** The crossover and the fluid limit come from steady-state models. The time-varying tests agree with them, but the office's own +1 h is a marginal effect near the target, not a stationary one. The fluid limit is an asymptotic argument; the table shows how fast each case converges.
+- **Abandonment is stylized (§5.8).** Patience distributions are assumed, not calibrated; no public data measure walk-away behaviour at government offices. Balkers judge the wait from the line with the true mean service time and ignore people ahead who would leave. There is no mixed behaviour (balking *and* reneging) and no priority or callback. In E7c every leaver returns (r = 1) with the same patience, either following the demand curve or all at opening; real return timing lies somewhere between, and the fixed point assumes a stationary day-to-day regime.
 - **Appointments are simplified.** They are served FIFO, with no priority for booked citizens. No-shows are independent with a fixed rate, bookings are evenly spaced within each hour, and there are no walk-in balking or booking-lead-time effects.
 - **Integrated search is a local search.** It is multi-started and never worse than its two-step start, but it is not proven optimal for large offices.
 - **The Ciw bounds test is weak for long-service, large offices** (§5.6); the strict constant-staffing test is the main evidence.
@@ -321,18 +483,29 @@ Both are scored on the separate evaluation days. The simulator's appointment fea
 6. **For larger offices, measure how much daily demand varies.** At 20% day-to-day variation it costs 19–22% more staff.
 7. **Plan shifts, not hours, and plan them with simulation.** Converting an hourly requirement into shifts wastes up to 15% of paid hours in medium and large offices. Searching over shift schedules directly avoids it, and helps more than adding new shift types.
 8. **If you offer appointments, fill the quiet hours first.** Booking against the demand curve lets full-day shifts fit the day, saving up to about a quarter of paid hours at 8 Erlangs. Booking in proportion to demand saves almost nothing. Adjust for no-shows by overbooking.
-9. **If you use Ciw for time-varying staffing, merge consecutive equal shifts.** Otherwise each shift boundary adds phantom overtime capacity.
+9. **Count the citizens who leave, not only those you serve.** A late rate computed from served tickets improves as people give up. Log walk-outs and abandoned tickets, and set the target on "late or left". For a mandatory service, every walk-out is a repeat visit, often at opening the next day, so staff the first hour for returners.
+10. **Don't assume walk-outs save staff.** They do only in larger offices with lenient targets, by at most the target share α and at most the share of citizens who would give up within the threshold. With strict targets or in small offices they cost staff, and for a mandatory service the long-run saving is zero.
+11. **Don't pick Erlang-A's patience model by habit.** Its exponential assumption can understaff when few people leave early. If the line is visible, a balking model with a realistic patience distribution is exact and was safe here.
+12. **If you use Ciw for time-varying staffing, merge consecutive equal shifts.** Otherwise each shift boundary adds phantom overtime capacity.
 
 ## 8. Reproducing
 ```bash
 g++ -std=c++17 -O2 -static -Icpp/include -o cpp/build/queue_sim.exe cpp/src/simulation.cpp cpp/src/main.cpp
 pip install -r research/requirements.txt   # numpy, matplotlib, scipy, ciw
 python research/test_research.py
-python research/experiments.py --all     # about 25 minutes on 8 cores
+python research/experiments.py --all     # about 60 minutes on 8 cores (E7 takes 25, E8a 3, E8b 5)
 python research/figures.py
 ```
 
 ## References
+- Aguir, S., Karaesmen, F., Akşin, O. Z., & Chauvet, F. (2004). The impact of retrials on call center performance. *OR Spectrum*, 26, 353–376.
+- Garnett, O., Mandelbaum, A., & Reiman, M. (2002). Designing a call center with impatient customers. *Manufacturing & Service Operations Management*, 4(3), 208–227.
+- Hassin, R., & Haviv, M. (2003). *To Queue or Not to Queue: Equilibrium Behavior in Queueing Systems*. Kluwer.
+- Halfin, S., & Whitt, W. (1981). Heavy-traffic limits for queues with many exponential servers. *Operations Research*, 29(3), 567–588.
+- Whitt, W. (2006b). Fluid models for multiserver queues with abandonments. *Operations Research*, 54(1), 37–54.
+- Zeltyn, S., & Mandelbaum, A. (2005). Call centers with impatient customers: many-server asymptotics of the M/M/n+G queue. *Queueing Systems*, 51, 361–402.
+- Mandelbaum, A., & Zeltyn, S. (2009). Staffing many-server queues with impatient customers: Constraint satisfaction in call centers. *Operations Research*, 57(5), 1189–1205.
+- Naor, P. (1969). The regulation of queue size by levying tolls. *Econometrica*, 37(1), 15–24.
 - Cayirli, T., & Veral, E. (2003). Outpatient scheduling in health care: A review of literature. *Production and Operations Management*, 12(4), 519–549.
 - Hassin, R., & Mendel, S. (2008). Scheduling arrivals to queues: A single-server model with no-shows. *Management Science*, 54(3), 565–572.
 - Staffing a service system with appointment-based customer arrivals (2014). *Journal of the Operational Research Society*, 65(10). doi:10.1057/jors.2013.110
