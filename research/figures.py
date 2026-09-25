@@ -1133,6 +1133,116 @@ def fig_wait_displays():
     save(fig, "fig21_wait_displays.png")
 
 
+# ----------------------------------------------------------------------------
+E16_PAT_COLOR = {"exp30": "#2a78d6", "logn30": "#e34948", "logn30cv15": "#1baf7a"}
+E16_PAT_LABEL = {"exp30": "exponential", "logn30": "lognormal CV 0.5",
+                 "logn30cv15": "lognormal CV 1.5"}
+
+
+def fig_display_theory():
+    """Round 13: the exact law, its optimum at the threshold, and out-of-sample predictions."""
+    from displays import cutoff, display_hour
+    from learning import Patience
+    pats = {"exp30": Patience("exp", 30.0), "logn30": Patience("lognormal", 30.0, 0.5),
+            "logn30cv15": Patience("lognormal", 30.0, 1.5)}
+    val = load("e16a_theory_validation.csv")
+    reg = load("e16b_regimes.csv")
+    fig, (a, b) = plt.subplots(1, 2, figsize=(12.5, 4.6))
+    c, s, rho = 8, 16.0, 1.2
+    lam = rho * c / s
+    ms = np.linspace(2.0, 45.0, 87)
+    for pname, p in pats.items():
+        col = E16_PAT_COLOR[pname]
+        a.plot(ms, [100 * display_hour(c, lam, s, p, 15.0, cutoff(m)).fail for m in ms],
+               color=col, lw=1.8, label=E16_PAT_LABEL[pname])
+        a.axhline(100 * display_hour(c, lam, s, p, 15.0).fail, color=col, lw=1, ls=":")
+        for r in val:
+            if (int(r["windows"]), float(r["rho"]), r["patience"]) == (c, rho, pname)                     and r["display"].startswith("O-M"):
+                a.errorbar(float(r["display"][3:]), 100 * float(r["fail_sim"]),
+                           yerr=196 * float(r["se"]), fmt="o", color=col, ms=5, capsize=2)
+    a.axvline(15.0, color=MUTED, lw=1)
+    a.set_xlabel("Cutoff M (minutes): the display says \"over M\" from there on")
+    a.set_ylabel("Late or left (%)")
+    a.set_title(f"(a) Stationary, c = {c}, ρ = {rho}: theory (lines), simulation (dots)",
+                loc="left")
+    a.text(15.4, a.get_ylim()[0] + 0.5, "T = 15", color=MUTED, va="bottom", fontsize=8)
+    a.legend(fontsize=7.5, title="dotted: hidden queue", title_fontsize=7.5)
+    lim = 0.0
+    for pname in pats:
+        pts = [(100 * float(r["dfail_pred"]), 100 * float(r["dfail_sim"])) for r in reg
+               if r["patience"] == pname and r["dfail_pred"] != "" and r["regime"] != "H"]
+        xs, ys = zip(*pts)
+        lim = max(lim, max(map(abs, xs)), max(map(abs, ys)))
+        b.scatter(xs, ys, s=16, color=E16_PAT_COLOR[pname], label=E16_PAT_LABEL[pname])
+    b.plot([-lim, lim], [-lim, lim], color=MUTED, lw=1, ls="--")
+    b.axhline(0, color=AXIS, lw=0.8)
+    b.axvline(0, color=AXIS, lw=0.8)
+    b.set_xlabel("Predicted change vs hidden (points; per-hour stationary theory)")
+    b.set_ylabel("Simulated change vs hidden (points)")
+    b.set_title("(b) 12 new offices × 10 oracle displays", loc="left")
+    b.legend(fontsize=7.5)
+    fig.tight_layout()
+    save(fig, "fig22_display_theory.png")
+
+
+def fig_display_practice():
+    """Round 13b: how much of the oracle's gain a real office can reach, and staffing."""
+    twin = load("e16d_twin.csv") + load("e16f_twin_high_quantiles.csv")
+    st = load("e16e_staffing.csv")
+    fig, (a, b) = plt.subplots(1, 2, figsize=(12.5, 4.6))
+    keys = []
+    for r in twin:
+        k = (r["office"], r["patience"], r["plan_type"])
+        if k not in keys:
+            keys.append(k)
+    for k in keys:
+        rows = sorted((r for r in twin if (r["office"], r["patience"], r["plan_type"]) == k),
+                      key=lambda r: float(r["quantile"]))
+        qs = [float(r["quantile"]) for r in rows]
+        share = [100 * float(r["share_of_oracle_gain"]) for r in rows]
+        ls = "-" if k[0].startswith("R16") else "--"
+        mk = "o" if k[2] == "lean" else "s"
+        a.plot(qs, share, ls, marker=mk, ms=3.5, lw=1.3, color=E16_PAT_COLOR[k[1]],
+               label=f"{k[0][:3].rstrip('_')} E, {k[2]}" if k[1] == "logn30" else None)
+    a.axhline(0, color=MUTED, lw=1)
+    a.axvspan(0.3, 0.7, color=GRID, alpha=0.4, lw=0)
+    a.set_ylim(-60, 75)
+    a.text(0.5, 70, "registered grid", ha="center", va="top", color=MUTED, fontsize=8)
+    a.set_xlabel("Quantile q: say \"over 15\" when P(wait ≥ 15) ≥ 1 − q")
+    a.set_ylabel("Share of the oracle cutoff's reduction (%)")
+    a.set_title("(a) Twin display: what a ticket office can predict", loc="left")
+    handles = [plt.Line2D([], [], color=c, lw=2, label=E16_PAT_LABEL[p])
+               for p, c in E16_PAT_COLOR.items()]
+    handles += [plt.Line2D([], [], color=INK_2, ls="-", label="16 E"),
+                plt.Line2D([], [], color=INK_2, ls="--", label="4 E"),
+                plt.Line2D([], [], color=INK_2, ls="", marker="o", label="lean plan"),
+                plt.Line2D([], [], color=INK_2, ls="", marker="s", label="safe plan")]
+    a.legend(handles=handles, fontsize=7, loc="lower left", ncol=2)
+    hid = {(r["office"], r["patience"], r["alpha"]): int(r["staff_hours"]) for r in st
+           if r["plan"] == "hidden" and r["regime"] == "H"}
+    for regime, marker, label in (("O-M15", "o", "oracle cutoff"), ("twin", "^", "twin (q = 0.5)")):
+        for r in st:
+            if r["plan"] != "display" or r["regime"] != regime:
+                continue
+            k = (r["office"], r["patience"], r["alpha"])
+            saved = 100 * (1 - int(r["staff_hours"]) / hid[k])
+            ratio = float(r["worst_fail"]) / float(r["alpha"])
+            miss = int(r["fail_misses"]) > 0
+            b.scatter(saved, ratio, marker=marker, s=34, color=E16_PAT_COLOR[r["patience"]],
+                      facecolors=E16_PAT_COLOR[r["patience"]] if miss else "none",
+                      linewidths=1.3)
+    b.axhline(1.0, color=MUTED, lw=1, ls="--")
+    b.set_xlabel("Staff-hours saved by staffing for the display (%)")
+    b.set_ylabel("Worst hour's failure rate / target")
+    b.set_title("(b) Staffing for the display (filled = significant miss)", loc="left")
+    b.legend(handles=[plt.Line2D([], [], color=INK_2, ls="", marker="o", mfc="none",
+                                 label="oracle cutoff"),
+                      plt.Line2D([], [], color=INK_2, ls="", marker="^", mfc="none",
+                                 label="twin display, q = 0.5")], fontsize=7.5, loc="upper left")
+    fig.tight_layout()
+    save(fig, "fig23_display_practice.png")
+
+
 if __name__ == "__main__":
     fig_gap_heatmap()
     fig_hourly()
@@ -1155,3 +1265,5 @@ if __name__ == "__main__":
     fig_learning_paths()
     fig_learning_tradeoff()
     fig_wait_displays()
+    fig_display_theory()
+    fig_display_practice()
