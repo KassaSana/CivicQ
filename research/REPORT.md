@@ -28,6 +28,7 @@ The target is that at most 10% of each hour's arrivals wait more than 15 minutes
 - **An office can learn its citizens' patience from its own ticket log, but slowly, and not the call-center way (Round 10).** A ticket system never sees anyone leave; it sees tickets called with nobody there. That makes its log current-status data, and the current-status estimator recovers the patience curve in every setting tested. The call-center recipe (call time as departure time) measures the patience CDF times the hazard of the office's own waits. Its error flips sign with the staffing plan: +28% to +39% at the citizen-optimal plans, −14% to −61% elsewhere. Learning runs at the cube-root rate: over a year of logs to pin G(15) to ±0.02, and 180 days for a well-staffed small office to tell exponential from lognormal patience. Mean patience is not identified at all. An exponential deliberately fitted to 60 days of log made Erlang-A safe in the one case where it had failed (20 of 20 plans met the target, at 77 h against the 72 h optimum).
 - **Learning by staffing (Round 11).** An office that refits patience on its own log and restaffs is running a feedback loop. With the right patience family it lands on its staffing within one month of normal operation, and running lean to learn is unnecessary. A simpler misspecified model (exponential patience) is trapped: at a safe plan citizens seldom wait long enough to reveal how patient they are, so it stops 1–4% above the right plan. Exploration days free it only partly, at 2.5–3.6 extra citizens failed per staff-hour saved. The surprise is that the correctly learned plan was *unsafe* at 32 Erlangs: the misspecified model's overstaffing had been hiding the stationary model's blind spot after the peaks. Learning the curve and staffing on lagged rates was safe in all 80 confirmatory histories and 6–7% cheaper. A new exact model for any patience curve (M/M/c+G) makes this possible.
 - **Should offices show the wait? (Round 12).** A wait display in a ticket queue sends home at once citizens who would otherwise waste time and then leave. A simple (tickets + 1)·S/c display cut leavers' wasted minutes by 40–78% and total citizen minutes by 8–28%, and changed failures by −0.6 to +1.6 points. A display that never overstates the wait is provably outcome-neutral. The costly errors are overstatements that send home people who would have been served on time. When the people sent home would have been served late anyway (lognormal patience, lean staffing), a display *lowers* failures by freeing windows. A physical line's excess failures come mostly from commitment (joiners cannot leave), not from the information it shows.
+- **The best display answers yes or no (Round 13).** For any display that depends on the wait a citizen would have, an exact stationary model gives every outcome for any patience curve. It also proves that failures are lowest when the display shows the wait while it is under the target and "over 15 minutes" once it is not. That display sends home only citizens who would have been served late, and frees their windows for others. It was the best cutoff in all 12 new offices tested. It cut failures by 49–61% when patience is lognormal with CV 0.5, by 3–13% otherwise, and citizens' lost minutes by 14–27%. The proof also corrects Round 12: sending home citizens who would be served on time costs failures only once the late ones are turned away. The limit for a real office is predicting the wait. A cutoff on the head count recovered a median of about a fifth of the achievable gain, and showing nothing below the cutoff always beat showing the count.
 - **Independent validation (Round 2).** An independent implementation in the open-source Ciw library agrees with CivicQ: 0 of 54 tests reject under constant staffing, and CivicQ stays within Ciw's bounds in all 25 hours tested under changing staffing. Along the way we found that Ciw's hourly schedules silently add overtime capacity at every shift boundary, which halves the measured lateness if used naively.
 
 ## 1. Background and gap
@@ -1189,6 +1190,61 @@ Units are citizens late or left per day, with 95% CIs where the sign is in doubt
 3. **Survivor-biased displays (LES) are safe but weak.** They seldom overstate, so they rarely add failures, but they also save citizens less than half as much time.
 4. **The visible line's problem is mainly commitment when the office is lean.** A physical line whose joiners cannot leave had 0.6–4.3 more failures a day than the hidden queue in every setting. A ticket queue with a count display keeps the information and drops the commitment.
 
+### 5.17 A theory of wait displays (E16)
+
+Round 13 turns Round 12's post hoc finding into a theorem and tests it on 12 offices not used before. Everything below H56 was registered in aba9822 before any E16 simulation, with the theory's predictions committed as `e16p_predictions.csv`. The lag-consistent predictions, the breakdown of H55's misses and the count of citizens turned away are post hoc.
+
+**The result in one line.** Among all displays that depend on the wait a citizen would have, the one with the fewest failures shows the wait while it is under the target and "over 15 minutes" once it is not. Every citizen it sends home would have been served late, which already counts as a failure. Their departure frees windows for the people behind them. This holds for any patience curve, any office size and any load (Theorem, §4).
+
+A correction to Round 12 falls out of the proof. Overstating the wait below the target (sending home citizens who would have been served on time) raises failures only once the office stops admitting citizens it will serve late. Without that cutoff it lowered failures in 118 of 216 stationary cases. Round 12's rule of thumb, that on-time false balkers cost failures, therefore holds only conditionally.
+
+**H53: supported.** The exact stationary law matched the simulator in all 54 cells (display O×2, O-M15 or O-M10; c = 2 to 16; ρ = 0.9 or 1.2; three patience curves). The largest |z| was 1.4. The simulator's oracle display was also checked exactly before registration: showing each citizen their true wait left every served citizen's outcome unchanged, as Round 12's Proposition requires.
+
+**H54: supported (12 of 12 on each part).** In the time-varying offices the cutoff at the target:
+- (a) had significantly fewer failures than the hidden queue in every office;
+- (b) had fewer failures than every scaled oracle display;
+- (c) was the failure-minimizing cutoff on the grid in all 12 offices, exactly at 15, never at a neighbour.
+
+The theorem is stationary, but its optimum survived the empty start, the closing and hourly staffing changes.
+
+| Office | Patience | Plan | Hidden | Cutoff at 15 (oracle) | Count display (Round 12) | Best count cutoff |
+|---|---|---|---|---|---|---|
+| 4 E | exp | lean | 9.8% | 8.8% (−2.2/day) | 10.7% | 9.6% (M 15) |
+| 4 E | logn 0.5 | lean | 7.7% | **3.5%** (−10.2/day) | 7.4% | 5.8% (M 12.5) |
+| 4 E | logn 1.5 | lean | 9.0% | 8.4% (−1.5/day) | 10.0% | 8.9% (M 17.5) |
+| 16 E | exp | lean | 13.4% | 11.6% (−8.4/day) | 13.7% | 12.5% (M 12.5) |
+| 16 E | logn 0.5 | lean | 7.2% | **2.8%** (−21.1/day) | 6.6% | 4.5% (M 12.5) |
+| 16 E | logn 0.5 | safe | 4.4% | 1.8% (−12.3/day) | 4.2% | 3.2% (M 12.5) |
+| 16 E | logn 1.5 | lean | 13.3% | 12.0% (−6.0/day) | 13.8% | 12.8% (M 12.5) |
+
+The table shows failure rates (late or left). The other five safe-plan offices behave like their lean rows, with smaller effects (`e16b_regimes.csv`).
+
+How much the cutoff helps depends on how many citizens the office would otherwise serve late:
+- It helps most with lognormal patience of CV 0.5, where few people leave early and many wait past the target: failures fell by 49–61%.
+- It helps least in well-staffed offices where most citizens have patience shorter than the wait, as with exponential patience or CV 1.5: failures fell by 3–13%.
+
+It also cut the minutes citizens lost (served waits plus leavers' time inside) by 14–27% in every office.
+
+**H55: (a) and (c) supported, (b) rejected.** The per-hour stationary theory ranked the 120 simulated effects well: Spearman 0.87 against a registered 0.8. But the signs disagreed at 5 of the 77 points where the prediction was large enough to test. All 5 are in the 16 E offices with safe plans. There the theory predicted, for example, −13.4 points for O×3 at lognormal CV 0.5, where the simulation found +0.2.
+
+*Post hoc.* The safe plans are staffed on lagged rates, so at the start of each peak an hour's windows sit below its instantaneous load. The stationary model then assumes a backlog the real day never builds: it predicted a 21% hidden-queue failure rate for that office, against 4.4% simulated. Predicting on lagged rates instead improved the ranking (Spearman 0.91). It fixed those misses but produced 7 new ones in the lean 16 E offices. The failure is stationarity in hours near or above overload, not the lag as such. The same hours make the theory overpredict the size of the reductions under lognormal CV 0.5: by 1.5–13 times, median about 3, wherever the prediction exceeded 2 points (Fig. 22b). Per-hour theory gives the direction and ranking of display effects, and it should not be trusted for their sign or size in hours near or above overload.
+
+(c) Round 12's post hoc mechanism held out of sample. Across 298 office × display pairs, the on-time share of the false balkers counted from the hidden queue's log predicted the simulated change in failures with Spearman 0.76 (registered: at least 0.6). The theorem says the share is not a law. Across the displays tested, though, it is a good guide.
+
+**H56: (b) supported, (a) and (c) rejected.** An office cannot see V. The display it can build counts people waiting and says "over 15" once (n + 1)·S/c reaches M.
+- (b) *Show nothing below the cutoff.* Showing the count estimate below M (C1) was never significantly better than showing nothing (C0), in 48 of 48 pairs. Showing nothing had the lower mean in 44 and was significantly better in 39. The number shown below the cutoff is where Round 12's count display lost its citizens: at the 4 E office with exponential patience, C1 at M = 15 had 0.8 points more failures than hidden, and C0 had 0.2 points fewer.
+- (a) *But the count is a weak predictor of V.* The best count cutoff achieved 4–61% of the oracle cutoff's reduction (median about 20%). It passed the registered half in only 1 of 12 offices. It recovered 22–61% in the six offices where the oracle gains at least 1.2 points, and 4–19% in the other six.
+- (c) The best count cutoff was 15 or more in only 7 of 12 offices, against the registered 10. It was 12.5 in the five offices where it helped most. Registering "count overstates V, so cut later" ignored the correction above: once some late work is admitted anyway, sending home a few citizens who would have been on time can pay.
+
+*What the cutoff costs.* Every citizen it turns away counts as a failure either way, but for a mandatory service they come back (§5.13). The oracle cutoff turned away 4–58 citizens a day, mostly citizens who would have left anyway. From the hidden queue's own log, 1–25 of them a day would otherwise have been served late. They become repeat visits instead of late services.
+
+![Display theory](figures/fig22_display_theory.png)
+
+**What changes.**
+1. **The best wait display answers a yes/no question.** "Will I be served within 15 minutes?" minimizes failures, in theory for every office and in simulation for all 12 new ones. Showing a number adds nothing to failures, and showing an overstated number costs citizens.
+2. **Round 12's mechanism is now a theorem with a condition.** Sending home citizens who would be served late always helps. Sending home citizens who would be served on time hurts only once the late ones are already sent home.
+3. **What limits a real office is predicting V, not choosing the display.** A head count captures a median of about a fifth of the achievable gain. H57 tests whether predicting V from the office's own log does better.
+
 ## 6. Threats to validity
 - **Synthetic demand.** Arrival rates follow a stylized double-peak profile. There are no public arrival-count data for walk-in offices; the CA DMV data contain only waits.
 - **Exponential service in E1.** This favours the Erlang-C rules, which assume it. With CV < 1, as is typical for lognormal service, the analytic rules would overstaff even more (E2).
@@ -1203,6 +1259,7 @@ Units are citizens late or left per day, with 95% CIs where the sign is in doubt
 - **Overtime is free (all rounds).** Staff-hours count only the eight open hours, while service after closing continues at the last hour's staffing without cost. The fluid shows this is a first-order modelling choice: it supplies 4% of the workload at S = 8 and T = 15, and up to 40% when T = 60 (§5.11). Charging overtime would raise every plan's last hour and cut the savings attributed to a long threshold. *Round 8 (§5.12) tests this:* paid, the below-workload effect vanishes, the ranking of rules is unchanged, and SIPP's excess falls by up to half at long thresholds. The paid search is local and starts from the staffed-hours plan. The rule for who stays after closing is itself an assumption that moves costs by up to 16%.
 - **Return dynamics (§5.13)** use one office, exponential patience, r = 1 and a next-day return, and treat the day's returners as Poisson at their expected rate. Real returners may wait several days, which would smooth the chain but not change the unique steady state. H34(a)'s failure was explained after the fact (a pre-shock baseline that was not at steady state), and unshocked chains were not run as a control. The constant-in-citizens correction of H35 rests on two sizes.
 - **The fluid (§5.11)** covers exponential service only. Its corrected version and the √R reading were fixed after the registered tests failed, and were confirmed at one new load only. Five α-programs were not solved to optimality, and the comparison of shift rosters with the corrected fluid was not pre-registered.
+- **Wait displays (§5.17)** are modelled with one fixed citizen rule (leave at once if the display exceeds patience), no misreading or distrust, and patience unchanged by what is shown. The optimality theorem is stationary, and its time-varying confirmation covers 12 offices with one demand shape. The oracle display assumes the office knows each citizen's wait exactly, so it is an upper bound on what a real display can do. The per-hour theory is unreliable near or above overload (H55b).
 - **Rate uncertainty** is modelled as a single daily multiplier. Correlated within-day forecast errors could matter more.
 
 ## 7. Practical guidance
@@ -1219,7 +1276,7 @@ Units are citizens late or left per day, with 95% CIs where the sign is in doubt
 11. **Watch recovery time for mandatory services.** An office close to collapse does not look different on a normal day; it takes weeks instead of days to recover from a closure or a system outage (§5.13). If a one-day disruption is still visible in repeat visits two weeks later, add staff, first-hour staff especially when returners come at opening.
 12. **Learn patience from "called, nobody came", not from call times.** Log every ticket called with nobody there. Estimate the patience curve as current-status data (isotonic regression of "absent" on the wait until the call), never by treating the call as the moment the citizen left: that confuses patience with the office's own staffing. Expect to need months of logs, more if the office is well staffed. Trust the curve only over the waits the office actually produces, and treat any "mean patience" as a guess.
 13. **When you refit and restaff from your own log, fix the model before collecting more data.** An office that learns from a well-staffed log sees only short waits. A too-simple patience model then keeps it overstaffed, and running lean to learn costs citizens for a partial fix. A model that can represent what it sees learns within a month. And if the staffing rule itself is stationary, correct it for the lag after peaks before trusting the learned plan: the learned curve removes slack that was covering that gap.
-14. **Show the wait, and don't overstate it.** A wait display saves citizens a great deal of time at a small cost in failures. It costs failures only when it overstates waits for people who would have been served on time. Prefer a display based on the queue (the count of uncalled tickets works) to one based on the last citizen served, which is safe but weak. If the line is physical, most of its extra failures come from people being unable to leave once they join; a ticket queue with a display avoids that.
+14. **Tell citizens whether they will be served within the target, not how long they will wait.** "Over 15 minutes" shown when the wait exceeds the target, and nothing (or the true wait) otherwise, is the failure-minimizing display for any office (§5.17). It sends home only people who would be served late anyway, and it saves citizens time. Never show an overstated number below the target: showing the head count beneath a cutoff always did worse than showing nothing. How much the display helps depends on how well the office predicts the wait; a head count captures only part of it. For a mandatory service, remember that everyone turned away comes back (§5.13). If the line is physical, most of its extra failures come from people being unable to leave once they join; a ticket queue with a display avoids that.
 15. **Don't pick Erlang-A's patience model by habit.** Its exponential assumption can understaff when few people leave early. If the line is visible, a balking model with a realistic patience distribution is exact and was safe here.
 16. **If you use Ciw for time-varying staffing, merge consecutive equal shifts.** Otherwise each shift boundary adds phantom overtime capacity.
 
@@ -1228,7 +1285,7 @@ Units are citizens late or left per day, with 95% CIs where the sign is in doubt
 g++ -std=c++17 -O2 -static -Icpp/include -o cpp/build/queue_sim.exe cpp/src/simulation.cpp cpp/src/main.cpp
 pip install -r research/requirements.txt   # numpy, matplotlib, scipy, ciw
 python research/test_research.py
-python research/experiments.py --all     # about 2.8 hours on 8 cores (E7 takes 25, E8a 3, E8b 5, E9 5, E10 60, E11 20, E12 3, E13 20, E14 8, E15 1)
+python research/experiments.py --all     # about 2.8 hours on 8 cores (E7 takes 25, E8a 3, E8b 5, E9 5, E10 60, E11 20, E12 3, E13 20, E14 8, E15 1, E16 3)
 python research/figures.py
 ```
 

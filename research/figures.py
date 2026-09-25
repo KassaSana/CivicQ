@@ -1133,6 +1133,58 @@ def fig_wait_displays():
     save(fig, "fig21_wait_displays.png")
 
 
+# ----------------------------------------------------------------------------
+E16_PAT_COLOR = {"exp30": "#2a78d6", "logn30": "#e34948", "logn30cv15": "#1baf7a"}
+E16_PAT_LABEL = {"exp30": "exponential", "logn30": "lognormal CV 0.5",
+                 "logn30cv15": "lognormal CV 1.5"}
+
+
+def fig_display_theory():
+    """Round 13: the exact law, its optimum at the threshold, and out-of-sample predictions."""
+    from displays import cutoff, display_hour
+    from learning import Patience
+    pats = {"exp30": Patience("exp", 30.0), "logn30": Patience("lognormal", 30.0, 0.5),
+            "logn30cv15": Patience("lognormal", 30.0, 1.5)}
+    val = load("e16a_theory_validation.csv")
+    reg = load("e16b_regimes.csv")
+    fig, (a, b) = plt.subplots(1, 2, figsize=(12.5, 4.6))
+    c, s, rho = 8, 16.0, 1.2
+    lam = rho * c / s
+    ms = np.linspace(2.0, 45.0, 87)
+    for pname, p in pats.items():
+        col = E16_PAT_COLOR[pname]
+        a.plot(ms, [100 * display_hour(c, lam, s, p, 15.0, cutoff(m)).fail for m in ms],
+               color=col, lw=1.8, label=E16_PAT_LABEL[pname])
+        a.axhline(100 * display_hour(c, lam, s, p, 15.0).fail, color=col, lw=1, ls=":")
+        for r in val:
+            if (int(r["windows"]), float(r["rho"]), r["patience"]) == (c, rho, pname)                     and r["display"].startswith("O-M"):
+                a.errorbar(float(r["display"][3:]), 100 * float(r["fail_sim"]),
+                           yerr=196 * float(r["se"]), fmt="o", color=col, ms=5, capsize=2)
+    a.axvline(15.0, color=MUTED, lw=1)
+    a.set_xlabel("Cutoff M (minutes): the display says \"over M\" from there on")
+    a.set_ylabel("Late or left (%)")
+    a.set_title(f"(a) Stationary, c = {c}, ρ = {rho}: theory (lines), simulation (dots)",
+                loc="left")
+    a.text(15.4, a.get_ylim()[0] + 0.5, "T = 15", color=MUTED, va="bottom", fontsize=8)
+    a.legend(fontsize=7.5, title="dotted: hidden queue", title_fontsize=7.5)
+    lim = 0.0
+    for pname in pats:
+        pts = [(100 * float(r["dfail_pred"]), 100 * float(r["dfail_sim"])) for r in reg
+               if r["patience"] == pname and r["dfail_pred"] != "" and r["regime"] != "H"]
+        xs, ys = zip(*pts)
+        lim = max(lim, max(map(abs, xs)), max(map(abs, ys)))
+        b.scatter(xs, ys, s=16, color=E16_PAT_COLOR[pname], label=E16_PAT_LABEL[pname])
+    b.plot([-lim, lim], [-lim, lim], color=MUTED, lw=1, ls="--")
+    b.axhline(0, color=AXIS, lw=0.8)
+    b.axvline(0, color=AXIS, lw=0.8)
+    b.set_xlabel("Predicted change vs hidden (points; per-hour stationary theory)")
+    b.set_ylabel("Simulated change vs hidden (points)")
+    b.set_title("(b) 12 new offices × 10 oracle displays", loc="left")
+    b.legend(fontsize=7.5)
+    fig.tight_layout()
+    save(fig, "fig22_display_theory.png")
+
+
 if __name__ == "__main__":
     fig_gap_heatmap()
     fig_hourly()
@@ -1155,3 +1207,4 @@ if __name__ == "__main__":
     fig_learning_paths()
     fig_learning_tradeoff()
     fig_wait_displays()
+    fig_display_theory()

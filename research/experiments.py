@@ -2470,7 +2470,12 @@ def run_e16b():
                    "wasted_min_per_day": round(float(o["wasted"].mean()), 2),
                    "lost_min_per_arrival": round(float((o["wait_sum"] + o["wasted"].sum())
                                                        / o["arrivals"].sum()), 3)}
-            for ref, ro in (("H", h), ("O-M15", o15)):
+            row.update({"d_C1": "", "d_C1_lo": "", "d_C1_hi": ""})
+            refs = [("H", h), ("O-M15", o15)]
+            if name.startswith("C0-M"):
+                # H56(b): nothing below the cutoff against the count estimate below it
+                refs.append(("C1", res[(office, pname, kind, "C1-" + name[3:])]))
+            for ref, ro in refs:
                 d = o["fail_day"] - ro["fail_day"]
                 half = 1.96 * d.std(ddof=1) / math.sqrt(len(d))
                 row[f"d_{ref}"] = round(float(d.mean()), 3)
