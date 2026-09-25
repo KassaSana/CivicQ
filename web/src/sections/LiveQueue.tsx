@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Figure, SectionHead } from '../components/ui';
 import { DAY_MINUTES, type SimConfig, slotOf } from '../sim/model';
-import { queueLengthAt, simulateDay } from '../sim/simulate';
+import { lineExit, queueLengthAt, simulateDay } from '../sim/simulate';
 
 const SPEEDS = [1, 10, 30, 60]; // simulated minutes per real second
 const MAX_DOTS = 16;
@@ -57,10 +57,15 @@ export function LiveQueue({ cfg, seed }: { cfg: SimConfig; seed: number }) {
 
   const maxW = Math.max(...cfg.plan);
   const open = t < DAY_MINUTES ? cfg.plan[slotOf(t)] : cfg.plan[7];
-  const waiting = day.citizens.filter((c) => c.arrival <= t && c.start > t);
-  const inService = day.citizens.filter((c) => c.start <= t && c.departure > t);
-  const served = day.citizens.filter((c) => c.departure <= t).length;
-  const justArrived = day.citizens.filter((c) => c.arrival <= t && t - c.arrival < 0.6 && c.start > t).length;
+  const leaving = cfg.abandonment !== 'none';
+  const waiting = day.citizens.filter((c) => c.arrival <= t && lineExit(c) > t);
+  const inService = day.citizens.filter((c) => c.start >= 0 && c.start <= t && c.departure > t);
+  const served = day.citizens.filter((c) => c.departure >= 0 && c.departure <= t).length;
+  const totalServed = day.waits.length;
+  const left = day.citizens.filter((c) => c.abandoned && c.leave <= t).length;
+  // People who gave up in the last 1.5 simulated minutes, shown walking out
+  const justLeft = day.citizens.filter((c) => c.abandoned && c.leave <= t && t - c.leave < 1.5);
+  const justArrived = day.citizens.filter((c) => c.arrival <= t && t - c.arrival < 0.6 && lineExit(c) > t).length;
   const headWait = waiting.length ? t - waiting[0].arrival : 0;
   const busyCount = inService.length;
 
@@ -92,10 +97,21 @@ export function LiveQueue({ cfg, seed }: { cfg: SimConfig; seed: number }) {
         Red dots have waited longer than {cfg.threshold} minutes.</>}>
       <div className="live">
         <svg className="chart" viewBox={`0 0 600 ${svgH}`} role="img"
-          aria-label={`At ${clockLabel(t)}: ${waiting.length} waiting, ${busyCount} of ${open} windows busy`}>
+          aria-label={`At ${clockLabel(t)}: ${waiting.length} waiting, ${busyCount} of ${open} windows busy${leaving ? `, ${left} walked away` : ''}`}>
           <rect x="8" y={midY - 25} width="40" height="50" rx="2" fill="none" stroke="var(--line)" strokeWidth="1.5" />
           <text x="28" y={midY + 42} className="tick" textAnchor="middle">{t >= DAY_MINUTES ? 'closed' : 'door'}</text>
           {justArrived > 0 && <circle cx="70" cy={midY} r="7" fill="var(--dot)" />}
+          {justLeft.slice(0, 2).map((c, i) => {
+            // Walk from the door down and out, fading
+            const k = (t - c.leave) / 1.5;
+            return (
+              <circle key={`left-${c.arrival}`} cx={70 - 30 * k} cy={midY + 40 + 20 * k + i * 12} r="7"
+                fill="var(--warn)" opacity={1 - 0.7 * k}>
+                <title>{c.leave > c.arrival ? `gave up after ${(c.leave - c.arrival).toFixed(1)} min` : 'saw the line and left'}</title>
+              </circle>
+            );
+          })}
+          {justLeft.length > 0 && <text x="84" y={midY + 64} className="tick warn">left</text>}
           <line x1="110" y1={midY} x2="410" y2={midY} stroke="var(--grid)" strokeWidth="26" strokeLinecap="round" />
           {waiting.slice(0, MAX_DOTS).map((c, i) => (
             <circle key={c.arrival} cx={400 - i * 18} cy={midY} r="7.5"
@@ -129,7 +145,10 @@ export function LiveQueue({ cfg, seed }: { cfg: SimConfig; seed: number }) {
           <div><div className="card-sub">In line</div><div className="num">{waiting.length}</div></div>
           <div><div className="card-sub">Busy windows</div><div className="num">{busyCount} / {open}</div></div>
           <div><div className="card-sub">Front of the line has waited</div><div className="num">{headWait.toFixed(1)} min</div></div>
-          <div><div className="card-sub">Served so far</div><div className="num">{served} / {day.citizens.length}</div></div>
+          <div><div className="card-sub">Served so far</div><div className="num">{served} / {totalServed}</div></div>
+          {leaving && (
+            <div><div className="card-sub">Walked away so far</div><div className={`num ${left ? 'warn' : ''}`}>{left}</div></div>
+          )}
         </div>
         <div style={{ gridColumn: '1 / -1', display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
           <button className="btn primary icon" style={{ width: 40, height: 40 }} aria-label={playing ? 'Pause' : 'Play'}

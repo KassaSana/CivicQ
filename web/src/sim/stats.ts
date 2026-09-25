@@ -1,6 +1,6 @@
 /** Statistics helpers (mirror python/optimizer.py and research/staffing_methods.py). */
 import { DAY_MINUTES, NUM_SLOTS, type SimConfig } from './model';
-import { type DayResult, simulateDay } from './simulate';
+import { type DayResult, lineExit, simulateDay } from './simulate';
 
 const T_TABLE_95: Record<number, number> = {
   1: 12.706, 2: 4.303, 3: 3.182, 4: 2.776, 5: 2.571, 6: 2.447, 7: 2.365,
@@ -63,10 +63,23 @@ export interface Aggregate {
   lateByHour: number[];
   lateCi: Interval[];
   overallLate: number;
+  /**
+   * Citizen's view, per arrival hour: (late + left) / (served + left). Equals
+   * the late share when no one leaves.
+   */
+  failByHour: number[];
+  failCi: Interval[];
+  overallFail: number;
   utilization: number[];
   overtime: number;
+  /** Everyone who came, served or not. */
   arrivalsPerDay: number;
-  /** Share of all citizens in each histogram bin. */
+  servedPerDay: number;
+  /** Walk-ins who balked or reneged, per day, as a share of everyone who came, and their mean minutes before leaving. */
+  abandonedPerDay: number;
+  abandonRate: number;
+  meanTimeBeforeLeaving: number | null;
+  /** Share of served citizens in each histogram bin. */
   histogram: number[];
   /** Time-average queue length per QUEUE_BIN minutes over the open day. */
   queueCurve: number[];
@@ -88,6 +101,9 @@ export class Accumulator {
   private p90s: number[] = [];
   private late: number[][] = Array.from({ length: NUM_SLOTS }, () => []);
   private arr: number[][] = Array.from({ length: NUM_SLOTS }, () => []);
+  private aband: number[][] = Array.from({ length: NUM_SLOTS }, () => []);
+  private abandWait = 0;
+  private served = 0;
   private util = new Array<number>(NUM_SLOTS).fill(0);
   private overtime = 0;
   private arrivals = 0;
@@ -107,11 +123,14 @@ export class Accumulator {
     for (let s = 0; s < NUM_SLOTS; s++) {
       this.late[s].push(d.lateBySlot[s]);
       this.arr[s].push(d.arrivalsBySlot[s]);
+      this.aband[s].push(d.abandonedBySlot[s]);
       this.util[s] += d.utilization[s];
     }
     this.overtime += d.overtime;
     this.arrivals += d.citizens.length;
-    this.waitSum += d.meanWait * d.citizens.length;
+    this.served += d.waits.length;
+    this.abandWait += d.abandonedWaitSum;
+    this.waitSum += d.meanWait * d.waits.length;
     this.apptArrived += d.apptArrived;
     this.apptLate += d.apptLate;
     this.apptWait += d.apptWaitSum;
@@ -125,7 +144,7 @@ export class Accumulator {
     }
     // Queue curve: time each waiting interval overlaps each bin
     for (const c of d.citizens) {
-      const a = c.arrival, e = Math.min(c.start, DAY_MINUTES);
+      const a = c.arrival, e = Math.min(lineExit(c), DAY_MINUTES);
       for (let k = Math.floor(a / QUEUE_BIN); k * QUEUE_BIN < e && k < this.queue.length; k++) {
         const lo = Math.max(a, k * QUEUE_BIN), hi = Math.min(e, (k + 1) * QUEUE_BIN);
         if (hi > lo) this.queue[k] += hi - lo;
@@ -139,13 +158,22 @@ export class Accumulator {
     const p9 = meanCi(this.p90s);
     const lateByHour: number[] = [];
     const lateCi: Interval[] = [];
-    let totL = 0, totA = 0;
+    const failByHour: number[] = [];
+    const failCi: Interval[] = [];
+    let totL = 0, totA = 0, totX = 0;
     for (let s = 0; s < NUM_SLOTS; s++) {
       const r = ratioCi(this.late[s], this.arr[s]);
       lateByHour.push(r.p);
       lateCi.push(r.ci);
+      const f = ratioCi(
+        this.late[s].map((l, i) => l + this.aband[s][i]),
+        this.arr[s].map((a, i) => a + this.aband[s][i]),
+      );
+      failByHour.push(f.p);
+      failCi.push(f.ci);
       for (const x of this.late[s]) totL += x;
       for (const x of this.arr[s]) totA += x;
+      for (const x of this.aband[s]) totX += x;
     }
     const walkins = totA - this.apptArrived;
     const histTotal = this.hist.reduce((a, b) => a + b, 0) || 1;
@@ -159,9 +187,16 @@ export class Accumulator {
       lateByHour,
       lateCi,
       overallLate: totA ? totL / totA : 0,
+      failByHour,
+      failCi,
+      overallFail: totA + totX ? (totL + totX) / (totA + totX) : 0,
       utilization: this.util.map((u) => u / n),
       overtime: this.overtime / n,
       arrivalsPerDay: this.arrivals / n,
+      servedPerDay: this.served / n,
+      abandonedPerDay: totX / n,
+      abandonRate: this.arrivals ? totX / this.arrivals : 0,
+      meanTimeBeforeLeaving: totX ? this.abandWait / totX : null,
       histogram: this.hist.map((h) => h / histTotal),
       queueCurve: this.queue.map((q) => q / (n * QUEUE_BIN)),
       dailyMeanWait: this.meanW,

@@ -1,5 +1,5 @@
 /** App state: one reducer, mirrored into the URL so a view can be shared. */
-import { DEFAULT_ARRIVALS, DEFAULT_PLAN, type Placement, type ServiceDist, type SimConfig, appointmentBook, makeConfig } from './sim/model';
+import { type Abandonment, DEFAULT_ARRIVALS, DEFAULT_PLAN, type Placement, type ServiceDist, type SimConfig, appointmentBook, makeConfig } from './sim/model';
 
 export interface Params {
   plan: number[];
@@ -17,6 +17,10 @@ export interface Params {
   placement: Placement;
   noShow: number;
   punctualitySd: number;
+  abandonment: Abandonment;
+  meanPatience: number;
+  patienceDist: ServiceDist;
+  patienceCv: number;
 }
 
 export const DEFAULTS: Params = {
@@ -34,6 +38,10 @@ export const DEFAULTS: Params = {
   placement: 'counter',
   noShow: 0.15,
   punctualitySd: 5,
+  abandonment: 'none',
+  meanPatience: 30,
+  patienceDist: 'exp',
+  patienceCv: 1,
 };
 
 export const MIN_WINDOWS = 1;
@@ -69,6 +77,10 @@ export function toConfig(p: Params): SimConfig {
     appointments: times,
     noShow: p.noShow,
     punctualitySd: p.punctualitySd,
+    abandonment: p.abandonment,
+    meanPatience: p.meanPatience,
+    patienceDist: p.patienceDist,
+    patienceCv: p.patienceCv,
     meanService: p.meanService,
     serviceDist: p.serviceDist,
     serviceCv: p.serviceCv,
@@ -81,9 +93,12 @@ export function isDefault(p: Params): boolean {
   return JSON.stringify(p) === JSON.stringify(DEFAULTS);
 }
 
-const NUM_KEYS: (keyof Params)[] = ['meanService', 'serviceCv', 'demandMult', 'rateCv', 'threshold', 'alpha', 'seed', 'days', 'apptShare', 'noShow', 'punctualitySd'];
+const NUM_KEYS: (keyof Params)[] = ['meanService', 'serviceCv', 'demandMult', 'rateCv', 'threshold', 'alpha', 'seed', 'days', 'apptShare', 'noShow', 'punctualitySd', 'meanPatience', 'patienceCv'];
 
 const APPT_KEYS: (keyof Params)[] = ['noShow', 'punctualitySd'];
+const PATIENCE_KEYS: (keyof Params)[] = ['meanPatience', 'patienceCv'];
+
+const isDist = (v: string | null): v is ServiceDist => v === 'exp' || v === 'lognormal' || v === 'det';
 
 export function fromUrl(search: string): Params {
   const q = new URLSearchParams(search);
@@ -91,7 +106,11 @@ export function fromUrl(search: string): Params {
   const plan = q.get('plan')?.split(',').map(Number);
   if (plan && plan.length === 8 && plan.every((v) => Number.isInteger(v) && v >= MIN_WINDOWS && v <= MAX_WINDOWS)) p.plan = plan;
   const dist = q.get('dist');
-  if (dist === 'exp' || dist === 'lognormal' || dist === 'det') p.serviceDist = dist;
+  if (isDist(dist)) p.serviceDist = dist;
+  const aband = q.get('aband');
+  if (aband === 'renege' || aband === 'balk') p.abandonment = aband;
+  const pdist = q.get('pdist');
+  if (isDist(pdist)) p.patienceDist = pdist;
   const place = q.get('place');
   if (place === 'proportional' || place === 'flat' || place === 'counter') p.placement = place;
   for (const k of NUM_KEYS) {
@@ -102,6 +121,8 @@ export function fromUrl(search: string): Params {
   p.apptShare = Math.min(0.9, Math.max(0, p.apptShare));
   p.noShow = Math.min(0.5, Math.max(0, p.noShow));
   p.punctualitySd = Math.min(30, Math.max(0, p.punctualitySd));
+  p.meanPatience = Math.min(120, Math.max(1, p.meanPatience));
+  p.patienceCv = Math.min(2, Math.max(0.25, p.patienceCv));
   return p;
 }
 
@@ -112,8 +133,13 @@ export function toUrl(p: Params): string {
   // Booking settings only matter when some demand is booked
   const booked = p.apptShare > 0;
   if (booked && p.placement !== DEFAULTS.placement) q.set('place', p.placement);
+  // Patience settings only matter when walk-ins may leave
+  const leaving = p.abandonment !== 'none';
+  if (leaving) q.set('aband', p.abandonment);
+  if (leaving && p.patienceDist !== DEFAULTS.patienceDist) q.set('pdist', p.patienceDist);
   for (const k of NUM_KEYS) {
     if (!booked && APPT_KEYS.includes(k)) continue;
+    if (!leaving && PATIENCE_KEYS.includes(k)) continue;
     if (p[k] !== DEFAULTS[k]) q.set(k, String(p[k]));
   }
   const s = q.toString();

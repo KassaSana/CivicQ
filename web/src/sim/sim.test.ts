@@ -151,6 +151,80 @@ describe('appointments', () => {
   });
 });
 
+describe('abandonment', () => {
+  const thin = [2, 2, 2, 2, 2, 2, 2, 2];
+  const renege = makeConfig({ plan: thin, abandonment: 'renege', meanPatience: 20 });
+  const balk = makeConfig({ plan: thin, abandonment: 'balk', meanPatience: 20 });
+
+  it("'none' is the model without abandonment", () => {
+    const a = simulateDay(makeConfig(), 11), b = simulateDay(makeConfig({ abandonment: 'none', meanPatience: 5 }), 11);
+    expect(b.waits).toEqual(a.waits);
+    expect(b.citizens.every((c) => !c.abandoned && c.patience === 0)).toBe(true);
+  });
+
+  it('keeps arrivals, service and patience aligned across modes and plans', () => {
+    const a = simulateDay(renege, 3), b = simulateDay(balk, 3), c = simulateDay({ ...renege, plan: [4, 4, 4, 4, 4, 4, 4, 4] }, 3);
+    const none = simulateDay({ ...renege, abandonment: 'none' }, 3);
+    for (const d of [b, c, none]) {
+      expect(d.citizens.map((x) => x.arrival)).toEqual(a.citizens.map((x) => x.arrival));
+      expect(d.citizens.map((x) => x.service)).toEqual(a.citizens.map((x) => x.service));
+    }
+    expect(b.citizens.map((x) => x.patience)).toEqual(a.citizens.map((x) => x.patience));
+    expect(c.citizens.map((x) => x.patience)).toEqual(a.citizens.map((x) => x.patience));
+  });
+
+  it('reneging citizens leave exactly when patience runs out, and the served waited less', () => {
+    let left = 0;
+    for (let seed = 1; seed <= 20; seed++) {
+      for (const c of simulateDay(renege, seed).citizens) {
+        if (c.abandoned) {
+          left++;
+          expect(c.start).toBe(-1);
+          expect(c.leave).toBeCloseTo(c.arrival + c.patience, 9);
+        } else if (!c.booked) {
+          expect(c.start - c.arrival).toBeLessThanOrEqual(c.patience + 1e-9);
+        }
+      }
+    }
+    expect(left).toBeGreaterThan(0);
+  });
+
+  it('balking citizens leave on arrival', () => {
+    let left = 0;
+    for (let seed = 1; seed <= 20; seed++) {
+      for (const c of simulateDay(balk, seed).citizens) {
+        if (!c.abandoned) continue;
+        left++;
+        expect(c.leave).toBe(c.arrival);
+        expect(c.start).toBe(-1);
+      }
+    }
+    expect(left).toBeGreaterThan(0);
+  });
+
+  it('never loses booked citizens and conserves everyone who came', () => {
+    const { walk, times } = appointmentBook(DEFAULT_ARRIVALS, 0.5, 'counter', 0.15);
+    for (const mode of ['renege', 'balk'] as const) {
+      const cfg = makeConfig({ plan: thin, arrivals: walk, appointments: times, noShow: 0.15, abandonment: mode, meanPatience: 10 });
+      for (let seed = 1; seed <= 10; seed++) {
+        const d = simulateDay(cfg, seed);
+        expect(d.citizens.some((c) => c.booked && c.abandoned)).toBe(false);
+        expect(d.waits.length + sum(d.abandonedBySlot)).toBe(d.citizens.length);
+        expect(sum(d.arrivalsBySlot)).toBe(d.waits.length);
+      }
+    }
+  });
+
+  it('loses fewer people with more windows, and failure is at least the served-late rate', () => {
+    for (const cfg of [renege, balk]) {
+      const few = runDays(cfg, 200, 1), many = runDays({ ...cfg, plan: [4, 4, 4, 4, 4, 4, 4, 4] }, 200, 1);
+      expect(few.abandonedPerDay).toBeGreaterThan(many.abandonedPerDay);
+      expect(few.overallFail).toBeGreaterThan(few.overallLate);
+      expect(few.arrivalsPerDay).toBeCloseTo(few.servedPerDay + few.abandonedPerDay, 9);
+    }
+  });
+});
+
 // Cross-check against the C++ executable when it has been built
 const exeCandidates = ['queue_sim.exe', 'queue_sim', 'Release/queue_sim.exe'].map((p) =>
   resolve(__dirname, '../../../cpp/build', p),
@@ -195,4 +269,34 @@ describe.skipIf(!exe)('cross-check with the C++ simulator', () => {
       expect(Math.abs(a - b.mean)).toBeLessThan(3 * hw * Math.SQRT2 / 1.96 + 1e-9);
     }
   });
+
+  for (const mode of ['renege', 'balk'] as const) {
+    for (const plan of [DEFAULT_PLAN, [2, 2, 2, 2, 2, 2, 2, 2]]) {
+      it(`mean, P90 and walk-aways agree with ${mode} for [${plan}]`, () => {
+        const csv = execFileSync(exe!, [
+          '--staffing', plan.join(','), '--abandonment', mode, '--patience', '30',
+          '--replications', '600', '--seed', '5000', '--per-replication',
+        ], { encoding: 'utf8' });
+        const [head, ...lines] = csv.trim().split(/\r?\n/);
+        const col = Object.fromEntries(head.split(',').map((name, i) => [name, i]));
+        const rows = lines.map((l) => l.split(',').map(Number));
+        const aband = (r: number[]) => sum(Array.from({ length: 8 }, (_, j) => r[col[`aband_${j}`]]));
+        const cpp = {
+          mean: meanCi(rows.map((r) => r[col.mean_wait])),
+          p90: meanCi(rows.map((r) => r[col.p90_wait])),
+          left: meanCi(rows.map(aband)),
+        };
+        const ts = runDays(makeConfig({ plan, abandonment: mode, meanPatience: 30 }), 600, 900000);
+        expect(cpp.left.mean).toBeGreaterThan(0);
+        for (const [a, b] of [
+          [ts.meanWait, cpp.mean],
+          [ts.p90, cpp.p90],
+          [ts.abandonedPerDay, cpp.left],
+        ] as const) {
+          const hw = (b.ci[1] - b.ci[0]) / 2;
+          expect(Math.abs(a - b.mean)).toBeLessThan(3 * hw * Math.SQRT2 / 1.96 + 1e-9);
+        }
+      });
+    }
+  }
 });

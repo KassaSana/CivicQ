@@ -9,6 +9,7 @@ import { useCompare } from '../useSim';
 const COMPARE_DAYS = 500;
 
 export function ComparePlans({ params, dispatch, cfg }: { params: Params; dispatch: Dispatch<Action>; cfg: SimConfig }) {
+  const leaving = cfg.abandonment !== 'none';
   const candidates = useMemo(() => {
     const a = analyticPlans(expectedRates(cfg), cfg.meanService, cfg.threshold, params.alpha, 1);
     const list: { names: string[]; plan: number[] }[] = [];
@@ -42,18 +43,19 @@ export function ComparePlans({ params, dispatch, cfg }: { params: Params; dispat
       </p>
       <div className="table-wrap wide">
         <table className="plans">
-          <caption><b>Table 1.</b> Candidate plans, {COMPARE_DAYS} paired days each. Waits in minutes; ΔP90 is against your plan, with a 95% interval.</caption>
+          <caption><b>Table 1.</b> Candidate plans, {COMPARE_DAYS} paired days each. Waits in minutes; ΔP90 is against your plan, with a 95% interval.{leaving && ' With walk-aways, waits are for served visitors, the worst hour counts those late or gone, and Left is walk-aways per day.'}</caption>
           <thead>
             <tr>
               <th>Plan</th><th>Windows, 8am–4pm</th><th className="r">Staff-h</th><th className="r">Mean</th>
-              <th className="r">P90</th><th>Worst hour</th><th>ΔP90</th><th />
+              <th className="r">P90</th><th>Worst hour</th>{leaving && <th className="r">Left</th>}<th>ΔP90</th><th />
             </tr>
           </thead>
           <tbody className={ready ? '' : 'stale'}>
             {candidates.map((c, k) => {
               const r = ready?.[k];
               let worst = 0;
-              r?.lateByHour.forEach((p, i) => { if (p > r.lateByHour[worst]) worst = i; });
+              // failByHour equals lateByHour when no one leaves
+              r?.failByHour.forEach((p, i) => { if (p > r.failByHour[worst]) worst = i; });
               const diff = r && base && k > 0 ? meanCi(r.dailyP90.map((v, i) => v - base.dailyP90[i])) : null;
               const mine = k === 0;
               return (
@@ -63,9 +65,10 @@ export function ComparePlans({ params, dispatch, cfg }: { params: Params; dispat
                   <td className="r num">{sum(c.plan)}</td>
                   <td className="r num">{r ? r.meanWait.toFixed(2) : '…'}</td>
                   <td className={`r num ${r && r.p90 > cfg.threshold ? 'warn' : ''}`}>{r ? r.p90.toFixed(1) : '…'}</td>
-                  <td className={`num ${r && r.lateByHour[worst] > params.alpha ? 'warn' : ''}`}>
-                    {r ? <>{pct(r.lateByHour[worst])} <span className="muted">at {HOUR_RANGES[worst]}</span></> : '…'}
+                  <td className={`num ${r && r.failByHour[worst] > params.alpha ? 'warn' : ''}`}>
+                    {r ? <>{pct(r.failByHour[worst])} <span className="muted">at {HOUR_RANGES[worst]}</span></> : '…'}
                   </td>
+                  {leaving && <td className="r num">{r ? r.abandonedPerDay.toFixed(1) : '…'}</td>}
                   <td className="num">
                     {mine ? <span className="muted">baseline</span> : diff ? (
                       <>{diff.mean >= 0 ? '+' : ''}{diff.mean.toFixed(2)} <span className="muted">({diff.ci[0].toFixed(2)} to {diff.ci[1].toFixed(2)})</span></>

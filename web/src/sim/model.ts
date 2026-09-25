@@ -15,6 +15,9 @@ export const HOUR_RANGES = ['8–9', '9–10', '10–11', '11–12', '12–1', '
 
 export type ServiceDist = 'exp' | 'lognormal' | 'det';
 
+/** How walk-ins give up (booked citizens never do). */
+export type Abandonment = 'none' | 'renege' | 'balk';
+
 export interface SimConfig {
   plan: number[];
   /** Arrivals per hour for each slot (already scaled by any demand multiplier). */
@@ -34,6 +37,16 @@ export interface SimConfig {
   noShow: number;
   /** SD (minutes) of arrival around the booked time. */
   punctualitySd: number;
+  /**
+   * renege: hidden queue (ticket number); leave once the wait exceeds patience.
+   * balk: visible line; leave at once if (q + 1) S / c exceeds patience.
+   */
+  abandonment: Abandonment;
+  /** Mean walk-in patience in minutes. */
+  meanPatience: number;
+  patienceDist: ServiceDist;
+  /** Patience CV, used by the lognormal distribution only. */
+  patienceCv: number;
 }
 
 export function makeConfig(partial: Partial<SimConfig> = {}): SimConfig {
@@ -49,6 +62,10 @@ export function makeConfig(partial: Partial<SimConfig> = {}): SimConfig {
     appointments: [],
     noShow: 0,
     punctualitySd: 0,
+    abandonment: 'none',
+    meanPatience: 30,
+    patienceDist: 'exp',
+    patienceCv: 1,
     ...partial,
   };
 }

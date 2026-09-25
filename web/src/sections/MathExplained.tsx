@@ -39,9 +39,12 @@ export function MathExplained({ params, dispatch, hourly, agg, cfg }: {
   const sim = agg?.lateByHour[hour];
   const simCi = agg?.lateCi[hour];
 
+  const leaving = cfg.abandonment !== 'none';
   const note =
     sim === undefined ? '' :
-    h.late > sim + 0.02
+    leaving
+      ? 'In this run walk-ins give up, which Erlang-C ignores. The simulated share counts served visitors only, and people leaving keeps the line short, so the two are not like for like. Set walking away to “No one leaves” under Assumptions to compare them.'
+      : h.late > sim + 0.02
       ? 'Theory is more pessimistic here. It assumes the hour starts already congested, but the real office opens with nobody in line, or demand has just dropped so the hour starts calmer than steady state.'
       : h.late < sim - 0.02
         ? 'Theory is too optimistic here: the backlog from the previous, busier hour carries over. Congestion lags demand.'
@@ -91,7 +94,7 @@ P(W > T) = C(s,a) · e^(−(sμ−λ)T)`}</div>
       <div className="statline">
         <div className="tile"><div className="label">Erlang-C, steady state</div><div className="value num">{pct(h.late)}</div>
           <div className="sub">{pct(erlangC(c, h.load))} wait at all</div></div>
-        <div className="tile"><div className="label">Simulated, office opens empty</div>
+        <div className="tile"><div className="label">Simulated, office opens empty{leaving ? ', served only' : ''}</div>
           <div className="value num accent">{sim === undefined ? '…' : pct(sim)}</div>
           <div className="sub">{simCi ? `95% interval ${pct(simCi[0])}–${pct(simCi[1])}` : ''}</div></div>
       </div>
