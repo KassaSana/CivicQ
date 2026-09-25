@@ -95,7 +95,16 @@ From 30 days on the formula is within 10%. It misses only the 8 E office's first
 - *GP surrogates with sequential design.* A Gaussian process on the theory's output, sampled where its posterior variance is largest, finds the regions where a law fails.
 - *Extrapolation splits.* Before registering a law, fit it on the interior of the grid and test it on the corners (smallest and largest c, extreme ρ). Random splits reward interpolation; region splits test what a law is for.
 
-**Candidate check.** Run active subspaces on log ε from `display_returns.exchange_rate` and on the Round 6 crossover slack. Does it rediscover n_T = cT/S and (S/2T)·ln c without being told?
+**Check (post hoc, on E17e's grid).** Take log ε at ρ = 0.95 over c = 1–32, T ∈ {7.5, 15, 30} and S ∈ {4, 8, 16}. Fit a quadratic surface in (log c, log T, log S) and eigen-decompose the gradient covariance.
+
+| Patience | Share of gradient variance, top direction | Top direction (log c, log T, log S) | Linear fit R² |
+|---|---|---|---|
+| exponential | 98.7% | (−1, −0.76, +0.82) | 0.984 |
+| lognormal CV 0.5 | 99.0% | (−0.97, −1, +0.80) | 0.987 |
+
+One direction explains almost everything, and it is close to (−1, −1, +1), which is −log n_T. The unequal weights are the 1.9× residual spread E17e reported: roughly ε ∝ c^−0.8 T^−(0.65…0.86) S^0.7. The caveat is decisive, though. E17e was designed after n_T was suspected. Round 14's registered grid (E17a) varied c and S but never T, so no method could have separated c from cT/S there. Dimensional analysis would have said to vary every dimensional input before registering a law in one of them.
+
+**Candidate check.** Run the same analysis on the Round 6 crossover slack. Does it rediscover (S/2T)·ln c without being told?
 
 ---
 
