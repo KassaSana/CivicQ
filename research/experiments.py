@@ -2775,6 +2775,25 @@ def run_e17a():
     write_csv("e17a_exchange.csv", rows)
 
 
+def _e17e_cell(args):
+    from display_returns import exchange_rate
+    from displays import cutoff
+    from learning import Patience
+    t, c, s, pname = args
+    p = Patience("exp", 30.0) if pname == "exp30" else Patience("lognormal", 30.0, 0.5)
+    ex = exchange_rate(c, 0.95 * c / s, s, p, t, cutoff(t))
+    return {"T": t, "c": c, "S": s, "patience": pname, "rho": 0.95, "n_T": c * t / s,
+            "eps": ex.eps if ex else "", "H_late_share": ex.base.late_share if ex else ""}
+
+
+def run_e17e():
+    """Post hoc (after E17a): does eps collapse onto n_T = c T / S across thresholds?"""
+    print("E17e (post hoc): eps against n_T = c T / S")
+    cells = list(itertools.product([7.5, 15.0, 30.0], [1, 2, 4, 8, 16, 32], [4.0, 8.0, 16.0],
+                                   ["exp30", "logn30"]))
+    write_csv("e17e_nT_collapse.csv", pmap_processes(_e17e_cell, cells))
+
+
 def _e17_day_arrays(r):
     """Per-day totals from one simulation: losses, late, served, minutes lost inside."""
     served = np.array(r.daily_arrivals, float).sum(axis=1)
@@ -2974,6 +2993,25 @@ def run_e17d(reps=400):
     write_csv("e17d_return_curves.csv", rows)
 
 
+def run_e17f(reps=2000):
+    """Post hoc (after E17b): h(R) with returns at opening, where E17b's local line failed."""
+    from tipping import return_curve
+    print("E17f (post hoc): return curves at opening, 8 E office, phi = 1.0")
+    fresh = sum(E12_RATES)
+    grid = [f * fresh for f in E12_R_FACTORS]
+    st = _e17_settings(True)[0]
+    rows = []
+    for reg in ("H", "O-M15"):
+        curve = return_curve(st[5], st[3], st[4], 1.0, "opening", grid, THRESHOLD, reps,
+                             E17_GRID_SEED, **E12_KW, **_e17_regimes()[reg])
+        for p in curve:
+            rows.append({"regime": reg, "R": round(p["R"], 2), "L": round(p["L"], 3),
+                         "h": round(p["h"], 3), "h_low": round(p["h_low"], 3),
+                         "h_high": round(p["h_high"], 3)})
+        print(f"  {reg:<6} " + " ".join(f"{p['h']:+.1f}" for p in curve))
+    write_csv("e17f_opening_curves.csv", rows)
+
+
 EXPERIMENTS = {"e1b": run_e1b, "e1": run_e1, "e2": run_e2, "e2b": run_e2b,
                "e3a": run_e3a, "e3b": run_e3b, "e4": run_e4, "e5": run_e5, "e6": run_e6,
                "e7a": run_e7a, "e7": run_e7, "e7c": run_e7c, "e8a": run_e8a, "e8b": run_e8b,
@@ -2990,7 +3028,7 @@ EXPERIMENTS = {"e1b": run_e1b, "e1": run_e1, "e2": run_e2, "e2b": run_e2b,
                "e15c": run_e15c, "e16p": run_e16p, "e16a": run_e16a, "e16b": run_e16b,
                "e16c": run_e16c, "e16d": run_e16d, "e16e": run_e16e,
                "e16f": run_e16f, "e17p": run_e17p, "e17a": run_e17a, "e17b": run_e17b,
-               "e17c": run_e17c, "e17d": run_e17d}
+               "e17c": run_e17c, "e17d": run_e17d, "e17e": run_e17e, "e17f": run_e17f}
 
 
 def main():
