@@ -1,0 +1,7 @@
+office,patience,plan_type,timing,regime,R,R_low,R_high,R_per_100,visits,late_share,late_low,late_high,lost_min,kpi,served_share,slope,grid_low,grid_high,inside_grid
+R8_S16_A0.6,exp30,phi=1.00,opening,H,71.462,59.395,83.077,29.78,1.29776,0.18285,0.15012,0.2143,8.913,0.37034,1.0029,0.9447,57.3,85.95,True
+R8_S16_A0.6,exp30,phi=1.00,opening,O-M15,-308.214,-5801.851,10613.634,-128.42,-0.28422,0.0,0.0,0.0,4.413,4.51836,0.9982,1.001,552.0,828.0,False
+R8_S16_A0.6,exp30,phi=0.95,opening,H,291.274,212.438,367.639,121.36,2.21364,0.35331,0.33562,0.37042,36.406,0.70786,1.003,0.9863,271.2,406.8,True
+R8_S16_A0.6,exp30,phi=0.95,opening,O-M15,inf,,,,,,,,,,,,,,
+R8_S16_A0.6,exp30,phi=0.90,opening,H,inf,,,,,,,,,,,,,,
+R8_S16_A0.6,exp30,phi=0.90,opening,O-M15,inf,,,,,,,,,,,,,,

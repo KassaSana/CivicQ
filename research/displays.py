@@ -106,9 +106,37 @@ def _partial_mean(patience: Patience, grid: np.ndarray):
     return grid * G - intG
 
 
+def _log_cell_mass(phi_l: np.ndarray, d: np.ndarray, h: float) -> np.ndarray:
+    """log of int_cell e^phi for phi linear on a cell of width h rising by d:
+    h e^{phi_l} (e^d - 1) / d, evaluated without overflow or cancellation."""
+    small = np.abs(d) < 1e-8
+    dd = np.where(small, 1.0, d)
+    pos = np.log1p(-np.exp(-np.abs(dd))) - np.log(np.abs(dd))
+    log_ratio = np.where(small, d / 2, np.where(d > 0, d + pos, pos))
+    return phi_l + math.log(h) + log_ratio
+
+
+def _cell_centroid(d: np.ndarray) -> np.ndarray:
+    """Where a cell's mass sits, as a fraction of its width, for e^{d t}, t in [0, 1]."""
+    small = np.abs(d) < 1e-6
+    dd = np.where(small, 1.0, d)
+    with np.errstate(over="ignore"):
+        pos = 1.0 / -np.expm1(-np.abs(dd)) - 1.0 / np.abs(dd)
+    return np.where(small, 0.5 + d / 12, np.where(d > 0, pos, 1.0 - pos))
+
+
 def display_hour(c: int, lam: float, mean_service: float, patience: Patience,
                  threshold: float, show: Display = HIDDEN, h: float = 0.01) -> DisplayHour:
-    """Exact stationary M/M/c+G ticket queue with a display of the offered wait."""
+    """
+    Exact stationary M/M/c+G ticket queue with a display of the offered wait.
+
+    u is held at one value per grid cell, so phi = lam U - c mu x is linear on
+    each cell and the mass of V in a cell has a closed form. Other integrands
+    are held per cell like u, and the served wait uses each cell's mass
+    centroid. (Round 13 used the trapezoid rule on e^phi, which under-resolves
+    the boundary layer below a cutoff at loads of several times capacity; see
+    REPORT section 5.17, correction.)
+    """
     mu = 1.0 / mean_service
     a = lam / mu
     X = max(4.0 * threshold, 60.0, 20.0 / (c * mu))
@@ -127,25 +155,50 @@ def display_hour(c: int, lam: float, mean_service: float, patience: Patience,
         X *= 2
     j = np.arange(c)
     log_E = np.logaddexp.reduce((j - (c - 1)) * math.log(a) + gammaln(c) - gammaln(j + 1))
-    m = phi.max()
-    log_J = m + math.log(np.trapezoid(np.exp(phi - m), x))
+    d = np.diff(phi)
+    log_w = _log_cell_mass(phi[:-1], d, h)           # log int_cell e^phi
+    log_J = np.logaddexp.reduce(log_w)
     log_denom = np.logaddexp(log_E, math.log(lam) + log_J)
     p0 = math.exp(log_E - log_denom)                 # P(V = 0)
     f = np.exp(math.log(lam) + phi - log_denom)
+    mass = np.exp(math.log(lam) + log_w - log_denom)  # P(V in cell)
+    t = _cell_centroid(d)
 
-    below = x <= threshold + 1e-9
-    served_density = u * f
-    on_time = p0 + float(np.trapezoid(served_density[below], x[below]))
-    served = p0 + float(np.trapezoid(served_density, x))
-    balk = float(np.trapezoid(np.where(x > 0, patience.cdf(shown), 0.0) * f, x))
-    wait_min = float(np.trapezoid(x * served_density, x))
+    def on_cell(g):
+        """g on a cell by the same rule as u, so the outcomes add up exactly."""
+        return np.where(jump, g[:-1], (g[1:] + g[:-1]) / 2)
+
+    below = x[1:] <= threshold + 1e-9
+    served_mass = cell * mass
+    on_time = p0 + float(served_mass[below].sum())
+    served = p0 + float(served_mass.sum())
+    balk = float((on_cell(patience.cdf(shown)) * mass).sum())
+    wait_min = float((served_mass * (x[:-1] + t * h)).sum())
     # Renegers: shown(x) <= tau < x, and they stay tau minutes
     K = _partial_mean(patience, x)
     Kshown = np.interp(np.minimum(shown, x), x, K)
-    wasted = float(np.trapezoid(np.clip(K - Kshown, 0.0, None) * f, x))
+    wasted = float((on_cell(np.clip(K - Kshown, 0.0, None)) * mass).sum())
     return DisplayHour(fail=1.0 - on_time, on_time=on_time, balk=balk,
                        renege=1.0 - served - balk, served_late=served - on_time,
                        p_wait=1.0 - p0, wait_min=wait_min, wasted_min=wasted, x=x, f=f)
+
+
+def served_rate(hour: DisplayHour, lam: float) -> float:
+    """Citizens served per minute: lam times the share of arrivals served."""
+    return lam * (hour.on_time + hour.served_late)
+
+
+def mean_busy(c: int, lam: float, mean_service: float, hour: DisplayHour) -> float:
+    """
+    E[busy windows]: all c while V > 0; below c the birth-death chain, whose
+    states j < c given V = 0 are proportional to a^j / j!. By flow balance
+    mu E[busy] must equal served_rate, a check independent of the grid.
+    """
+    a = lam * mean_service
+    j = np.arange(c)
+    log_w = j * math.log(a) - gammaln(j + 1)
+    w = np.exp(log_w - log_w.max())
+    return c * hour.p_wait + (1.0 - hour.p_wait) * float((j * w).sum() / w.sum())
 
 
 def erlang_b(c: int, a: float) -> float:

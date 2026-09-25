@@ -1,0 +1,2 @@
+office,patience,plan_type,timing,regime,d_visits,d_visits_low,d_visits_high,d_late_share,d_late_share_low,d_late_share_high,d_lost_min,d_lost_min_low,d_lost_min_high,d_kpi,d_kpi_low,d_kpi_high,d_R,d_R_low,d_R_high,eps,eps_low,eps_high,eps_defined_share,break_even_trip_min
+R8_S16_A0.6,exp30,phi=1.00,opening,O-M15,-1.58198,-24.43382,43.93471,-0.18285,-0.2143,-0.15012,-4.50031,-6.12613,-2.63836,4.14802,-2.6627,5.74595,-379.67574,-5864.11772,10544.32931,-8.6518,-154.3832,248.5506,1.0,

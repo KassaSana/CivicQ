@@ -1243,6 +1243,113 @@ def fig_display_practice():
     save(fig, "fig23_display_practice.png")
 
 
+# ----------------------------------------------------------------------------
+E17_C_COLOR = {1: "#e34948", 2: "#eb6834", 4: "#eda100", 16: "#1baf7a", 64: "#2a78d6"}
+
+
+def fig_display_returns_theory():
+    """Round 14: the exchange rate of the cutoff display with returns (stationary)."""
+    ex = [r for r in load("e17a_exchange.csv") if r["eps"] != ""]
+    col = load("e17e_nT_collapse.csv")
+    fig, (a, b) = plt.subplots(1, 2, figsize=(12.5, 4.6))
+    for c, color in E17_C_COLOR.items():
+        for pname, ls in (("exp30", "-"), ("logn30", "--")):
+            pts = sorted((float(r["rho"]), float(r["eps"])) for r in ex
+                         if int(r["c"]) == c and r["S"] == "16.0" and r["patience"] == pname
+                         and float(r["H_late_share"]) >= 1e-3)
+            if pts:
+                xs, ys = zip(*pts)
+                a.plot([1 - x for x in xs], ys, ls, marker="o", ms=3, lw=1.5, color=color)
+        a.plot([], [], color=color, lw=1.5, label=f"c = {c}")
+    a.set_xscale("log")
+    a.invert_xaxis()
+    a.set_yscale("log")
+    a.set_ylim(0.01, 5.0)
+    a.axhline(1.0, color=INK_2, lw=1)
+    a.axhspan(0.01, 0.5, color=GRID, alpha=0.35, lw=0)
+    a.text(0.0011, 0.3, "shaded: registered H60(a), ε < 0.5", color=MUTED, fontsize=8, va="top", ha="right")
+    a.text(0.0011, 3.9, "above 1: returns cancel the gain", color=INK_2, fontsize=8, va="top",
+           ha="right")
+    a.set_xlabel("1 − ρ (fresh load; toward collapse →)")
+    a.set_ylabel("ε: extra visits per late service avoided")
+    a.set_title("(a) Exchange rate by office size (S = 16, T = 15)", loc="left")
+    a.legend(fontsize=7, title="solid exponential, dashed lognormal CV 0.5",
+             title_fontsize=7, loc="lower left", ncol=3)
+    t_color = {7.5: "#2a78d6", 15.0: "#1baf7a", 30.0: "#e34948"}
+    for r in col:
+        if r["eps"] == "" or float(r["H_late_share"]) < 1e-3:
+            continue
+        b.scatter(float(r["n_T"]), float(r["eps"]), s=18, color=t_color[float(r["T"])],
+                  marker="o" if r["patience"] == "exp30" else "^", alpha=0.85)
+    b.set_xscale("log")
+    b.set_yscale("log")
+    b.axhline(1.0, color=INK_2, lw=1)
+    b.set_xlabel("n_T = c·T/S: citizens the office can serve within the target")
+    b.set_ylabel("ε at ρ = 0.95")
+    b.set_title("(b) Post hoc: ε collapses onto n_T (T, S and c varied)", loc="left")
+    b.legend(handles=[plt.Line2D([], [], color=v, ls="", marker="o", label=f"T = {k:g} min")
+                      for k, v in t_color.items()] +
+             [plt.Line2D([], [], color=INK_2, ls="", marker="o", mfc="none", label="exponential"),
+              plt.Line2D([], [], color=INK_2, ls="", marker="^", mfc="none",
+                         label="lognormal CV 0.5")], fontsize=7.5)
+    fig.tight_layout()
+    save(fig, "fig24_display_returns_theory.png")
+
+
+E17_REG_STYLE = {"O-M15": ("#2a78d6", "o", "oracle cutoff"),
+                 "C0-M15": ("#eda100", "s", "head count, cutoff 15"),
+                 "T0.7": ("#e34948", "^", "twin, q = 0.7")}
+
+
+def fig_display_returns_sim():
+    """Round 14: simulated exchange rates in the 16 offices, and returns at opening."""
+    co = load("e17b_contrasts.csv")
+    law = {(r["office"], r["patience"], r["plan_type"]): r for r in load("e17p_predictions.csv")
+           if r["timing"] == "profile"}
+    col = [r for r in load("e17e_nT_collapse.csv")
+           if r["eps"] != "" and float(r["H_late_share"]) >= 1e-3]
+    op = load("e17f_opening_curves.csv")
+    fig, (a, b) = plt.subplots(1, 2, figsize=(12.5, 4.6))
+    a.scatter([float(r["n_T"]) for r in col], [float(r["eps"]) for r in col], s=10,
+              color=AXIS, label="stationary law (E17e)", zorder=1)
+    for i, (reg, (color, marker, label)) in enumerate(E17_REG_STYLE.items()):
+        xs, ys, lo, hi = [], [], [], []
+        for r in co:
+            if r["regime"] != reg:
+                continue
+            k = (r["office"], r["patience"], r["plan_type"])
+            s_ = 8.0 if r["office"].startswith("R4") else 16.0
+            xs.append(int(law[k]["law_c"]) * 15.0 / s_ * (1 + 0.04 * (i - 1)))
+            ys.append(float(r["eps"]))
+            lo.append(float(r["eps"]) - float(r["eps_low"]))
+            hi.append(float(r["eps_high"]) - float(r["eps"]))
+        a.errorbar(xs, ys, yerr=[lo, hi], fmt=marker, color=color, ms=5, capsize=2, lw=1,
+                   label=label, zorder=3)
+    a.set_xscale("log")
+    a.set_yscale("log")
+    a.axhline(1.0, color=INK_2, lw=1)
+    a.text(0.62, 1.07, "above 1: returns cancel the gain", color=INK_2, fontsize=8)
+    a.set_xlabel("n_T = c̄·T/S of the office (c̄: mean windows)")
+    a.set_ylabel("ε: extra visits per late service avoided")
+    a.set_title("(a) 13 offices with a steady state (3 more have none under any display)",
+                loc="left")
+    a.legend(fontsize=7.5, loc="lower left")
+    for reg, color, label in (("H", INK_2, "hidden queue"), ("O-M15", "#2a78d6", "oracle cutoff")):
+        rows = [r for r in op if r["regime"] == reg]
+        R = [float(r["R"]) for r in rows]
+        b.fill_between(R, [float(r["h_low"]) for r in rows], [float(r["h_high"]) for r in rows],
+                       color=color, alpha=0.15, lw=0)
+        b.plot(R, [float(r["h"]) for r in rows], marker="o", ms=3.5, lw=1.6, color=color,
+               label=label)
+    b.axhline(0, color=MUTED, lw=1)
+    b.set_xlabel("Returners a day, R (all arrive in the first hour)")
+    b.set_ylabel("h(R) = losses − R (above 0: backlog grows)")
+    b.set_title("(b) Post hoc: returns at opening, 8 E office, φ = 1.0", loc="left")
+    b.legend(fontsize=7.5)
+    fig.tight_layout()
+    save(fig, "fig25_display_returns_sim.png")
+
+
 if __name__ == "__main__":
     fig_gap_heatmap()
     fig_hourly()
@@ -1267,3 +1374,5 @@ if __name__ == "__main__":
     fig_wait_displays()
     fig_display_theory()
     fig_display_practice()
+    fig_display_returns_theory()
+    fig_display_returns_sim()
