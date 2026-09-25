@@ -860,6 +860,30 @@ class TestBayesDisplay(unittest.TestCase):
         self.assertEqual(bayes, twin)
         self.assertGreater(sum(int(r["balked"]) for r in bayes), 0)
 
+    def test_mixtures_of_tables(self):
+        # Round 16: a mixture draws only on a split vote, so identical tables or
+        # a zero-weight table leave the display unchanged. A never-flag table at
+        # equal weight turns away fewer, but far more than half as many: the
+        # longer queue makes the table say "too long" more often
+        import tempfile
+        psi = str(Path(__file__).resolve().parent / "results" / "e18_psi"
+                  / "B1_R16_S16_A0p6_logn30_lean.csv")
+        one = self._rows("--announce", "bayes", "--display-psi", psi)
+        self.assertEqual(one, self._rows("--announce", "bayes", "--display-psi", psi,
+                                         "--display-psi", psi))
+        with tempfile.TemporaryDirectory() as tmp:
+            never = Path(tmp) / "never.csv"
+            never.write_text("hour,x,psi\n" + "".join(f"{h},0.0,1\n{h},1000.0,1\n"
+                                                      for h in range(8)))
+            self.assertEqual(one, self._rows("--announce", "bayes", "--display-psi", psi,
+                                             "--display-psi", str(never),
+                                             "--display-psi-weights", "1,0"))
+            half = self._rows("--announce", "bayes", "--display-psi", psi,
+                              "--display-psi", str(never))
+        told = lambda rows: sum(int(r["balked"]) for r in rows)
+        self.assertLess(told(half), told(one))
+        self.assertGreater(told(half), 0.3 * told(one))
+
     def test_logging_the_offered_wait_changes_nothing_and_is_exact(self):
         # --log-offered draws only on the twin stream; the logged V is the wait a
         # ticket actually had (served or called absent)

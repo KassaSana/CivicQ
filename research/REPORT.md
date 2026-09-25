@@ -587,6 +587,45 @@ Hypotheses:
   - (b) The twin's AUC for "V > 15" exceeds the head count's in 12 of 12.
   - (c) The margin is below 0.05 in at least 8 of 12. This is why a head-count cutoff came close to the twin in Round 13b.
 
+**Round 16** (stated after Round 15's results and a disclosed development check, and before any E19 run). Round 15's first-order rule worked once, from the oracle base, and failed twice when it was reapplied: the refit B* oscillated, and B_K was linearized at the wrong point. Round 16 asks whether the textbook algorithm for this kind of problem finds the fixed point the naive refit missed.
+
+**Proposition (displays are Frank–Wolfe).** In the mean-field model, the conditional law of X given V is held fixed. Then the map from a randomized display π(X) ∈ [0, 1] to its admission share a(x) = 1 − E[π(X) | V = x] is affine. So the set 𝒜 of reachable a is convex, and every outcome is a smooth function on it. Minimizing the linearization ⟨∇F(a_k), a − a_k⟩ over 𝒜 means choosing π to minimize E[E[ψ_{a_k}(V) | X]·π(X)]. That is exactly the Bayes rule of Round 15. Three consequences:
+- **(i)** Round 15's refit B* is Frank–Wolfe with step 1: each step jumps to the new vertex. That is best-response dynamics, which carries no convergence guarantee and can cycle, as B* did.
+- **(ii)** With step γ_k = 1/(k + 2), the iterate is the equal-weight mixture of the start and every vertex so far (fictitious play). For smooth F the Frank–Wolfe gap then falls to 0 along a subsequence, at rate O(1/√k) for non-convex F (Lacoste-Julien 2016). So the iterates approach stationary points of F on 𝒜.
+- **(iii)** The same holds for the returns objective M_K, provided ψ_K is linearized at the current iterate's *own* steady state. B_K was linearized at the oracle's, which is outside the region where the first-order model holds.
+
+The simulator's law of X given V moves with the display: the display is performative. So the proposition is exact in the mean-field model only, and in the simulator Frank–Wolfe is a stochastic approximation. Whether it converges there is the question.
+
+*Implementation.* `--display-psi` may now be repeated to give a mixture. Each table votes with its weight, and a split vote is settled by one uniform draw on the twin stream. With one table nothing changes: per-day output and logs are byte-identical to Round 15's executable in 8 configurations, and unit tests check that identical tables and zero-weight tables change nothing.
+
+*Development check (disclosed).* Both loops were run for 2 steps on the unregistered toy office of Round 15 (development seed 1, 100 days). One observation surprised us. At equal weight, a mixture of a table with a never-flag table turned away 90% as many citizens as the table alone, not half, because a longer queue makes the table vote "too long" more often. This is the performativity the proposition sets aside.
+
+**Design (E19).**
+- *E19a (failures, 12 E16 offices).*
+  - Start from B1 (x_0).
+  - At step k = 0, …, 5: log the mixture x_k on 400 design days, estimate each hour's a(x) (1-minute bins, at least 20 citizens), compute the Bayes vertex s_k around it, and set x_{k+1} = the equal-weight mixture of B1 and s_0, …, s_k.
+  - FW = x_6 (7 tables). Its s_0 is Round 15's first refit table (same log), which serves as a regression check.
+  - Evaluation: 1,000 evaluation days, common random numbers, against H, B1, the tuned twin and the oracle.
+- *E19b (returns, r = 1, K = 30, E17's 16 settings).*
+  - Start from the hidden queue, as a table with ψ = +1 everywhere.
+  - At each step:
+    - locate the mixture's steady state R_k by bisection (400 design days);
+    - estimate the day-map slope s and m_R from runs at R_k ± 10% (400 design days, common random numbers);
+    - log a(x) at R_k and compute the ψ_30 vertex with that base, from the hourly loads at R_k.
+  - FW30 = x_6. It is evaluated with E17b's estimator and days against the hidden queue. The other displays' M_30 come from E18c, which uses the same days.
+- *E19c:* FW30's precision, ε and K* at its steady state (300 days, as E18d).
+
+Hypotheses:
+- **H68 (Frank–Wolfe without returns; E19a).**
+  - (a) FW is not significantly worse than B1 (paired day-level 95% CI) in 12 of 12. Unlike B*, the diminishing step cannot run away from B1's neighbourhood faster than 1/(k + 2).
+  - (b) FW's failure rate is at most B1's in at least 8 of 12. The proposition says the stationary point is no worse than B1 in the mean-field model.
+  - (c) Check: s_0 reproduces Round 15's first refit table exactly.
+- **H69 (Frank–Wolfe with returns; E19b–c, the 13 settings where E17b found steady states).**
+  - (a) FW30 has a steady state, and its M_30 is not significantly above the hidden queue's (paired bootstrap 95% CI) in at least 11 of 13. This is H65(b) with the linearization fixed.
+  - (b) FW30's M_30 is lower than that of each of C0-M12.5, C0-M15 and T0.7 (E18c) in at least 8 of 13.
+  - (c) FW30's precision is at least that of C0-M15 (E18d) in at least 8 of 13.
+  - *Pre-specified, exploratory:* FW30 in E17's three settings with no steady state under any display. They start from the hidden queue, which has one there.
+
 *Change after pre-registration (Round 2):* while testing H7 we found that Ciw cannot express CivicQ's staffing-change rule (see §5.6). H7 was therefore split into a strict test for constant staffing and a bounds test for changing staffing *before* E5 was run. This deviation is disclosed here.
 
 ## 5. Results
@@ -1655,4 +1694,5 @@ python research/figures.py
 - Perdomo, J., Zrnic, T., Mendler-Dünner, C., & Hardt, M. (2020). Performative prediction. *ICML*, 7599–7609.
 - Lakkaraju, H., Kleinberg, J., Leskovec, J., Ludwig, J., & Mullainathan, S. (2017). The selective labels problem. *KDD*, 275–284.
 - van der Vaart, A. W. (1998). *Asymptotic Statistics*. Cambridge University Press.
+- Lacoste-Julien, S. (2016). Convergence rate of Frank–Wolfe for non-convex objectives. arXiv:1607.00345.
 - Whitt, W. (2006). Staffing a call center with uncertain arrival rate and absenteeism. *Production and Operations Management*, 15(1), 88–102.

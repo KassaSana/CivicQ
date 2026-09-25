@@ -190,10 +190,12 @@ def return_linearization(plan, rates, mean_service, patience: Patience, threshol
 
 
 def psi_table_returns(plan, rates, mean_service, patience: Patience, threshold: float,
-                      K: float, lin: dict, pmap=map) -> tuple:
-    """(hour, x, psi_K) rows around the linearization `lin` (return_linearization)."""
-    infs = list(pmap(_hour_influence, [(c, r / 60.0, mean_service, patience, threshold, None)
-                                       for c, r in zip(plan, lin["rates"])]))
+                      K: float, lin: dict, pmap=map, bases=None) -> tuple:
+    """(hour, x, psi_K) rows around the linearization `lin` (hourly total rates,
+    day-map slope, m_R), base per hour (default the oracle cutoff at T)."""
+    bases = bases or [None] * len(plan)
+    infs = list(pmap(_hour_influence, [(c, r / 60.0, mean_service, patience, threshold, b)
+                                       for c, r, b in zip(plan, lin["rates"], bases)]))
     gain = (K + lin["m_R"]) / (1.0 - lin["slope"])
     rows = []
     for h, inf in enumerate(infs):
@@ -222,7 +224,7 @@ EST_TICKETS, EST_COUNT, EST_LES, OFFERED, TWIN_P_LATE, BAYES_SCORE = range(9, 15
 def simulate_log(plan, rates, mean_service, patience: Patience, days: int, seed: int,
                  threshold: float = 15.0, announce: str = "none", display_scale=None,
                  display_cutoff=None, twin_quantile=None, twin_samples: int = 64,
-                 display_psi=None) -> np.ndarray:
+                 display_psi=None, display_psi_weights=None) -> np.ndarray:
     """Every citizen's row, with the true V, twin P(late) and Bayes score appended."""
     from optimizer import find_simulator
     dist = "exp" if patience.family == "exp" else "lognormal"
@@ -245,7 +247,11 @@ def simulate_log(plan, rates, mean_service, patience: Patience, days: int, seed:
     if twin_quantile is not None:
         args += ["--twin-quantile", repr(float(twin_quantile))]
     if display_psi is not None:
-        args += ["--display-psi", str(display_psi)]
+        paths = [display_psi] if isinstance(display_psi, (str, Path)) else list(display_psi)
+        for p in paths:
+            args += ["--display-psi", str(p)]
+    if display_psi_weights is not None:
+        args += ["--display-psi-weights", ",".join(repr(float(w)) for w in display_psi_weights)]
     with tempfile.TemporaryDirectory() as tmp:
         path = Path(tmp) / "log.csv"
         subprocess.run(args + ["--citizen-log", str(path)], check=True,

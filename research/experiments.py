@@ -3365,6 +3365,233 @@ def run_e18a():
     write_csv("e18a_reliability.csv", rel)
 
 
+# ============================================================================
+# Round 16: Frank-Wolfe displays (E19)
+# ============================================================================
+
+E19_DIR = RESULTS / "e19_psi"                 # Vertex tables of every Frank-Wolfe run
+E19_STEPS = 6                                 # x_6 = equal mixture of x_0 and 6 vertices
+E19_LOG_DAYS = 400                            # Design days per step (DESIGN_SEED)
+E19_K = 30.0                                  # Minutes a wasted trip costs (H69)
+E19_SLOPE_STEP = 0.1                          # +-10% of R* for the day map's slope
+
+
+def _e19_never(path):
+    """The hidden queue as a table: psi = +1 everywhere, so it never flags."""
+    from display_decisions import write_psi
+    write_psi(path, [(h, x, 1.0) for h in range(8) for x in (0.0, 1000.0)])
+    return path
+
+
+def _e19_told(rows, days):
+    return float((rows[(rows[:, 2] == 0)][:, 4] == 2).sum()) / days
+
+
+def _e19_fw_failures(setting):
+    """
+    H68 on one office: Frank-Wolfe on failures from B1 with step 1/(k+2). Each
+    step logs the current mixture on design days, estimates each hour's a(x)
+    and adds the Bayes vertex computed around it.
+    """
+    from display_decisions import admit_from_log, psi_table_failures, simulate_log, write_psi
+    office, pname, kind, rates, s, plan = setting
+    truth = _e16_truth(pname)
+    key = _e18_key(office, pname, kind)
+    tables = [str(_e18_psi_path("B1", office, pname, kind))]
+    trace = []
+    for k in range(E19_STEPS):
+        rows = simulate_log(plan, rates, s, truth, E19_LOG_DAYS, DESIGN_SEED, THRESHOLD,
+                            announce="bayes", display_psi=tables, twin_samples=64)
+        w = rows[rows[:, 2] == 0]
+        fails = float(((w[:, 4] > 0) | (w[:, 5] - w[:, 1] > THRESHOLD)).sum()) / E19_LOG_DAYS
+        trace.append({"step": k, "tables": len(tables), "design_fail_per_day": round(fails, 3),
+                      "told_per_day": round(_e19_told(rows, E19_LOG_DAYS), 3)})
+        bases = [admit_from_log(rows, h) for h in range(len(plan))]
+        table, _ = psi_table_failures(plan, rates, s, truth, THRESHOLD, bases=bases)
+        path = E19_DIR / f"fw_fail_{key}_v{k}.csv"
+        write_psi(path, table)
+        tables.append(str(path))
+    rows = simulate_log(plan, rates, s, truth, E19_LOG_DAYS, DESIGN_SEED, THRESHOLD,
+                        announce="bayes", display_psi=tables, twin_samples=64)
+    w = rows[rows[:, 2] == 0]
+    trace.append({"step": E19_STEPS, "tables": len(tables),
+                  "design_fail_per_day": round(float(((w[:, 4] > 0) | (w[:, 5] - w[:, 1]
+                                                     > THRESHOLD)).sum()) / E19_LOG_DAYS, 3),
+                  "told_per_day": round(_e19_told(rows, E19_LOG_DAYS), 3)})
+    return tables, trace
+
+
+def run_e19a():
+    """H68: the Frank-Wolfe display against B1 in the 12 E16 offices (no returns)."""
+    print("E19a: Frank-Wolfe displays (failures) in the 12 E16 offices")
+    E19_DIR.mkdir(parents=True, exist_ok=True)
+    settings = _e16_settings()
+    fw = dict(zip([st[:3] for st in settings], pmap_processes(_e19_fw_failures, settings)))
+    twin = load_results("e16d_twin.csv") + load_results("e16f_twin_high_quantiles.csv")
+    jobs = []
+    for office, pname, kind, rates, s, plan in settings:
+        best_q = min((r for r in twin if (r["office"], r["patience"], r["plan_type"])
+                      == (office, pname, kind)), key=lambda r: float(r["fail"]))["quantile"]
+        regimes = {"H": {}, "O-M15": _e16_regimes()["O-M15"][0], "Tbest": _e16_twin(float(best_q)),
+                   "B1": _e18_bayes_kw(_e18_psi_path("B1", office, pname, kind)),
+                   "FW": {"announce": "bayes", "display_psi": fw[(office, pname, kind)][0],
+                          "twin_samples": 64}}
+        jobs += [((office, pname, kind, rates, s, plan), n, kw) for n, kw in regimes.items()]
+    out = pmap(lambda j: _e18_eval(j[0][5], j[0][3], j[0][4], j[0][1], j[2]), jobs)
+    res = {(j[0][:3], j[1]): o for j, o in zip(jobs, out)}
+    rows = []
+    for (office, pname, kind, *_), name, kw in jobs:
+        k = (office, pname, kind)
+        o = res[(k, name)]
+        fail = lambda n: float(res[(k, n)]["fail_day"].sum() / res[(k, n)]["arrivals"].sum())
+        row = {"office": office, "patience": pname, "plan_type": kind, "regime": name,
+               "fail": round(fail(name), 5),
+               "share_of_oracle_gain": round((fail("H") - fail(name)) / (fail("H") - fail("O-M15")), 3)
+               if fail("H") > fail("O-M15") else "",
+               "told_per_day": round(float(o["balked"].mean()), 3)}
+        for ref in ("H", "Tbest", "B1"):
+            d = o["fail_day"] - res[(k, ref)]["fail_day"]
+            half = 1.96 * d.std(ddof=1) / math.sqrt(len(d)) if d.any() else 0.0
+            row.update({f"d_{ref}": round(float(d.mean()), 3),
+                        f"d_{ref}_lo": round(float(d.mean() - half), 3),
+                        f"d_{ref}_hi": round(float(d.mean() + half), 3)})
+        rows.append(row)
+    for st in settings:
+        sub = {r["regime"]: r for r in rows if (r["office"], r["patience"], r["plan_type"]) == st[:3]}
+        print(f"  {st[0]:<12} {st[1]:<10} {st[2]:<5} H {sub['H']['fail']:.4f} "
+              f"B1 {sub['B1']['fail']:.4f} FW {sub['FW']['fail']:.4f} "
+              f"(FW-B1 {sub['FW']['d_B1']:+.2f} [{sub['FW']['d_B1_lo']}, {sub['FW']['d_B1_hi']}]) "
+              f"trace told " + " ".join(f"{t['told_per_day']:.1f}" for t in fw[st[:3]][1]))
+    write_csv("e19a_frank_wolfe.csv", rows)
+    write_csv("e19a_trace.csv", [{"office": k[0], "patience": k[1], "plan_type": k[2], **t}
+                                 for k, (tabs, tr) in fw.items() for t in tr])
+
+
+def _e19_mixture_kw(tables):
+    return {"announce": "bayes", "display_psi": list(tables), "twin_samples": 64}
+
+
+def _e19_fw_returns(setting):
+    """
+    H69 on one setting: Frank-Wolfe on M_K = minutes lost + K visits, from the
+    hidden queue, with step 1/(k+2). Each step finds the current mixture's own
+    steady state R_k, the day map's slope s and m_R there (+-10% of R_k, common
+    random numbers), logs a(x) at R_k, and adds the psi_K vertex around it.
+    """
+    from abandonment import return_fixed_point, return_rates
+    from display_decisions import admit_from_log, psi_table_returns, simulate_log, write_psi
+    office, pname, kind, rates, s, plan, timing = setting
+    truth = _e16_truth(pname)
+    mean, dist, cv = E16_PATIENCE[pname]
+    key = _e18_key(office, pname, kind)
+    tables = [str(_e19_never(E19_DIR / f"never_{key}.csv"))]
+    fresh = sum(rates)
+    trace = []
+    for k in range(E19_STEPS):
+        kw = {**_patience_kw("renege", mean, dist, cv), **_e19_mixture_kw(tables)}
+        loc = return_fixed_point(plan, rates, s, 1.0, timing, THRESHOLD, reps=E19_LOG_DAYS,
+                                 seed=DESIGN_SEED, tol=0.02, max_factor=6.0, **kw)
+        if not loc.stable:
+            trace.append({"step": k, "tables": len(tables), "R": "inf"})
+            return tables, trace
+        R = loc.returns_per_day
+        dR = max(E19_SLOPE_STEP * R, 0.01 * fresh)
+        ends = []
+        for r_ in (max(R - dR, 0.0), R + dR):
+            sim = run_simulation(plan, return_rates(rates, r_, timing), replications=E19_LOG_DAYS,
+                                 seed=DESIGN_SEED, mean_service=s, wait_threshold=THRESHOLD, **kw)
+            arr = _e17_day_arrays(sim)
+            ends.append((r_, arr[0].mean(), arr[3].mean()))
+        (r0, l0, m0), (r1, l1, m1) = ends
+        lin = {"rates": list(return_rates(rates, R, timing)),
+               "slope": min((l1 - l0) / (r1 - r0), 0.99), "m_R": (m1 - m0) / (r1 - r0)}
+        rows = simulate_log(plan, lin["rates"], s, truth, E19_LOG_DAYS, DESIGN_SEED, THRESHOLD,
+                            announce="bayes", display_psi=tables, twin_samples=64)
+        bases = [admit_from_log(rows, h) for h in range(len(plan))]
+        table, _ = psi_table_returns(plan, rates, s, truth, THRESHOLD, E19_K, lin, bases=bases)
+        path = E19_DIR / f"fw_ret{E19_K:g}_{key}_v{k}.csv"
+        write_psi(path, table)
+        trace.append({"step": k, "tables": len(tables), "R": round(R, 3),
+                      "slope": round(lin["slope"], 4), "m_R": round(lin["m_R"], 3),
+                      "told_per_day": round(_e19_told(rows, E19_LOG_DAYS), 3)})
+        tables.append(str(path))
+    return tables, trace
+
+
+def run_e19b():
+    """H69: the Frank-Wolfe display with returns (r = 1, K = 30), E17's 16 settings."""
+    print(f"E19b: Frank-Wolfe displays with returns (K = {E19_K:g})")
+    E19_DIR.mkdir(parents=True, exist_ok=True)
+    settings = _e17_settings()
+    fw = dict(zip([st[:3] for st in settings], pmap_processes(_e19_fw_returns, settings)))
+    write_csv("e19b_trace.csv", [{"office": k[0], "patience": k[1], "plan_type": k[2], **t}
+                                 for k, (tabs, tr) in fw.items() for t in tr])
+    kw_for = lambda st, reg: (_e17_regimes()[reg] if reg in _e17_regimes()
+                              else _e19_mixture_kw(fw[st[:3]][0]))
+    solved = _e17b(settings, ["H", "FW30"], "e19b", kw_for=kw_for)
+    other = {(r["office"], r["patience"], r["plan_type"], r["regime"]): r
+             for r in load_results("e18c_mk.csv") if float(r["K"]) == E19_K}
+    rows = []
+    for office, pname, kind, rates, s, plan, timing in settings:
+        sol = solved[(office, pname, kind, timing)]
+        mk = lambda p: p["lost_min"] + E19_K * p["visits"]
+        row = {"office": office, "patience": pname, "plan_type": kind,
+               "steady_state": sol.get("FW30") is not None}
+        if sol.get("FW30") is not None and sol.get("H") is not None:
+            (fp, fb), (hp, hb) = sol["FW30"], sol["H"]
+            d = np.array([mk(a) - mk(b) for a, b in zip(fb, hb)])
+            lo, hi = np.percentile(d, [2.5, 97.5])
+            row.update({"M_K": round(mk(fp), 3), "M_K_H": round(mk(hp), 3),
+                        "d_H": round(mk(fp) - mk(hp), 3), "d_H_low": round(float(lo), 3),
+                        "d_H_high": round(float(hi), 3)})
+            for reg in ("C0-M12.5", "C0-M15", "T0.7"):
+                o = other.get((office, pname, kind, reg))
+                row[f"M_K_{reg}"] = o["M_K"] if o else ""
+        rows.append(row)
+        print(f"  {office:<12} {pname:<10} {kind:<9} " + (
+            f"M30 FW {row['M_K']} H {row['M_K_H']} d {row['d_H']:+.3f} "
+            f"[{row['d_H_low']}, {row['d_H_high']}]" if "M_K" in row else "no steady state"))
+    write_csv("e19b_mk.csv", rows)
+
+
+def run_e19c():
+    """H69(c): the Frank-Wolfe display's precision at its steady state."""
+    from abandonment import return_rates
+    from display_decisions import simulate_log, turned_away_precision
+    print("E19c: precision of the Frank-Wolfe display with returns")
+    states = {(r["office"], r["patience"], r["plan_type"], r["regime"]): r
+              for r in load_results("e19b_states.csv")}
+    tables = {}
+    for r in load_results("e19b_trace.csv"):
+        k = (r["office"], r["patience"], r["plan_type"])
+        tables.setdefault(k, [str(E19_DIR / f"never_{_e18_key(*k)}.csv")])
+        if r.get("R", "inf") != "inf":
+            tables[k].append(str(E19_DIR / f"fw_ret{E19_K:g}_{_e18_key(*k)}_v{r['step']}.csv"))
+    jobs = [st for st in _e17_settings()
+            if states.get((st[0], st[1], st[2], "FW30"), {}).get("R", "inf") != "inf"]
+
+    def one(st):
+        office, pname, kind, rates, s, plan, timing = st
+        R = float(states[(office, pname, kind, "FW30")]["R"])
+        rows = simulate_log(plan, list(return_rates(rates, R, timing)), s, _e16_truth(pname),
+                            E18_PRECISION_DAYS, E17_GRID_SEED, THRESHOLD, announce="bayes",
+                            display_psi=tables[(office, pname, kind)], twin_samples=64)
+        return turned_away_precision(rows, THRESHOLD)
+
+    out = pmap(one, jobs)
+    eps = {(r["office"], r["patience"], r["plan_type"]): r for r in load_results("e19b_contrasts.csv")
+           if r["regime"] == "FW30"}
+    rows = []
+    for st, p in zip(jobs, out):
+        rows.append({"office": st[0], "patience": st[1], "plan_type": st[2],
+                     **{k: (round(v, 4) if isinstance(v, float) else v) for k, v in p.items()},
+                     "eps": eps.get(st[:3], {}).get("eps", ""),
+                     "break_even_trip_min": eps.get(st[:3], {}).get("break_even_trip_min", "")})
+        print(f"  {st[0]:<12} {st[1]:<10} {st[2]:<9} precision {p['precision']:.3f} "
+              f"eps {rows[-1]['eps']} K* {rows[-1]['break_even_trip_min']}")
+    write_csv("e19c_precision.csv", rows)
+
+
 EXPERIMENTS = {"e1b": run_e1b, "e1": run_e1, "e2": run_e2, "e2b": run_e2b,
                "e3a": run_e3a, "e3b": run_e3b, "e4": run_e4, "e5": run_e5, "e6": run_e6,
                "e7a": run_e7a, "e7": run_e7, "e7c": run_e7c, "e8a": run_e8a, "e8b": run_e8b,
@@ -3383,7 +3610,7 @@ EXPERIMENTS = {"e1b": run_e1b, "e1": run_e1, "e2": run_e2, "e2b": run_e2b,
                "e16f": run_e16f, "e17p": run_e17p, "e17a": run_e17a, "e17b": run_e17b,
                "e17c": run_e17c, "e17d": run_e17d, "e17e": run_e17e, "e17f": run_e17f,
                "e18p": run_e18p, "e18a": run_e18a, "e18b": run_e18b, "e18c": run_e18c,
-               "e18d": run_e18d}
+               "e18d": run_e18d, "e19a": run_e19a, "e19b": run_e19b, "e19c": run_e19c}
 
 
 def main():

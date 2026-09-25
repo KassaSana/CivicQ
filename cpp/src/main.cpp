@@ -49,7 +49,9 @@ void print_usage() {
               << "  --twin-samples K           Twin display: sampled replays per arrival (default: 64)\n"
               << "  --twin-quantile Q          Twin display: quantile of the sampled waits (default: 0.5)\n"
               << "  --display-psi PATH         Bayes display: CSV hour,x,psi; 'too long' iff the twin's\n"
-              << "                             posterior mean of psi_hour(V) is negative\n"
+              << "                             posterior mean of psi_hour(V) is negative. Repeat for a\n"
+              << "                             mixture: 'too long' with the weight of tables that say so\n"
+              << "  --display-psi-weights W,.. Mixture weights, one per --display-psi (default: equal)\n"
               << "  --log-offered              Citizen log: append each arrival's true V, the twin's\n"
               << "                             P(V > threshold) and the Bayes score\n"
               << "  --output-waits             Include all wait times in output\n"
@@ -65,8 +67,10 @@ bool load_psi(const std::string& path, SimulationConfig& config) {
     }
     std::string line;
     std::getline(in, line);
-    config.psi_x.assign(NUM_SLOTS, {});
-    config.psi.assign(NUM_SLOTS, {});
+    SimulationConfig::PsiTable table;
+    table.x.assign(NUM_SLOTS, {});
+    table.psi.assign(NUM_SLOTS, {});
+    table.weight = 1.0;
     while (std::getline(in, line)) {
         if (line.empty() || line == "\r") {
             continue;
@@ -82,19 +86,20 @@ bool load_psi(const std::string& path, SimulationConfig& config) {
             return false;
         }
         double xv = std::stod(x);
-        if (!config.psi_x[hour].empty() && xv <= config.psi_x[hour].back()) {
+        if (!table.x[hour].empty() && xv <= table.x[hour].back()) {
             std::cerr << "Error: psi grid must ascend within each hour in " << path << "\n";
             return false;
         }
-        config.psi_x[hour].push_back(xv);
-        config.psi[hour].push_back(std::stod(v));
+        table.x[hour].push_back(xv);
+        table.psi[hour].push_back(std::stod(v));
     }
     for (int hour = 0; hour < NUM_SLOTS; ++hour) {
-        if (config.psi_x[hour].empty()) {
+        if (table.x[hour].empty()) {
             std::cerr << "Error: psi missing for hour " << hour << " in " << path << "\n";
             return false;
         }
     }
+    config.psi_tables.push_back(table);
     return true;
 }
 
@@ -138,6 +143,7 @@ int main(int argc, char* argv[]) {
     bool output_waits = false;
     bool per_replication = false;
     std::string citizen_log_path;
+    std::vector<double> psi_weights;
 
     // Default arrival rates: morning peak, midday lull, afternoon peak
     config.arrival_rates = {12.0, 15.0, 10.0, 8.0, 8.0, 12.0, 14.0, 10.0};
@@ -259,6 +265,13 @@ int main(int argc, char* argv[]) {
                 return 1;
             }
         }
+        else if (arg == "--display-psi-weights" && i + 1 < argc) {
+            std::stringstream list(argv[++i]);
+            std::string item;
+            while (std::getline(list, item, ',')) {
+                psi_weights.push_back(std::stod(item));
+            }
+        }
         else if (arg == "--log-offered") {
             config.log_offered = true;
         }
@@ -298,9 +311,22 @@ int main(int argc, char* argv[]) {
         std::cerr << "Error: patience mean and CV must be positive\n";
         return 1;
     }
-    if (config.announce == Announce::BAYES && config.psi.empty()) {
+    if (config.announce == Announce::BAYES && config.psi_tables.empty()) {
         std::cerr << "Error: --announce bayes needs --display-psi\n";
         return 1;
+    }
+    if (!psi_weights.empty()) {
+        if (psi_weights.size() != config.psi_tables.size()) {
+            std::cerr << "Error: one --display-psi-weights value per --display-psi\n";
+            return 1;
+        }
+        for (std::size_t t = 0; t < psi_weights.size(); ++t) {
+            if (psi_weights[t] < 0.0) {
+                std::cerr << "Error: mixture weights must be non-negative\n";
+                return 1;
+            }
+            config.psi_tables[t].weight = psi_weights[t];
+        }
     }
     if (replications < 1) {
         std::cerr << "Error: replications must be at least 1\n";

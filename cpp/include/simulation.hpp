@@ -57,7 +57,9 @@ enum class Announce {
     TWIN,      // A quantile of V predicted from what a ticket office can see
                // (ticket ages, elapsed services) and the known distributions
     BAYES      // "Too long" iff the twin's posterior mean of an influence
-               // function psi_hour(V) is negative (Round 15); nothing otherwise
+               // function psi_hour(V) is negative (Round 15); nothing otherwise.
+               // With several tables, a mixture: "too long" with probability
+               // the weight of the tables that say so (Round 16)
 };
 
 /**
@@ -178,8 +180,12 @@ struct SimulationConfig {
                                            // one value, or one per hour; empty = none)
     int twin_samples;                      // TWIN display: sampled replays per arrival
     double twin_quantile;                  // TWIN display: quantile of the sampled waits
-    std::vector<std::vector<double>> psi_x;   // BAYES: per hour, grid of V (ascending)
-    std::vector<std::vector<double>> psi;     // BAYES: per hour, psi on that grid
+    struct PsiTable {
+        std::vector<std::vector<double>> x;   // Per hour, grid of V (ascending)
+        std::vector<std::vector<double>> psi; // Per hour, psi on that grid
+        double weight;                        // Mixture weight
+    };
+    std::vector<PsiTable> psi_tables;      // BAYES: one or more influence tables
     bool log_offered;                      // Log each arrival's true V and twin P(late)
 
     SimulationConfig()
@@ -294,7 +300,7 @@ private:
     double offered_wait() const;
     double twin_quantile_of(std::vector<double> waits) const;
     void twin_draws(std::vector<double>& waits);
-    double psi_at(int hour, double v) const;
+    double psi_at(const SimulationConfig::PsiTable& t, int hour, double v) const;
     double draw_service(std::mt19937& rng) const;
     double draw_patience(std::mt19937& rng) const;
     int find_free_window();

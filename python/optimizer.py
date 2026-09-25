@@ -182,7 +182,8 @@ def run_simulation(
     display_cutoff: Optional[list] = None,
     twin_quantile: float = 0.5,
     twin_samples: int = 64,
-    display_psi: Optional[str] = None
+    display_psi=None,
+    display_psi_weights: Optional[list] = None
 ) -> SimulationResult:
     """
     Execute C++ simulator with given staffing configuration.
@@ -222,7 +223,9 @@ def run_simulation(
         twin_quantile, twin_samples: announce="twin" shows this quantile of
             the wait predicted by replaying the queue with sampled unknowns
         display_psi: announce="bayes": CSV (hour, x, psi); a walk-in is told
-            "too long" iff the twin's posterior mean of psi_hour(V) is negative
+            "too long" iff the twin's posterior mean of psi_hour(V) is negative.
+            A list of paths is a mixture: "too long" with the total weight
+            (display_psi_weights, default equal) of the tables that say so
 
     Returns:
         SimulationResult with aggregated metrics and 95% CIs
@@ -268,7 +271,12 @@ def run_simulation(
         cmd += ["--twin-quantile", repr(float(twin_quantile)),
                 "--twin-samples", str(int(twin_samples))]
     if announce == "bayes":
-        cmd += ["--display-psi", str(display_psi), "--twin-samples", str(int(twin_samples))]
+        paths = [display_psi] if isinstance(display_psi, (str, Path)) else list(display_psi)
+        for p in paths:
+            cmd += ["--display-psi", str(p)]
+        if display_psi_weights is not None:
+            cmd += ["--display-psi-weights", ",".join(repr(float(w)) for w in display_psi_weights)]
+        cmd += ["--twin-samples", str(int(twin_samples))]
 
     try:
         result = subprocess.run(

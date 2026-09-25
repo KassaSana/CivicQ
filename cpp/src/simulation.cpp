@@ -381,11 +381,11 @@ double QueueSimulator::twin_quantile_of(std::vector<double> waits) const {
     return waits[idx];
 }
 
-double QueueSimulator::psi_at(int hour, double v) const {
+double QueueSimulator::psi_at(const SimulationConfig::PsiTable& t, int hour, double v) const {
     // psi for this hour, linear between grid points and flat beyond them
-    const std::size_t h = std::min<std::size_t>(hour, config_.psi_x.size() - 1);
-    const std::vector<double>& x = config_.psi_x[h];
-    const std::vector<double>& y = config_.psi[h];
+    const std::size_t h = std::min<std::size_t>(hour, t.x.size() - 1);
+    const std::vector<double>& x = t.x[h];
+    const std::vector<double>& y = t.psi[h];
     if (v <= x.front()) {
         return y.front();
     }
@@ -515,18 +515,32 @@ void QueueSimulator::admit_citizen(bool is_appointment) {
                 citizen.est_oracle = twin_quantile_of(draws);
             }
             int hour = get_current_slot(current_time_);
-            double late = 0.0, score = 0.0;
+            double late = 0.0;
             for (double v : draws) {
                 late += v > config_.wait_threshold ? 1.0 : 0.0;
-                if (bayes) {
-                    score += psi_at(hour, v);
-                }
             }
             citizen.twin_p_late = late / draws.size();
-            citizen.bayes_score = score / draws.size();
             if (bayes) {
-                citizen.est_oracle = citizen.bayes_score < 0.0
-                                   ? std::numeric_limits<double>::infinity() : 0.0;
+                // Each table votes with its weight; a split vote is settled by a
+                // uniform draw on the twin stream (never drawn with one table)
+                double say = 0.0, total = 0.0;
+                for (std::size_t t = 0; t < config_.psi_tables.size(); ++t) {
+                    double score = 0.0;
+                    for (double v : draws) {
+                        score += psi_at(config_.psi_tables[t], hour, v);
+                    }
+                    score /= draws.size();
+                    if (t == 0) {
+                        citizen.bayes_score = score;
+                    }
+                    total += config_.psi_tables[t].weight;
+                    say += score < 0.0 ? config_.psi_tables[t].weight : 0.0;
+                }
+                bool flag = say >= total;
+                if (say > 0.0 && say < total) {
+                    flag = std::uniform_real_distribution<double>(0.0, total)(twin_rng_) < say;
+                }
+                citizen.est_oracle = flag ? std::numeric_limits<double>::infinity() : 0.0;
             }
         }
         if (config_.log_offered) {
