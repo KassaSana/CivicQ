@@ -2528,11 +2528,11 @@ def _e16_twin(q):
             "twin_quantile": q, "twin_samples": 64}
 
 
-def run_e16d():
+def run_e16d(quantiles=tuple(E16_TWIN_QUANTILES), out_name="e16d_twin.csv"):
     """H57: the twin display (what a ticket office can predict) in the 12 offices."""
-    print("E16d: twin displays in the 12 new offices")
+    print(f"E16d: twin displays in the 12 new offices, quantiles {list(quantiles)}")
     settings = _e16_settings()
-    jobs = [(st, q) for st in settings for q in E16_TWIN_QUANTILES]
+    jobs = [(st, q) for st in settings for q in quantiles]
 
     def one(job):
         (office, pname, kind, rates, s, plan), q = job
@@ -2569,7 +2569,7 @@ def run_e16d():
         h_fail = float(b[(office, pname, kind, "H")]["fail"])
         o_fail = float(b[(office, pname, kind, "O-M15")]["fail"])
         c_fail = float(b[(office, pname, kind, f"C0-M{best_c0:g}")]["fail"])
-        for q in E16_TWIN_QUANTILES:
+        for q in quantiles:
             o = out[(office, pname, kind, q)]
             fail = float(o["fail_day"].sum() / o["arrivals"].sum())
             row = {"office": office, "patience": pname, "plan_type": kind, "quantile": q,
@@ -2587,11 +2587,16 @@ def run_e16d():
                 row[f"d_{ref}_lo"] = round(float(d.mean() - half), 3)
                 row[f"d_{ref}_hi"] = round(float(d.mean() + half), 3)
             rows.append(row)
-        sub = rows[-len(E16_TWIN_QUANTILES):]
+        sub = rows[-len(quantiles):]
         print(f"  {office:<13} {pname:<10} {kind:<5} H {h_fail:.3f} oracle {o_fail:.3f} "
               f"count(M{best_c0:g}) {c_fail:.3f} | twin " + " ".join(
                   f"q{r['quantile']} {r['fail']:.3f} ({r['share_of_oracle_gain']})" for r in sub))
-    write_csv("e16d_twin.csv", rows)
+    write_csv(out_name, rows)
+
+
+def run_e16f():
+    """Post hoc (after H57): the twin display at higher quantiles."""
+    run_e16d(quantiles=(0.8, 0.9, 0.95), out_name="e16f_twin_high_quantiles.csv")
 
 
 def run_e16e():
@@ -2651,7 +2656,8 @@ EXPERIMENTS = {"e1b": run_e1b, "e1": run_e1, "e2": run_e2, "e2b": run_e2b,
                "e14c": run_e14c, "e14d": run_e14d,
                "e15a": run_e15a, "e15b": run_e15b,
                "e15c": run_e15c, "e16p": run_e16p, "e16a": run_e16a, "e16b": run_e16b,
-               "e16c": run_e16c, "e16d": run_e16d, "e16e": run_e16e}
+               "e16c": run_e16c, "e16d": run_e16d, "e16e": run_e16e,
+               "e16f": run_e16f}
 
 
 def main():

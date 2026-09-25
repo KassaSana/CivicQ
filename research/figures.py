@@ -1185,6 +1185,64 @@ def fig_display_theory():
     save(fig, "fig22_display_theory.png")
 
 
+def fig_display_practice():
+    """Round 13b: how much of the oracle's gain a real office can reach, and staffing."""
+    twin = load("e16d_twin.csv") + load("e16f_twin_high_quantiles.csv")
+    st = load("e16e_staffing.csv")
+    fig, (a, b) = plt.subplots(1, 2, figsize=(12.5, 4.6))
+    keys = []
+    for r in twin:
+        k = (r["office"], r["patience"], r["plan_type"])
+        if k not in keys:
+            keys.append(k)
+    for k in keys:
+        rows = sorted((r for r in twin if (r["office"], r["patience"], r["plan_type"]) == k),
+                      key=lambda r: float(r["quantile"]))
+        qs = [float(r["quantile"]) for r in rows]
+        share = [100 * float(r["share_of_oracle_gain"]) for r in rows]
+        ls = "-" if k[0].startswith("R16") else "--"
+        mk = "o" if k[2] == "lean" else "s"
+        a.plot(qs, share, ls, marker=mk, ms=3.5, lw=1.3, color=E16_PAT_COLOR[k[1]],
+               label=f"{k[0][:3].rstrip('_')} E, {k[2]}" if k[1] == "logn30" else None)
+    a.axhline(0, color=MUTED, lw=1)
+    a.axvspan(0.3, 0.7, color=GRID, alpha=0.4, lw=0)
+    a.set_ylim(-60, 75)
+    a.text(0.5, 70, "registered grid", ha="center", va="top", color=MUTED, fontsize=8)
+    a.set_xlabel("Quantile q: say \"over 15\" when P(wait ≥ 15) ≥ 1 − q")
+    a.set_ylabel("Share of the oracle cutoff's reduction (%)")
+    a.set_title("(a) Twin display: what a ticket office can predict", loc="left")
+    handles = [plt.Line2D([], [], color=c, lw=2, label=E16_PAT_LABEL[p])
+               for p, c in E16_PAT_COLOR.items()]
+    handles += [plt.Line2D([], [], color=INK_2, ls="-", label="16 E"),
+                plt.Line2D([], [], color=INK_2, ls="--", label="4 E"),
+                plt.Line2D([], [], color=INK_2, ls="", marker="o", label="lean plan"),
+                plt.Line2D([], [], color=INK_2, ls="", marker="s", label="safe plan")]
+    a.legend(handles=handles, fontsize=7, loc="lower left", ncol=2)
+    hid = {(r["office"], r["patience"], r["alpha"]): int(r["staff_hours"]) for r in st
+           if r["plan"] == "hidden" and r["regime"] == "H"}
+    for regime, marker, label in (("O-M15", "o", "oracle cutoff"), ("twin", "^", "twin (q = 0.5)")):
+        for r in st:
+            if r["plan"] != "display" or r["regime"] != regime:
+                continue
+            k = (r["office"], r["patience"], r["alpha"])
+            saved = 100 * (1 - int(r["staff_hours"]) / hid[k])
+            ratio = float(r["worst_fail"]) / float(r["alpha"])
+            miss = int(r["fail_misses"]) > 0
+            b.scatter(saved, ratio, marker=marker, s=34, color=E16_PAT_COLOR[r["patience"]],
+                      facecolors=E16_PAT_COLOR[r["patience"]] if miss else "none",
+                      linewidths=1.3)
+    b.axhline(1.0, color=MUTED, lw=1, ls="--")
+    b.set_xlabel("Staff-hours saved by staffing for the display (%)")
+    b.set_ylabel("Worst hour's failure rate / target")
+    b.set_title("(b) Staffing for the display (filled = significant miss)", loc="left")
+    b.legend(handles=[plt.Line2D([], [], color=INK_2, ls="", marker="o", mfc="none",
+                                 label="oracle cutoff"),
+                      plt.Line2D([], [], color=INK_2, ls="", marker="^", mfc="none",
+                                 label="twin display, q = 0.5")], fontsize=7.5, loc="upper left")
+    fig.tight_layout()
+    save(fig, "fig23_display_practice.png")
+
+
 if __name__ == "__main__":
     fig_gap_heatmap()
     fig_hourly()
@@ -1208,3 +1266,4 @@ if __name__ == "__main__":
     fig_learning_tradeoff()
     fig_wait_displays()
     fig_display_theory()
+    fig_display_practice()
