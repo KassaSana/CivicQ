@@ -2004,6 +2004,104 @@ def run_e14b():
     keys = list(dict.fromkeys(k for r in rows for k in r))
     write_csv("e14b_fixed_points.csv", [{k: r.get(k, "") for k in keys} for r in rows])
 
+
+E14_POLICIES = [("A", False), ("B", False), ("A", True)]     # (rule, explore)
+E14_HISTORIES = 10
+E14_PERIODS = 8
+E14_DAYS = 30
+
+
+def run_e14c():
+    """H42-H46: simulated histories of refitting and restaffing from the office's own log."""
+    from abandonment import score
+    from learning import run_history
+    print("E14c: learning-by-staffing histories")
+    oracle = {(r["office"], float(r["alpha"]), r["patience"]): int(r["oracle_hours"])
+              for r in load_results("e14b_fixed_points.csv") if r["part"] == "size"}
+    tasks, keys = [], []
+    for R, alpha in E14_CASES:
+        rates = arrival_profile(R, E14_S, 0.6)
+        erl = analytic_plans(rates, E14_S, THRESHOLD, alpha)["SIPP"]
+        for pname in E14_TRUTHS:
+            truth = _e14_truth(pname)
+            for rule, explore in E14_POLICIES:
+                for h in range(E14_HISTORIES):
+                    tasks.append((rates, E14_S, alpha, truth, rule, explore, erl, h, E14_PERIODS,
+                                  E14_DAYS, THRESHOLD))
+                    keys.append((R, alpha, pname, rule, explore, h))
+    histories = pmap_processes(run_history, tasks)
+    rows = []
+    for (R, alpha, pname, rule, explore, h), hist in zip(keys, histories):
+        for rec in hist:
+            rows.append({"office": f"R{R:g}", "alpha": alpha, "patience": pname, "rule": rule,
+                         "explore": explore, "history": h, "period": rec["period"],
+                         "hours_run": rec["hours_run"], "new_hours": rec["new_hours"],
+                         "new_plan": json.dumps(rec["new_plan"]),
+                         "failures_per_day": round(rec["failures_per_day"], 2),
+                         "paid_hours_per_day": round(rec["paid_hours_per_day"], 2),
+                         "fitted_family": rec["fitted_family"],
+                         "fitted_mean": round(rec["fitted_mean"], 1),
+                         "fitted_cv": round(rec["fitted_cv"], 3),
+                         "oracle_hours": oracle[(f"R{R:g}", alpha, pname)]})
+    write_csv("e14c_histories.csv", rows)
+
+    # Score every distinct final plan on the evaluation days
+    finals = {}
+    for r in rows:
+        if r["period"] == E14_PERIODS:
+            finals.setdefault((r["office"], r["alpha"], r["patience"], r["new_plan"]), None)
+    print(f"  scoring {len(finals)} distinct final plans")
+
+    def score_one(key):
+        office, alpha, pname, plan = key
+        R = float(office[1:])
+        fam, mean, cv = E14_TRUTHS[pname]
+        ev = score(json.loads(plan), arrival_profile(R, E14_S, 0.6), E14_S, THRESHOLD,
+                   **_patience_kw("renege", mean, fam, cv))
+        return ev.misses("fail", alpha), round(ev.worst("fail"), 4)
+
+    for key, res in zip(finals, pmap(score_one, list(finals))):
+        finals[key] = res
+    summary = []
+    for R, alpha in E14_CASES:
+        office = f"R{R:g}"
+        for pname in E14_TRUTHS:
+            for rule, explore in E14_POLICIES:
+                sub = [r for r in rows if (r["office"], r["alpha"], r["patience"], r["rule"],
+                                           r["explore"]) == (office, alpha, pname, rule, explore)]
+                orc = sub[0]["oracle_hours"]
+                first = [r["new_hours"] for r in sub if r["period"] == 1]
+                last = [r for r in sub if r["period"] == E14_PERIODS]
+                path = [float(np.mean([r["new_hours"] for r in sub if r["period"] == k]))
+                        for k in range(1, E14_PERIODS + 1)]
+                scored = [finals[(office, alpha, pname, r["new_plan"])] for r in last]
+                summary.append({
+                    "office": office, "alpha": alpha, "patience": pname, "rule": rule,
+                    "explore": explore, "oracle_hours": orc,
+                    "start_hours": sub[0]["hours_run"],
+                    "first_refit_mean": round(float(np.mean(first)), 2),
+                    "first_within": sum(abs(x - orc) <= (3 if R == 8 else 5) for x in first),
+                    "final_mean": round(float(np.mean([r["new_hours"] for r in last])), 2),
+                    "final_min": min(r["new_hours"] for r in last),
+                    "final_max": max(r["new_hours"] for r in last),
+                    "final_within": sum(abs(r["new_hours"] - orc) <= (2 if R == 8 else 3)
+                                        for r in last),
+                    "max_rise": round(max(b - a for a, b in zip(path, path[1:])), 2),
+                    "mean_path": json.dumps([round(x, 1) for x in path]),
+                    "failures_per_day": round(float(np.mean([r["failures_per_day"] for r in sub])), 2),
+                    "paid_hours_per_day": round(float(np.mean([r["paid_hours_per_day"] for r in sub])), 2),
+                    "final_fitted_mean": round(float(np.mean([r["fitted_mean"] for r in last])), 1),
+                    "final_family_lognormal": sum(r["fitted_family"] == "lognormal" for r in last),
+                    "final_safe": sum(m == 0 for m, _ in scored),
+                    "final_worst_fail": max(w for _, w in scored)})
+                x = summary[-1]
+                print(f"  {office} a={alpha} {pname:<6} {rule}{'+explore' if explore else '':<8} "
+                      f"{x['start_hours']} -> first {x['first_refit_mean']:.1f}, final "
+                      f"{x['final_mean']:.1f} [{x['final_min']}-{x['final_max']}] (oracle {orc}); "
+                      f"fails/day {x['failures_per_day']:.1f}; safe {x['final_safe']}/10")
+    write_csv("e14c_summary.csv", summary)
+
+
 EXPERIMENTS = {"e1b": run_e1b, "e1": run_e1, "e2": run_e2, "e2b": run_e2b,
                "e3a": run_e3a, "e3b": run_e3b, "e4": run_e4, "e5": run_e5, "e6": run_e6,
                "e7a": run_e7a, "e7": run_e7, "e7c": run_e7c, "e8a": run_e8a, "e8b": run_e8b,
@@ -2014,7 +2112,8 @@ EXPERIMENTS = {"e1b": run_e1b, "e1": run_e1, "e2": run_e2, "e2b": run_e2b,
                "e11e": run_e11e, "e12a": run_e12a, "e12b": run_e12b, "e12c": run_e12c,
                "e12d": run_e12d, "e12e": run_e12e,
                "e13a": run_e13a, "e13b": run_e13b, "e13c": run_e13c, "e13d": run_e13d,
-               "e13e": run_e13e, "e13f": run_e13f, "e14a": run_e14a, "e14b": run_e14b}
+               "e13e": run_e13e, "e13f": run_e13f, "e14a": run_e14a, "e14b": run_e14b,
+               "e14c": run_e14c}
 
 
 def main():

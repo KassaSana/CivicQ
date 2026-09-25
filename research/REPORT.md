@@ -327,7 +327,14 @@ Hypotheses:
   - At 32 E, observed failures per day over the whole history rise by at least 50% in both settings.
   - Control (exponential truth): exploration changes the mean final plan by at most 1 h in all 4 settings and raises failures per day in all 4.
 - **H45 (a better model beats more data).** Rule B without exploration ends at no more staff-hours than rule A with exploration in all 4 lognormal settings, and at least 2 h fewer at 32 E in both settings.
-- **H46 (learned plans stay safe).** Every policy's final plan meets the failure target (no hour significantly above α on the evaluation days) in at least 95% of histories, pooled over settings and truths. The reasoning: stationary per-hour plans carry slack against the opening-empty day (§5.2). The ticket log holds no trace of balkers. With a timestamped door counter, each arrival's decision is current-status data at its expected wait (q + 1)·S/c, which can be rebuilt from the log.
+- **H46 (learned plans stay safe).** Every policy's final plan meets the failure target (no hour significantly above α on the evaluation days) in at least 95% of histories, pooled over settings and truths. The reasoning: stationary per-hour plans carry slack against the opening-empty day (§5.2).
+
+*Round 11b* (stated after E14c, before running E14d). H46 failed in a way that changes the reading of the whole round. At 32 E the oracle plan (SIPP-G with the true patience curve) misses the failure target in every history. So do rule B, which learns that curve, and every exponential-truth plan. The misses are in the hours after the peaks: 10–11, 11–12 and 3–4 PM, where the peak's backlog spills over (Round 1's lag effect, which never produced a significant miss without abandonment). Rule A was safe only because its misspecification overstaffs. A post-hoc check with the true curve suggests the fix: SIPP-G on Round 1's lagged rates ("Lag-SIPP-G") met the target in all 8 settings, with fewer hours. It used 73, 67, 251 and 242 h under lognormal patience and 71, 62, 237 and 211 h under exponential patience (8 E then 32 E; α = 0.10 then 0.20).
+
+- **H47 (confirmatory; learn the curve and staff for the lag).** Rule B restaffing by Lag-SIPP-G, from Erlang-C, in 10 new histories per setting and truth (log seeds 800000 onwards), all 4 settings and both truths:
+  - (a) the final plans meet the failure target in at least 95% of the 80 histories;
+  - (b) the final plan is within ±2 h (8 E) or ±3 h (32 E) of Lag-SIPP-G with the true curve in at least 9 of 10 histories per setting;
+  - (c) under lognormal patience its final plans use at least 3 h fewer than rule A's (E14c) in both 32 E settings, and no more at 8 E. The ticket log holds no trace of balkers. With a timestamped door counter, each arrival's decision is current-status data at its expected wait (q + 1)·S/c, which can be rebuilt from the log.
 
 *Change after pre-registration (Round 2):* while testing H7 we found that Ciw cannot express CivicQ's staffing-change rule (see §5.6). H7 was therefore split into a strict test for constant staffing and a bounds test for changing staffing *before* E5 was run. This deviation is disclosed here.
 

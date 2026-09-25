@@ -356,6 +356,76 @@ def iterate_explore(start, rates, mean_service, truth, rule, p, phi, max_steps=2
     return path
 
 
+# ============================================================================
+# Simulated histories: refit and restaff on the office's own log
+# ============================================================================
+
+HISTORY_SEED = 700_000
+
+
+def _period_log(plan, rates, mean_service, truth: Patience, days, seed, threshold):
+    """(v, absent, failures) from `days` simulated days of `plan` (hidden queue)."""
+    from patience_logs import ARRIVAL, CALL, OUTCOME, raw_log, ticket_log
+    dist = "exp" if truth.family == "exp" else "lognormal"
+    rows = raw_log(plan, rates, mean_service, "renege", truth.mean, dist, truth.cv,
+                   days=days, seed=seed)
+    wait = rows[:, CALL] - rows[:, ARRIVAL]
+    failures = int(np.sum((rows[:, OUTCOME] == 1) | ((rows[:, OUTCOME] == 0) & (wait > threshold))))
+    t = ticket_log(rows, days)
+    return t.v, t.absent, failures
+
+
+def run_history(args) -> list:
+    """
+    One office history (picklable for process pools). args = (rates,
+    mean_service, alpha, truth, rule, explore, start, history, periods,
+    days, threshold). Each period runs the current plan for `days` days
+    (with explore, days 10, 20, 30 run explore_plan(plan, 0.9)), then refits
+    on all log so far and restaffs. Returns one record per period.
+    """
+    from patience_logs import cs_mle, pick_family
+    from staffing_methods import lagged_rates
+    (rates, mean_service, alpha, truth, rule, explore, start, history, periods,
+     days, threshold) = args[:11]
+    # Optional: staff by SIPP-G on lagged rates (Round 11b), and a seed offset
+    lag = args[11] if len(args) > 11 else False
+    seed_base = args[12] if len(args) > 12 else HISTORY_SEED
+    staff_rates = lagged_rates(rates, mean_service) if lag else rates
+    plan = list(start)
+    vs, abs_ = [], []
+    out = []
+    for k in range(periods):
+        seed = seed_base + history * 1000 + k * 40
+        n_explore = days // 10 if explore else 0
+        v, a, fails = _period_log(plan, rates, mean_service, truth, days - n_explore, seed,
+                                  threshold)
+        vs.append(v)
+        abs_.append(a)
+        paid = (days - n_explore) * sum(plan)
+        if n_explore:
+            ex = explore_plan(plan, 0.9)
+            v, a, f2 = _period_log(ex, rates, mean_service, truth, n_explore,
+                                   seed + days - n_explore, threshold)
+            vs.append(v)
+            abs_.append(a)
+            fails += f2
+            paid += n_explore * sum(ex)
+        v_all, a_all = np.concatenate(vs), np.concatenate(abs_)
+        if rule == "A":
+            fit = cs_mle(v_all, a_all, "exp")
+        else:
+            fam, fits = pick_family(v_all, a_all)
+            fit = fits[fam]
+        fitted = Patience.from_fit(fit)
+        new = sipp_g(staff_rates, mean_service, threshold, alpha, fitted)
+        out.append({"period": k + 1, "plan_run": plan, "hours_run": sum(plan),
+                    "failures_per_day": fails / days, "paid_hours_per_day": paid / days,
+                    "fitted_family": fitted.family, "fitted_mean": fitted.mean,
+                    "fitted_cv": fitted.cv, "new_plan": new, "new_hours": sum(new)})
+        plan = new
+    return out
+
+
 def iterate_map(start, rates, mean_service, truth, rule, max_steps=20, **kw):
     """Iterate the limit map to a fixed point (or a cycle). Returns the path."""
     path, seen = [(list(start), None)], {tuple(start)}
