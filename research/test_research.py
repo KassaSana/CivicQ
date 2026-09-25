@@ -619,6 +619,28 @@ class TestDisplayTheory(unittest.TestCase):
                         x >= 15.0, np.inf, np.where((x > a) & (x < b), k * x, x))
                     self.assertGreater(display_hour(c, lam, s, p, 15.0, show).fail, base)
 
+    def test_throughput_balances_busy_windows_at_any_load(self):
+        # Flow balance mu E[busy] = served rate; Round 13's trapezoid rule broke
+        # it by up to 5% at 20x capacity below a cutoff (section 5.17, correction)
+        from displays import cutoff, display_hour, mean_busy, scaled, served_rate
+        for p in self.pats:
+            for c, s in [(1, 8.0), (4, 8.0), (16, 16.0)]:
+                for show in (scaled(0.0), scaled(2.0), cutoff(5.0), cutoff(15.0)):
+                    for load in (0.5, 3.0, 20.0):
+                        lam = load * c / s
+                        d = display_hour(c, lam, s, p, 15.0, show)
+                        self.assertAlmostEqual(served_rate(d, lam) * s / c,
+                                               mean_busy(c, lam, s, d) / c, delta=1e-4)
+
+    def test_grid_converges(self):
+        from displays import cutoff, display_hour
+        for load in (1.0, 20.0):
+            lam = load * 16 / 16.0
+            coarse = display_hour(16, lam, 16.0, self.pats[1], 15.0, cutoff(15.0))
+            fine = display_hour(16, lam, 16.0, self.pats[1], 15.0, cutoff(15.0), h=0.001)
+            self.assertAlmostEqual(coarse.fail, fine.fail, delta=2e-3)
+            self.assertAlmostEqual(coarse.balk, fine.balk, delta=2e-3)
+
     def test_the_cutoff_at_the_threshold_is_best(self):
         from displays import cutoff, display_hour, scaled
         for p in self.pats:

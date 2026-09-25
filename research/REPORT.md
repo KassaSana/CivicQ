@@ -1226,6 +1226,8 @@ A correction to Round 12 falls out of the proof. Overstating the wait below the 
 
 **H53: supported.** The exact stationary law matched the simulator in all 54 cells (display O×2, O-M15 or O-M10; c = 2 to 16; ρ = 0.9 or 1.2; three patience curves). The largest |z| was 1.4. The simulator's oracle display was also checked exactly before registration: showing each citizen their true wait left every served citizen's outcome unchanged, as Round 12's Proposition requires.
 
+*Correction (Round 14).* `display_hour` integrated the density of V with the trapezoid rule. Below a cutoff at loads of several times capacity, that density rises in a boundary layer too thin for the 0.01-minute grid. At 20 times capacity the computed throughput fell 5% short of μ·E[busy], enough to make throughput look as if it fell with load. The mass in each cell is now integrated exactly, and flow balance holds to 10⁻¹¹ at every load (new regression test). Across Round 13's range the correction moves the registered predictions (`e16p`) by at most 0.0006 and the E16a theory column by at most 0.0008. No best cutoff changes, and H53 is still 54 of 54 (largest |z| 1.36). The committed prediction files are left as registered.
+
 **H54: supported (12 of 12 on each part).** In the time-varying offices the cutoff at the target:
 - (a) had significantly fewer failures than the hidden queue in every office;
 - (b) had fewer failures than every scaled oracle display;
