@@ -183,7 +183,8 @@ def run_simulation(
     twin_quantile: float = 0.5,
     twin_samples: int = 64,
     display_psi=None,
-    display_psi_weights: Optional[list] = None
+    display_psi_weights: Optional[list] = None,
+    timeout: float = 300
 ) -> SimulationResult:
     """
     Execute C++ simulator with given staffing configuration.
@@ -280,7 +281,7 @@ def run_simulation(
 
     try:
         result = subprocess.run(
-            cmd, capture_output=True, text=True, check=True, timeout=300
+            cmd, capture_output=True, text=True, check=True, timeout=timeout
         )
     except FileNotFoundError:
         raise RuntimeError(

@@ -507,7 +507,17 @@ void QueueSimulator::admit_citizen(bool is_appointment) {
         citizen.twin_p_late = 0.0;
         citizen.bayes_score = 0.0;
         const bool twin = config_.announce == Announce::TWIN;
-        const bool bayes = config_.announce == Announce::BAYES;
+        // A mixture whose tables never go negative can never say "too long":
+        // skip its draws (the twin stream feeds nothing else)
+        bool can_flag = false;
+        for (const auto& t : config_.psi_tables) {
+            for (const auto& hour : t.psi) {
+                for (double p : hour) {
+                    can_flag = can_flag || p < 0.0;
+                }
+            }
+        }
+        const bool bayes = config_.announce == Announce::BAYES && can_flag;
         if ((twin || bayes || config_.log_offered) && !free_now) {
             std::vector<double> draws;
             twin_draws(draws);

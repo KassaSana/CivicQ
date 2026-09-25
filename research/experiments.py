@@ -3468,7 +3468,9 @@ def run_e19a():
 
 
 def _e19_mixture_kw(tables):
-    return {"announce": "bayes", "display_psi": list(tables), "twin_samples": 64}
+    # Long hidden queues make each twin replay slow: allow an hour per simulator run
+    return {"announce": "bayes", "display_psi": list(tables), "twin_samples": 64,
+            "timeout": 3600}
 
 
 def _e19_fw_returns(setting):
