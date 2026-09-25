@@ -2307,6 +2307,214 @@ def run_e15c():
     write_csv("e15c_paired_contrasts.csv", rows)
 
 
+# ============================================================================
+# Round 13: a theory of wait displays (E16)
+# ============================================================================
+
+E16_OFFICES = {"R4_S8_A0.6": (4.0, 8.0), "R16_S16_A0.6": (16.0, 16.0)}   # (Erlangs, S)
+E16_PATIENCE = {"exp30": (30.0, "exp", 1.0), "logn30": (30.0, "lognormal", 0.5),
+                "logn30cv15": (30.0, "lognormal", 1.5)}
+E16_CUTOFFS = [5.0, 10.0, 12.5, 15.0, 17.5, 20.0, 30.0]
+E16_KAPPAS = [1.5, 2.0, 3.0]
+E16_LOG_SEED = 950_000
+
+
+def _e16_truth(pname):
+    from learning import Patience
+    mean, dist, cv = E16_PATIENCE[pname]
+    return Patience("exp" if dist == "exp" else "lognormal", mean, cv)
+
+
+def _e16_settings():
+    """12 offices not used before; plans fixed by rule (lean: SIPP-G at 0.20;
+    safe: Lag-SIPP-G at 0.10, Round 11b's safe rule)."""
+    from learning import sipp_g
+    from staffing_methods import lagged_rates
+    out = []
+    for office, (load, s) in E16_OFFICES.items():
+        rates = arrival_profile(load, s, 0.6)
+        for pname in E16_PATIENCE:
+            truth = _e16_truth(pname)
+            out.append((office, pname, "lean", rates, s,
+                        sipp_g(rates, s, THRESHOLD, 0.20, truth)))
+            out.append((office, pname, "safe", rates, s,
+                        sipp_g(lagged_rates(rates, s), s, THRESHOLD, 0.10, truth)))
+    return out
+
+
+def _e16_regimes():
+    """name -> (simulator keywords, theory display or None, (predictor, kappa, cutoff))."""
+    from displays import HIDDEN, cutoff, scaled
+    reg = {"H": ({}, HIDDEN, None)}
+    for k in E16_KAPPAS:
+        reg[f"O*{k:g}"] = ({"announce": "oracle", "display_scale": k}, scaled(k),
+                           ("oracle", k, math.inf))
+    for m in E16_CUTOFFS:
+        reg[f"O-M{m:g}"] = ({"announce": "oracle", "display_cutoff": [m]}, cutoff(m),
+                            ("oracle", 1.0, m))
+    reg["C"] = ({"announce": "count"}, None, ("count", 1.0, math.inf))
+    for m in E16_CUTOFFS:
+        reg[f"C0-M{m:g}"] = ({"announce": "count", "display_scale": 0.0, "display_cutoff": [m]},
+                             None, ("count", 0.0, m))
+        reg[f"C1-M{m:g}"] = ({"announce": "count", "display_cutoff": [m]}, None,
+                             ("count", 1.0, m))
+    return reg
+
+
+def run_e16p():
+    """Theory only: the settings, their plans and the predicted failure changes."""
+    from displays import plan_prediction
+    print("E16p: stationary per-hour predictions for the 12 new settings")
+    rows = []
+    for office, pname, kind, rates, s, plan in _e16_settings():
+        truth = _e16_truth(pname)
+        base = plan_prediction(plan, rates, s, truth, THRESHOLD)
+        row = {"office": office, "patience": pname, "plan_type": kind,
+               "plan": "-".join(map(str, plan)), "staff_hours": sum(plan),
+               "H_fail": round(base["fail"], 5)}
+        for name, (_, show, _) in _e16_regimes().items():
+            if show is None or name == "H":
+                continue
+            pr = plan_prediction(plan, rates, s, truth, THRESHOLD, show)
+            row[f"{name}_dfail"] = round(pr["fail"] - base["fail"], 5)
+        row["argmin_cutoff"] = min(E16_CUTOFFS, key=lambda m: row[f"O-M{m:g}_dfail"])
+        rows.append(row)
+        print(f"  {office:<13} {pname:<10} {kind:<5} {plan} H {base['fail']:.3f} | " + " ".join(
+            f"{k[:-6]} {100 * v:+.2f}" for k, v in row.items() if k.endswith("_dfail")))
+    write_csv("e16p_predictions.csv", rows)
+
+
+def run_e16a(reps=200):
+    """H53: the exact stationary law under oracle displays, against the simulator."""
+    from abandonment import score
+    from displays import cutoff, display_hour, scaled
+    print("E16a: display theory vs the simulator (constant demand and staffing)")
+    cases = []
+    for c, s in [(2, 8.0), (8, 16.0), (16, 16.0)]:
+        for rho in (0.9, 1.2):
+            for pname in E16_PATIENCE:
+                for dname, kw, show in [("O*2", {"display_scale": 2.0}, scaled(2.0)),
+                                        ("O-M15", {"display_cutoff": [15.0]}, cutoff(15.0)),
+                                        ("O-M10", {"display_cutoff": [10.0]}, cutoff(10.0))]:
+                    cases.append((c, s, rho, pname, dname, kw, show))
+
+    def one(case):
+        c, s, rho, pname, dname, kw, show = case
+        lam = rho * c / s * 60.0
+        mean, dist, cv = E16_PATIENCE[pname]
+        ev = score([c] * SLOTS, [lam] * SLOTS, s, THRESHOLD, reps=reps, seed=310_000,
+                   duration=20000, announce="oracle", **kw,
+                   **_patience_kw("renege", mean, dist, cv))
+        th = display_hour(c, lam / 60.0, s, _e16_truth(pname), THRESHOLD, show)
+        return ev, th
+
+    rows = []
+    for case, (ev, th) in zip(cases, pmap(one, cases)):
+        c, s, rho, pname, dname, _, _ = case
+        ci = ev.fail_ci[7]
+        se = (ci[1] - ci[0]) / (2 * 1.96)
+        row = {"windows": c, "service_time": s, "rho": rho, "patience": pname, "display": dname,
+               "fail_theory": round(th.fail, 5), "fail_sim": round(ev.fail[7], 5),
+               "se": round(se, 5), "z": round((ev.fail[7] - th.fail) / se, 2) if se > 0 else 0.0,
+               "abandon_theory": round(th.balk + th.renege, 5),
+               "abandon_sim": round(ev.abandon[7], 5)}
+        row["ok"] = bool(abs(row["z"]) <= 3 or abs(ev.fail[7] - th.fail) <= 0.002)
+        rows.append(row)
+        print(f"  c={c:<2} rho={rho} {pname:<10} {dname:<6} fail {ev.fail[7]:.4f} vs "
+              f"{th.fail:.4f} (z={row['z']:+.2f})")
+    write_csv("e16a_theory_validation.csv", rows)
+    print(f"  within 3 SE (or 0.002): {sum(r['ok'] for r in rows)} of {len(rows)}; "
+          f"max |z| {max(abs(r['z']) for r in rows):.2f}")
+
+
+def run_e16b():
+    """H54-H56: 26 display regimes in the 12 new offices (1,000 evaluation days, CRN)."""
+    from displays import plan_prediction
+    print("E16b: display regimes in the 12 new offices")
+    settings = _e16_settings()
+    regimes = _e16_regimes()
+    jobs = [(st, name) for st in settings for name in regimes]
+
+    def one(job):
+        (office, pname, kind, rates, s, plan), name = job
+        mean, dist, cv = E16_PATIENCE[pname]
+        r = run_simulation(plan, rates, replications=EVAL_REPS, seed=EVAL_SEED, mean_service=s,
+                           wait_threshold=THRESHOLD, **_patience_kw("renege", mean, dist, cv),
+                           **regimes[name][0])
+        late = np.array(r.daily_late, dtype=float).sum(axis=1)
+        aband = np.array(r.daily_abandoned, dtype=float).sum(axis=1)
+        served = np.array(r.daily_arrivals, dtype=float).sum(axis=1)
+        return {"fail_day": late + aband, "arrivals": served + aband,
+                "balked": np.array(r.daily_balked, dtype=float),
+                "wasted": np.array(r.daily_abandoned_wait, dtype=float),
+                "wait_sum": r.mean_wait * served.sum()}
+
+    out = pmap(one, jobs)
+    res = {(st[0], st[1], st[2], name): o for (st, name), o in zip(jobs, out)}
+    rows = []
+    for office, pname, kind, rates, s, plan in settings:
+        truth = _e16_truth(pname)
+        base_pred = plan_prediction(plan, rates, s, truth, THRESHOLD)["fail"]
+        h = res[(office, pname, kind, "H")]
+        o15 = res[(office, pname, kind, "O-M15")]
+        hf = h["fail_day"].sum() / h["arrivals"].sum()
+        for name, (_, show, _) in regimes.items():
+            o = res[(office, pname, kind, name)]
+            fail = o["fail_day"].sum() / o["arrivals"].sum()
+            row = {"office": office, "patience": pname, "plan_type": kind,
+                   "staff_hours": sum(plan), "regime": name,
+                   "fail": round(float(fail), 5),
+                   "failures_per_day": round(float(o["fail_day"].mean()), 3),
+                   "arrivals_per_day": round(float(o["arrivals"].mean()), 2),
+                   "balked_per_day": round(float(o["balked"].mean()), 3),
+                   "wasted_min_per_day": round(float(o["wasted"].mean()), 2),
+                   "lost_min_per_arrival": round(float((o["wait_sum"] + o["wasted"].sum())
+                                                       / o["arrivals"].sum()), 3)}
+            for ref, ro in (("H", h), ("O-M15", o15)):
+                d = o["fail_day"] - ro["fail_day"]
+                half = 1.96 * d.std(ddof=1) / math.sqrt(len(d))
+                row[f"d_{ref}"] = round(float(d.mean()), 3)
+                row[f"d_{ref}_lo"] = round(float(d.mean() - half), 3)
+                row[f"d_{ref}_hi"] = round(float(d.mean() + half), 3)
+            row["dfail_sim"] = round(float(fail - hf), 5)
+            row["dfail_pred"] = (round(plan_prediction(plan, rates, s, truth, THRESHOLD, show)
+                                       ["fail"] - base_pred, 5) if show is not None else "")
+            rows.append(row)
+        sub = [r for r in rows if (r["office"], r["patience"], r["plan_type"])
+               == (office, pname, kind)]
+        print(f"  {office:<13} {pname:<10} {kind:<5} H {sub[0]['fail']:.3f} | " + " ".join(
+            f"{r['regime']} {100 * r['dfail_sim']:+.2f}" for r in sub[1:]))
+    write_csv("e16b_regimes.csv", rows)
+
+
+def run_e16c(days=2000):
+    """H55(c): counterfactual false balkers for every display, from the hidden queue's log."""
+    from patience_logs import ARRIVAL, BOOKED, CALL, EST_COUNT, PATIENCE, raw_log
+    print("E16c: who each display would send home, read from the hidden queue's log")
+    rows = []
+    for office, pname, kind, rates, s, plan in _e16_settings():
+        mean, dist, cv = E16_PATIENCE[pname]
+        log = raw_log(plan, rates, s, "renege", mean, dist, cv, days=days, seed=E16_LOG_SEED)
+        walk = log[log[:, BOOKED] == 0]
+        v = walk[:, CALL] - walk[:, ARRIVAL]
+        tau = walk[:, PATIENCE]
+        for name, (_, _, spec) in _e16_regimes().items():
+            if spec is None:
+                continue
+            predictor, kappa, m = spec
+            est = v if predictor == "oracle" else walk[:, EST_COUNT]
+            shown = np.where((est > 0) & (est >= m), np.inf, kappa * est)
+            false_balk = (v <= tau) & (tau < shown)
+            on_time = false_balk & (v <= THRESHOLD)
+            n = int(false_balk.sum())
+            rows.append({"office": office, "patience": pname, "plan_type": kind,
+                         "regime": name, "false_balks_per_day": round(n / days, 3),
+                         "ontime_false_balks_per_day": round(int(on_time.sum()) / days, 3),
+                         "ontime_share": round(int(on_time.sum()) / n, 4) if n else ""})
+        print(f"  {office:<13} {pname:<10} {kind:<5} done")
+    write_csv("e16c_false_balkers.csv", rows)
+
+
 EXPERIMENTS = {"e1b": run_e1b, "e1": run_e1, "e2": run_e2, "e2b": run_e2b,
                "e3a": run_e3a, "e3b": run_e3b, "e4": run_e4, "e5": run_e5, "e6": run_e6,
                "e7a": run_e7a, "e7": run_e7, "e7c": run_e7c, "e8a": run_e8a, "e8b": run_e8b,
@@ -2320,7 +2528,8 @@ EXPERIMENTS = {"e1b": run_e1b, "e1": run_e1, "e2": run_e2, "e2b": run_e2b,
                "e13e": run_e13e, "e13f": run_e13f, "e14a": run_e14a, "e14b": run_e14b,
                "e14c": run_e14c, "e14d": run_e14d,
                "e15a": run_e15a, "e15b": run_e15b,
-               "e15c": run_e15c}
+               "e15c": run_e15c, "e16p": run_e16p, "e16a": run_e16a, "e16b": run_e16b,
+               "e16c": run_e16c}
 
 
 def main():

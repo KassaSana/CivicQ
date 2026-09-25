@@ -177,7 +177,9 @@ def run_simulation(
     patience_dist: str = "exp",
     patience_cv: float = 1.0,
     announce: str = "none",
-    commit: bool = False
+    commit: bool = False,
+    display_scale: float = 1.0,
+    display_cutoff: Optional[list] = None
 ) -> SimulationResult:
     """
     Execute C++ simulator with given staffing configuration.
@@ -210,6 +212,10 @@ def run_simulation(
         announce: renege mode only: wait shown on arrival ("none", "tickets",
             "count" or "les"); a walk-in shown more than their patience leaves
         commit: renege mode only: walk-ins who join never leave
+        display_scale: the display shows this multiple of its estimate
+        display_cutoff: minutes (one value, or one per hour); once the
+            estimate reaches it the display shows "too long" and every
+            walk-in who sees it leaves
 
     Returns:
         SimulationResult with aggregated metrics and 95% CIs
@@ -247,6 +253,10 @@ def run_simulation(
         cmd += ["--announce", announce]
     if commit:
         cmd += ["--commit"]
+    if display_scale != 1.0:
+        cmd += ["--display-scale", repr(float(display_scale))]
+    if display_cutoff is not None:
+        cmd += ["--display-cutoff", ",".join(repr(float(m)) for m in display_cutoff)]
 
     try:
         result = subprocess.run(

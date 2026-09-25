@@ -372,6 +372,62 @@ Hypotheses:
 - **H51 (commitment, not information, makes the visible line fail).** The commitment effect V − C is positive in 8 of 8 settings, and at least as large as the information effect C − H in at least 6 of 8.
 - **H52 (time against failures).** The displays that save leavers the most time are those that lose the most citizens: across T, C and L, the ranking by wasted minutes saved against H equals the ranking by failure increase in at least 6 of 8 settings.
 
+**Round 13** (stated before any E16 simulation). Round 12's most interesting finding was made after the fact: a display can *lower* failures when the citizens it sends home would have been served late anyway. The evidence was a rank correlation, with no model behind it. Round 13 builds the model and then tests it on offices not used before.
+
+*Displays of the offered wait.* Let V be the wait a walk-in would have if they stayed, and let the display show φ(V). The citizen leaves at once if φ(V) exceeds their patience τ. Otherwise they join, and they leave at τ if not called by then. So they are served iff τ ≥ max(V, φ(V)). That depends only on V and their own τ, because under FIFO nobody behind them matters. V is therefore still a Markov process: it falls at rate 1, and it jumps by Exp(cμ) whenever a citizen arrives who will be served. By level crossing (Baccelli & Hebuterne 1981), the stationary density of V is
+
+  f(x) = λ π₍c−1₎ exp(λU(x) − cμx), U(x) = ∫₀ˣ u, u(x) = 1 − G(max(x, φ(x))),
+
+with the atom P(V = 0) from the birth–death chain below c. This is exact for every patience curve G and every display φ; `research/displays.py` computes it. The hidden queue is φ = 0 and reproduces Round 11's M/M/c+G to 5 digits. A display that is always "too long" reproduces Erlang-B.
+
+**Theorem (optimal display).** Write A = ∫₀ᵀ e^{λU−cμx}dx, B = e^{λU(T)−cμT}, and Q = ∫_T^∞ e^{λ(U(x)−U(T))−cμ(x−T)}dx. Q depends only on the display above T. Integration by parts gives
+
+  P(served within T) = (E − 1 + B + cμA) / (E + λA + λBQ), where E = Σ_{j<c} π_j/π₍c−1₎.
+
+(i) Overstating the wait above T lowers u there, so it lowers Q and leaves the numerator unchanged. It *always* lowers failures.
+(ii) If nobody is admitted above T (Q = 1/cμ), the ratio rises with A and B, because E(1 − ρ) + ρ > 0. Overstating below T lowers A and B, so it then *always* raises failures.
+
+Hence the failure-minimizing display, for any G, c and λ, is the **cutoff display**: show the true wait (or anything smaller) below T, and "over T" above it. In words: *tell citizens whether they will be served within the target, not how long they will wait.* Every citizen it sends home would have been served late, which already counts as a failure.
+
+Without the cutoff, (ii) fails. Overstating below T lowered failures in 118 of 216 stationary cases scanned, because holding back work helps the citizens who are admitted and served late. So Round 12's post hoc account ("on-time false balkers cost failures") is incomplete. Whether an on-time false balker costs or saves a failure depends on how much late work the office admits.
+
+*Simulator.* `--announce oracle` shows each walk-in their exact V. The simulator computes V by replaying FIFO over the people ahead, using their drawn service times and patience. `--display-scale κ` shows κ times the estimate, and `--display-cutoff M` shows "too long" once the estimate reaches M minutes. Four checks were run before this registration:
+- With κ = 1 and no cutoff, output is byte-identical to the Round 12 simulator for every display and patience family.
+- The oracle display, as the Proposition requires, left every late, abandonment, arrival, served and mean-wait count identical to the hidden queue in 300 days × 3 patience curves. It sent every leaver home at arrival, so leavers spent 0 minutes inside.
+- A cutoff of 0 on the count display and κ = 10⁹ on the oracle serve identical citizens.
+- The theory's predictions for the new offices (E16p, `results/e16p_predictions.csv`) were computed. No simulation of any display regime in the new offices, and no comparison of theory with simulation, was run before registration.
+
+**Design (E16).** Twelve offices not used before:
+- load 4 E (S = 8) or 16 E (S = 16), with demand swing A = 0.6;
+- patience with mean 30 min: exponential, lognormal CV 0.5, or lognormal CV 1.5;
+- a lean plan (SIPP-G at α = 0.20) or a safe plan (Lag-SIPP-G at α = 0.10, Round 11b). Both plans are fixed by rule and listed in E16p.
+
+Each office is run under 26 regimes on the 1,000 evaluation days with common random numbers:
+- hidden (H);
+- oracle scaled, O×κ with κ ∈ {1.5, 2, 3};
+- oracle cutoff, O-M with M ∈ {5, 10, 12.5, 15, 17.5, 20, 30};
+- count display (C);
+- count cutoff, showing nothing below M (C0-M) or the count estimate below M (C1-M), for the same seven M.
+
+Failure means late or left (T = 15), pooled over the day. Differences are paired by day, with 95% CIs.
+
+Hypotheses:
+- **H53 (the exact law).** At constant demand and staffing (c ∈ {2, 8, 16}, ρ ∈ {0.9, 1.2}, three patience curves, displays O×2, O-M15 and O-M10: 54 cells, 200 days of 20,000 minutes, last slot), the simulated failure rate is within 3 SE of the theory, or within 0.002, in at least 52 of 54 cells, and no cell is beyond 5 SE.
+- **H54 (the cutoff is best in real offices).** The theorem is stationary. The real office has an empty start, a closing time and staffing that changes by the hour.
+  - (a) O-M15 has significantly fewer failures than the hidden queue in 12 of 12 offices.
+  - (b) O-M15 has fewer failures than each of O×1.5, O×2 and O×3 in 12 of 12.
+  - (c) The failure-minimizing oracle cutoff on the grid is 12.5, 15 or 17.5 in at least 10 of 12.
+- **H55 (per-hour theory predicts the effects).** The theory's hour-by-hour stationary prediction (arrival-weighted) of the change in failure rate against H is tested over the 12 offices × 10 oracle regimes (120 points).
+  - (a) Spearman ρ ≥ 0.8 between predicted and simulated change.
+  - (b) The signs agree at every point where the predicted change is at least 0.5 points in size. The predictions include increases, for example O×3 at 4 E, and decreases, for example O-M15 everywhere.
+  - (c) Round 12's post hoc mechanism, out of sample. Across the 12 offices × 23 display regimes, the share of counterfactual false balkers who would have been served on time is read from the hidden queue's own log (E16c, 2,000 days). It correlates with the simulated change in failures with Spearman ≥ 0.6.
+- **H56 (a display the office can build).** An office cannot see V, but it can count the people waiting.
+  - (a) The best count cutoff with nothing shown below it (C0-M, best M on the grid) achieves at least half of O-M15's reduction in failures against H in at least 10 of 12 offices.
+  - (b) Showing nothing below the cutoff is never significantly worse than showing the count estimate, for C0-M against C1-M at M ≤ 15 (48 pairs), and it has the lower mean in at least 36 of 48. The count estimate ignores people ahead who will leave, so it overstates V, and by the theorem, overstating below T with a cutoff hurts.
+  - (c) For the same reason, the best count cutoff is at least 15 minutes in at least 10 of 12 offices.
+
+H57, what the cutoff display means for staffing, will be registered separately after E16a–c.
+
 *Change after pre-registration (Round 2):* while testing H7 we found that Ciw cannot express CivicQ's staffing-change rule (see §5.6). H7 was therefore split into a strict test for constant staffing and a bounds test for changing staffing *before* E5 was run. This deviation is disclosed here.
 
 ## 5. Results

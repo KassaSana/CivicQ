@@ -7,6 +7,7 @@
  */
 
 #include "simulation.hpp"
+#include <limits>
 #include <algorithm>
 #include <numeric>
 #include <cmath>
@@ -58,9 +59,7 @@ void QueueSimulator::reset() {
     }
 
     // Clear waiting queue
-    while (!waiting_queue_.empty()) {
-        waiting_queue_.pop();
-    }
+    waiting_queue_.clear();
 
     // Initialize windows (max possible needed)
     int max_windows = *std::max_element(
@@ -220,6 +219,59 @@ double QueueSimulator::generate_patience() {
     }
 }
 
+double QueueSimulator::offered_wait() const {
+    // The wait a citizen arriving now would have if they stayed. Later arrivals
+    // queue behind them (FIFO), so it depends only on the people already here:
+    // replay the queue with their drawn service times and patience. A window
+    // can start a service only while open (index < staffing of the slot)
+    const int n = static_cast<int>(windows_.size());
+    auto next_open = [&](int i, double t) {
+        for (int slot = get_current_slot(t); slot < NUM_SLOTS; ++slot) {
+            if (i < config_.staffing_per_slot[slot]) {
+                return std::max(t, slot * SLOT_LENGTH);
+            }
+        }
+        return std::numeric_limits<double>::infinity();
+    };
+    std::vector<double> free_at(n, current_time_);
+    for (int i = 0; i < n; ++i) {
+        if (windows_[i].is_busy) {
+            const Citizen& c = citizens_[windows_[i].current_citizen_id];
+            free_at[i] = c.service_start_time + c.service_time;
+        }
+    }
+    auto earliest = [&](int& window) {
+        double best = std::numeric_limits<double>::infinity();
+        window = -1;
+        for (int i = 0; i < n; ++i) {
+            double t = next_open(i, free_at[i]);
+            if (t < best) {
+                best = t;
+                window = i;
+            }
+        }
+        return best;
+    };
+    const bool may_renege = config_.abandonment == Abandonment::RENEGE && !config_.commit;
+    for (int id : waiting_queue_) {
+        const Citizen& p = citizens_[id];
+        if (p.abandoned) {
+            continue;
+        }
+        int window;
+        double start = earliest(window);
+        if (window < 0) {
+            break;
+        }
+        if (may_renege && !p.is_appointment && p.arrival_time + p.patience < start) {
+            continue;   // Leaves before their ticket is called
+        }
+        free_at[window] = start + p.service_time;
+    }
+    int window;
+    return earliest(window) - current_time_;
+}
+
 int QueueSimulator::find_free_window() {
     int open_windows = get_open_windows(current_time_);
     for (int i = 0; i < open_windows && i < static_cast<int>(windows_.size()); ++i) {
@@ -254,7 +306,7 @@ void QueueSimulator::serve_waiting_citizens() {
             break;
         }
         int next_citizen = waiting_queue_.front();
-        waiting_queue_.pop();
+        waiting_queue_.pop_front();
         if (citizens_[next_citizen].abandoned) {
             citizens_[next_citizen].call_time = current_time_;   // Reneged while in line
             continue;
@@ -321,6 +373,7 @@ void QueueSimulator::admit_citizen(bool is_appointment) {
         citizen.est_tickets = free_now ? 0.0
             : (static_cast<double>(waiting_queue_.size()) + 1) * per;
         citizen.est_les = free_now ? 0.0 : last_start_wait_;
+        citizen.est_oracle = config_.announce == Announce::ORACLE ? offered_wait() : 0.0;
     }
     // Drawn for every citizen, in arrival order, so patience stays aligned
     // across staffing plans just like service requirements
@@ -345,9 +398,18 @@ void QueueSimulator::admit_citizen(bool is_appointment) {
     if (may_abandon && config_.abandonment == Abandonment::RENEGE
             && config_.announce != Announce::NONE) {
         // Ticket queue with a wait display: leave at once if it exceeds patience
-        double shown = config_.announce == Announce::TICKETS ? citizen.est_tickets
-                     : config_.announce == Announce::COUNT ? citizen.est_count
-                     : citizen.est_les;
+        double est = config_.announce == Announce::TICKETS ? citizen.est_tickets
+                   : config_.announce == Announce::COUNT ? citizen.est_count
+                   : config_.announce == Announce::ORACLE ? citizen.est_oracle
+                   : citizen.est_les;
+        double shown = config_.display_scale * est;
+        if (!config_.display_cutoff.empty()) {
+            std::size_t hour = std::min(static_cast<std::size_t>(current_time_ / 60.0),
+                                        config_.display_cutoff.size() - 1);
+            if (est > 0.0 && est >= config_.display_cutoff[hour]) {
+                shown = std::numeric_limits<double>::infinity();
+            }
+        }
         if (shown > citizen.patience) {
             citizens_.back().abandoned = true;
             citizens_.back().balked = true;
@@ -357,7 +419,7 @@ void QueueSimulator::admit_citizen(bool is_appointment) {
     }
 
     // Join the back of the queue, then serve in FIFO order
-    waiting_queue_.push(citizen.id);
+    waiting_queue_.push_back(citizen.id);
     ++waiting_count_;
     serve_waiting_citizens();
 

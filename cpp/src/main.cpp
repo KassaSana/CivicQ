@@ -39,8 +39,12 @@ void print_usage() {
               << "  --patience-cv CV           Patience CV for lognormal (default: 1.0)\n"
               << "  --per-replication          One CSV row per replication instead of averages\n"
               << "  --citizen-log PATH         Also write one CSV row per citizen to PATH\n"
-              << "  --announce NAME            renege mode: none | tickets | count | les (default: none)\n"
+              << "  --announce NAME            renege mode: none | tickets | count | les | oracle\n"
+              << "                             (default: none)\n"
               << "  --commit                   renege mode: citizens who join never leave\n"
+              << "  --display-scale K          Shown wait = K * estimate (default: 1)\n"
+              << "  --display-cutoff M[,M..]   Show 'too long' once the estimate reaches M minutes\n"
+              << "                             (one value, or one per hour)\n"
               << "  --output-waits             Include all wait times in output\n"
               << "  --help                     Show this help\n";
 }
@@ -174,6 +178,7 @@ int main(int argc, char* argv[]) {
             else if (name == "tickets") config.announce = Announce::TICKETS;
             else if (name == "count") config.announce = Announce::COUNT;
             else if (name == "les") config.announce = Announce::LES;
+            else if (name == "oracle") config.announce = Announce::ORACLE;
             else {
                 std::cerr << "Error: unknown announcement '" << name << "'\n";
                 return 1;
@@ -181,6 +186,16 @@ int main(int argc, char* argv[]) {
         }
         else if (arg == "--commit") {
             config.commit = true;
+        }
+        else if (arg == "--display-scale" && i + 1 < argc) {
+            config.display_scale = std::stod(argv[++i]);
+        }
+        else if (arg == "--display-cutoff" && i + 1 < argc) {
+            std::stringstream list(argv[++i]);
+            std::string item;
+            while (std::getline(list, item, ',')) {
+                config.display_cutoff.push_back(std::stod(item));
+            }
         }
         else if (arg == "--citizen-log" && i + 1 < argc) {
             citizen_log_path = argv[++i];

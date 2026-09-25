@@ -562,5 +562,110 @@ class TestWaitDisplays(unittest.TestCase):
                            abandonment="renege", patience=30.0, announce="tickets")
         self.assertGreater(sum(r.daily_balked), 0)
 
+
+class TestDisplayTheory(unittest.TestCase):
+    """Round 13: exact stationary law of a display of the offered wait."""
+
+    def setUp(self):
+        from learning import Patience
+        self.pats = [Patience("exp", 30.0), Patience("lognormal", 30.0, 0.5),
+                     Patience("lognormal", 30.0, 1.5)]
+        self.cases = [(2, 15 / 60, 8.0), (8, 34 / 60, 16.0), (8, 25 / 60, 16.0)]
+
+    def test_no_display_is_mmcg(self):
+        from displays import display_hour
+        from learning import mmcg_hour
+        for p in self.pats:
+            for c, lam, s in self.cases:
+                self.assertAlmostEqual(display_hour(c, lam, s, p, 15.0).fail,
+                                       mmcg_hour(c, lam, s, p, 15.0).fail, places=3)
+
+    def test_always_too_long_is_erlang_b(self):
+        from displays import display_hour, erlang_b
+        for c, lam, s in self.cases:
+            d = display_hour(c, lam, s, self.pats[0], 15.0,
+                             lambda x: np.where(x > 0, np.inf, 0.0))
+            self.assertAlmostEqual(d.fail, erlang_b(c, lam * s), delta=2e-3)
+
+    def test_probabilities_add_up(self):
+        from displays import cutoff, display_hour, scaled
+        for show in (scaled(0.0), scaled(2.0), cutoff(15.0)):
+            d = display_hour(8, 34 / 60, 16.0, self.pats[1], 15.0, show)
+            self.assertAlmostEqual(d.on_time + d.served_late + d.balk + d.renege, 1.0, places=9)
+            self.assertGreaterEqual(min(d.balk, d.renege, d.served_late), -1e-9)
+
+    def test_overstating_helps_above_the_threshold(self):
+        from displays import display_hour
+        rng = np.random.default_rng(5)
+        for p in self.pats:
+            for c, lam, s in self.cases:
+                base = display_hour(c, lam, s, p, 15.0).fail
+                for _ in range(3):
+                    a, b = sorted(rng.uniform(15.5, 60.0, 2))
+                    k = rng.uniform(1.2, 4.0)
+                    above = lambda x, a=a, b=b, k=k: np.where((x > a) & (x < b), k * x, x)
+                    self.assertLess(display_hour(c, lam, s, p, 15.0, above).fail, base)
+
+    def test_given_the_cutoff_overstating_below_hurts(self):
+        from displays import cutoff, display_hour
+        rng = np.random.default_rng(6)
+        for p in self.pats:
+            for c, lam, s in self.cases:
+                base = display_hour(c, lam, s, p, 15.0, cutoff(15.0)).fail
+                for _ in range(3):
+                    a, b = sorted(rng.uniform(0.0, 15.0, 2))
+                    k = rng.uniform(1.2, 4.0)
+                    show = lambda x, a=a, b=b, k=k: np.where(
+                        x >= 15.0, np.inf, np.where((x > a) & (x < b), k * x, x))
+                    self.assertGreater(display_hour(c, lam, s, p, 15.0, show).fail, base)
+
+    def test_the_cutoff_at_the_threshold_is_best(self):
+        from displays import cutoff, display_hour, scaled
+        for p in self.pats:
+            for c, lam, s in self.cases:
+                best = display_hour(c, lam, s, p, 15.0, cutoff(15.0)).fail
+                for show in [scaled(k) for k in (0.0, 1.5, 2.0, 4.0)] +                         [cutoff(m) for m in (5.0, 12.0, 14.0, 16.0, 25.0)]:
+                    self.assertLessEqual(best, display_hour(c, lam, s, p, 15.0, show).fail + 1e-9)
+
+
+@unittest.skipUnless(SIMULATOR.exists(), f"simulator not built at {SIMULATOR}")
+class TestOracleDisplay(unittest.TestCase):
+    PLAN = [7, 13, 9, 6, 5, 8, 12, 9]
+    RATES = [40, 75, 55, 35, 30, 50, 70, 50]
+
+    def _rows(self, *extra):
+        import csv
+        import io
+        import subprocess
+        args = [str(SIMULATOR), "--staffing", ",".join(map(str, self.PLAN)),
+                "--arrivals", ",".join(map(str, self.RATES)), "--service-time", "16",
+                "--replications", "60", "--seed", "3", "--per-replication",
+                "--abandonment", "renege", "--patience-dist", "lognormal",
+                "--patience-cv", "0.5", *extra]
+        out = subprocess.run(args, capture_output=True, text=True, check=True).stdout
+        return list(csv.DictReader(io.StringIO(out)))
+
+    def test_the_exact_wait_changes_no_outcome(self):
+        # Proposition (Round 12): a display never above V is outcome-neutral, and
+        # the exact V sends every leaver home at once
+        hidden, oracle = self._rows(), self._rows("--announce", "oracle")
+        keys = [k for k in hidden[0] if k.startswith(("late_", "aband_", "arr_"))
+                and k != "aband_wait_sum"] + ["served", "mean_wait"]
+        for h, o in zip(hidden, oracle):
+            self.assertEqual([h[k] for k in keys], [o[k] for k in keys])
+            self.assertEqual(float(o["aband_wait_sum"]), 0.0)
+            self.assertEqual(int(o["balked"]), sum(int(o[f"aband_{i}"]) for i in range(8)))
+
+    def test_scale_one_without_cutoff_is_the_plain_display(self):
+        for name in ("count", "tickets"):
+            self.assertEqual(self._rows("--announce", name),
+                             self._rows("--announce", name, "--display-scale", "1"))
+
+    def test_cutoff_zero_turns_away_everyone_who_would_wait(self):
+        a = self._rows("--announce", "count", "--display-cutoff", "0")
+        b = self._rows("--announce", "oracle", "--display-scale", "1e9")
+        self.assertEqual([r["served"] for r in a], [r["served"] for r in b])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
