@@ -7,6 +7,8 @@
  */
 
 #include "simulation.hpp"
+#include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <sstream>
 #include <string>
@@ -36,6 +38,7 @@ void print_usage() {
               << "  --patience-dist NAME       exp | lognormal | det (default: exp)\n"
               << "  --patience-cv CV           Patience CV for lognormal (default: 1.0)\n"
               << "  --per-replication          One CSV row per replication instead of averages\n"
+              << "  --citizen-log PATH         Also write one CSV row per citizen to PATH\n"
               << "  --output-waits             Include all wait times in output\n"
               << "  --help                     Show this help\n";
 }
@@ -79,6 +82,7 @@ int main(int argc, char* argv[]) {
     int replications = 1;
     bool output_waits = false;
     bool per_replication = false;
+    std::string citizen_log_path;
 
     // Default arrival rates: morning peak, midday lull, afternoon peak
     config.arrival_rates = {12.0, 15.0, 10.0, 8.0, 8.0, 12.0, 14.0, 10.0};
@@ -162,6 +166,10 @@ int main(int argc, char* argv[]) {
         else if (arg == "--per-replication") {
             per_replication = true;
         }
+        else if (arg == "--citizen-log" && i + 1 < argc) {
+            citizen_log_path = argv[++i];
+            config.log_citizens = true;
+        }
         else if (arg == "--output-waits") {
             output_waits = true;
         }
@@ -201,6 +209,28 @@ int main(int argc, char* argv[]) {
 
     // Run simulation(s)
     auto results = run_replications(config, replications, config.random_seed);
+
+    // Per-citizen log: what a ticket system records (call time, present or
+    // not) plus the true patience, which a real office never sees
+    if (!citizen_log_path.empty()) {
+        std::ofstream log(citizen_log_path);
+        if (!log) {
+            std::cerr << "Error: cannot write " << citizen_log_path << "\n";
+            return 1;
+        }
+        log << std::setprecision(10);
+        log << "rep,arrival,booked,patience,outcome,call_time,leave_time,queue_ahead,open_windows\n";
+        // outcome: 0 served, 1 reneged (hidden queue), 2 balked (visible line)
+        int left = config.abandonment == Abandonment::BALK ? 2 : 1;
+        for (size_t r = 0; r < results.size(); ++r) {
+            for (const auto& c : results[r].citizen_log) {
+                double leave = c.abandoned ? c.abandon_time : c.departure_time;
+                log << r << "," << c.arrival_time << "," << (c.is_appointment ? 1 : 0) << ","
+                    << c.patience << "," << (c.abandoned ? left : 0) << "," << c.call_time << ","
+                    << leave << "," << c.queue_ahead << "," << c.open_at_arrival << "\n";
+            }
+        }
+    }
 
     // One row per replication (lets callers compute confidence intervals
     // without launching a process per replication)

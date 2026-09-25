@@ -3,3 +3,4 @@ __pycache__/
 *.pyc
 *.csv
 !research/results/*.csv
+research/cache/

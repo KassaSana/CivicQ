@@ -78,6 +78,11 @@ struct Citizen {
     double abandon_time;         // When they left (arrival time for a balk)
     double service_start_time;
     double departure_time;
+    double call_time;            // When the ticket reached the front with a window free:
+                                 // service start, or when a reneger's ticket was called
+                                 // and nobody came (-1 for a balk)
+    int queue_ahead;             // Citizens waiting when this one arrived
+    int open_at_arrival;         // Windows open when this one arrived
 };
 
 /**
@@ -112,6 +117,7 @@ struct SimulationResults {
     double overtime_busy_minutes;              // Service delivered after the doors close
     std::vector<double> utilization_per_slot;  // 8 hourly slots
     std::vector<double> all_wait_times;        // For distribution analysis
+    std::vector<Citizen> citizen_log;          // Every citizen, only with log_citizens
 };
 
 /**
@@ -134,6 +140,7 @@ struct SimulationConfig {
     double mean_patience;                  // Mean patience in minutes
     ServiceDist patience_dist;             // Patience distribution family
     double patience_cv;                    // Patience CV (lognormal only)
+    bool log_citizens;                     // Keep a per-citizen record in the results
 
     SimulationConfig()
         : mean_service_time(8.0)
@@ -148,7 +155,8 @@ struct SimulationConfig {
         , abandonment(Abandonment::NONE)
         , mean_patience(30.0)
         , patience_dist(ServiceDist::EXPONENTIAL)
-        , patience_cv(1.0) {}
+        , patience_cv(1.0)
+        , log_citizens(false) {}
 };
 
 /**

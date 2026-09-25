@@ -1581,6 +1581,306 @@ def run_e12e(reps=200):
     write_csv("e12e_scaling_confirm.csv", rows)
 
 
+# ============================================================================
+# Round 10: learning patience from the office's own ticket log (E13)
+# ============================================================================
+
+# (office, patience, plan type, plan) from results/e7_abandonment.csv, hidden queue
+E13_SETTINGS = [
+    ("office", "exp30", "lean", [2, 2, 2, 2, 2, 2, 2, 2]),
+    ("office", "exp30", "citizen", [3, 3, 3, 2, 2, 3, 3, 3]),
+    ("office", "logn30", "lean", [2, 3, 2, 2, 2, 2, 3, 2]),
+    ("office", "logn30", "citizen", [2, 3, 2, 2, 2, 3, 3, 3]),
+    ("R8_S16_A0.6", "exp30", "lean", [6, 10, 8, 5, 4, 7, 10, 7]),
+    ("R8_S16_A0.6", "exp30", "citizen", [8, 13, 9, 6, 5, 9, 12, 9]),
+    ("R8_S16_A0.6", "logn30", "lean", [7, 13, 9, 6, 5, 8, 12, 9]),
+    ("R8_S16_A0.6", "logn30", "citizen", [7, 14, 9, 6, 5, 9, 13, 9]),
+]
+E13_PATIENCE = {"exp30": (30.0, "exp", 1.0), "logn30": (30.0, "lognormal", 0.5)}
+E13_POOL = 20_000
+E13_RATE_POOL = 50_000                     # H38's two settings
+E13_RATE_SETTINGS = [("office", "exp30", "lean"), ("R8_S16_A0.6", "exp30", "citizen")]
+E13_RATE_DAYS = [10, 30, 100, 300, 1000]
+E13_FAMILY_DAYS = [5, 10, 20, 30, 45, 60, 90, 120, 180, 250, 365, 500]
+E13_REPS = 200
+E13_T = 15.0
+
+
+def _e13_office(office):
+    return next((r, s) for name, r, s in _e7_offices() if name == office)
+
+
+def _e13_log(office, pname, kind, plan):
+    """Pooled ticket log; H38's settings get the larger pool, whose first days are E13_POOL's."""
+    from patience_logs import pooled_ticket_log
+    rates, s = _e13_office(office)
+    mean, dist, cv = E13_PATIENCE[pname]
+    days = E13_RATE_POOL if (office, pname, kind) in E13_RATE_SETTINGS else E13_POOL
+    return pooled_ticket_log(plan, rates, s, mean, dist, cv, days=days)
+
+
+def _e13_restrict(log, days):
+    """The first `days` days of a pooled log."""
+    from patience_logs import TicketLog
+    keep = log.day < days
+    return TicketLog(day=log.day[keep], v=log.v[keep], absent=log.absent[keep],
+                     patience=log.patience[keep], days=days,
+                     walkins_per_day=log.walkins_per_day)
+
+
+def run_e13a():
+    """H36: the ticket log is current-status data, and the CS-NPMLE recovers G."""
+    from scipy.stats import kendalltau
+    from patience_logs import cs_npmle, true_cdf
+    print("E13a: is the ticket log current-status data?")
+    rows = []
+    for office, pname, kind, plan in E13_SETTINGS:
+        log = _e13_restrict(_e13_log(office, pname, kind, plan), E13_POOL)
+        mean, dist, cv = E13_PATIENCE[pname]
+        tau, _ = kendalltau(log.v, log.patience)
+        t, g = cs_npmle(log.v, log.absent)
+        lo, hi = np.quantile(log.v, [0.05, 0.95])
+        inside = (t >= lo) & (t <= hi)
+        err = np.abs(g[inside] - true_cdf(t[inside], mean, dist, cv))
+        # Consistency check of the censoring rule itself
+        agree = float(np.mean(log.absent == (log.patience < log.v)))
+        rows.append({"office": office, "patience": pname, "plan_type": kind,
+                     "plan": json.dumps(plan), "staff_hours": sum(plan), "days": log.days,
+                     "tickets_per_day": round(len(log.v) / log.days, 2),
+                     "absent_per_day": round(log.absent.sum() / log.days, 2),
+                     "walkins_per_day": round(log.walkins_per_day, 2),
+                     "kendall_tau": round(float(tau), 5),
+                     "v_p05": round(float(lo), 2), "v_p95": round(float(hi), 2),
+                     "sup_error": round(float(err.max()), 4),
+                     "absent_iff_patience_below_v": agree})
+        print(f"  {office:<12} {pname:<6} {kind:<7} tau {tau:+.4f}, sup|G^-G| {err.max():.4f} "
+              f"on V in [{lo:.1f}, {hi:.1f}], {rows[-1]['absent_per_day']} absent/day")
+    write_csv("e13a_validation.csv", rows)
+
+
+def run_e13b():
+    """H37: bias of the call-center estimator; plus the curves for fig17."""
+    from patience_logs import (cs_mle, cs_npmle, naive_km, naive_km_limit, pick_family,
+                               step_at, true_cdf)
+    print("E13b: what each estimator says about G(15) on 20,000 days")
+    rows, curves = [], []
+    for office, pname, kind, plan in E13_SETTINGS:
+        log = _e13_restrict(_e13_log(office, pname, kind, plan), E13_POOL)
+        mean, dist, cv = E13_PATIENCE[pname]
+        g_true = float(true_cdf(E13_T, mean, dist, cv))
+        tk, gk = naive_km(log.v, log.absent)
+        tn, gn = cs_npmle(log.v, log.absent)
+        fam, fits = pick_family(log.v, log.absent)
+        g_km, g_np = step_at(tk, gk, E13_T), step_at(tn, gn, E13_T)
+        # The call-center estimate of mean patience: area under the KM curve
+        # (restricted to the largest observed V)
+        km_mean = float(np.sum(np.diff(np.concatenate([[0.0], tk])) *
+                               np.concatenate([[1.0], 1 - gk[:-1]])))
+        rows.append({"office": office, "patience": pname, "plan_type": kind,
+                     "staff_hours": sum(plan), "G15_true": round(g_true, 4),
+                     "G15_naive_km": round(g_km, 4), "G15_npmle": round(g_np, 4),
+                     "G15_exp_mle": round(float(fits["exp"].cdf(E13_T)), 4),
+                     "G15_logn_mle": round(float(fits["lognormal"].cdf(E13_T)), 4),
+                     "naive_rel_bias": round((g_km - g_true) / g_true, 4),
+                     # Post hoc: KM's limit G(t) h_V(t), from the log's own waits
+                     "naive_limit_posthoc": round(naive_km_limit(
+                         log.v, lambda t: true_cdf(t, mean, dist, cv), E13_T), 4),
+                     "v_mean": round(float(log.v.mean()), 2),
+                     "aic_family": fam,
+                     "mean_exp_mle": round(fits["exp"].mean, 2),
+                     "mean_logn_mle": round(fits["lognormal"].mean, 2),
+                     "mean_naive_km_restricted": round(km_mean, 2)})
+        print(f"  {office:<12} {pname:<6} {kind:<7} G(15) true {g_true:.3f}  naive KM {g_km:.3f} "
+              f"({rows[-1]['naive_rel_bias']:+.1%}; limit {rows[-1]['naive_limit_posthoc']:.3f})  "
+              f"NPMLE {g_np:.3f}  AIC: {fam}")
+        # fig17: one office's log over 30 and 300 days, in two settings
+        if (office, pname, kind) in (("office", "exp30", "lean"),
+                                     ("R8_S16_A0.6", "logn30", "citizen")):
+            grid = np.arange(0.0, 60.01, 0.5)
+            for n in (30, 300):
+                v, a = log.first(n)
+                tk, gk = naive_km(v, a)
+                tn, gn = cs_npmle(v, a)
+                fam_n, fits_n = pick_family(v, a)
+                for x in grid:
+                    curves.append({"office": office, "patience": pname, "plan_type": kind,
+                                   "days": n, "t": x,
+                                   "truth": round(float(true_cdf(x, mean, dist, cv)), 5),
+                                   "naive_km": round(step_at(tk, gk, x), 5),
+                                   "npmle": round(step_at(tn, gn, x), 5),
+                                   "parametric": round(float(fits_n[fam_n].cdf(x)), 5),
+                                   "family": fam_n, "v_max": round(float(v.max()), 2)})
+    write_csv("e13b_estimators.csv", rows)
+    write_csv("e13b_curves.csv", curves)
+
+
+def run_e13c():
+    """H38: RMSE of G(15) against days of log, NPMLE vs parametric."""
+    from patience_logs import cs_mle, cs_npmle, step_at, true_cdf
+    print("E13c: how fast does G(15) converge with days of log?")
+    rows = []
+    for office, pname, kind, plan in E13_SETTINGS:
+        if (office, pname, kind) not in E13_RATE_SETTINGS:
+            continue
+        log = _e13_log(office, pname, kind, plan)
+        mean, dist, cv = E13_PATIENCE[pname]
+        g_true = float(true_cdf(E13_T, mean, dist, cv))
+        rng = np.random.default_rng(1310)
+        for n in E13_RATE_DAYS:
+            est = {"npmle": [], "exp_mle": []}
+            for _ in range(E13_REPS):
+                v, a = log.sample(n, rng)
+                t, g = cs_npmle(v, a)
+                est["npmle"].append(step_at(t, g, E13_T))
+                est["exp_mle"].append(float(cs_mle(v, a, "exp").cdf(E13_T)))
+            for name, xs in est.items():
+                xs = np.array(xs)
+                rows.append({"office": office, "patience": pname, "plan_type": kind,
+                             "estimator": name, "days": n, "reps": E13_REPS,
+                             "G15_true": round(g_true, 4),
+                             "bias": round(float(xs.mean() - g_true), 5),
+                             "sd": round(float(xs.std(ddof=1)), 5),
+                             "rmse": round(float(np.sqrt(np.mean((xs - g_true) ** 2))), 5)})
+            print(f"  {office:<12} {kind:<7} n={n:<5} RMSE NPMLE {rows[-2]['rmse']:.4f}, "
+                  f"exp MLE {rows[-1]['rmse']:.4f}")
+        for name in ("npmle", "exp_mle"):
+            sub = [r for r in rows if r["office"] == office and r["estimator"] == name]
+            slope = np.polyfit(np.log([r["days"] for r in sub]),
+                               np.log([r["rmse"] for r in sub]), 1)[0]
+            for r in sub:
+                r["slope"] = round(float(slope), 3)
+            print(f"  {office:<12} {name}: log-log slope {slope:+.3f}")
+    write_csv("e13c_rates.csv", rows)
+
+
+def run_e13d():
+    """H39, H40: days of log before AIC picks the true family."""
+    from patience_logs import pick_family
+    print("E13d: days needed to tell exponential from lognormal patience")
+    rows = []
+    for office, pname, kind, plan in E13_SETTINGS:
+        log = _e13_restrict(_e13_log(office, pname, kind, plan), E13_POOL)
+        truth = E13_PATIENCE[pname][1]
+        rng = np.random.default_rng(1320)
+        for n in E13_FAMILY_DAYS:
+            right = 0
+            for _ in range(E13_REPS):
+                v, a = log.sample(n, rng)
+                right += pick_family(v, a)[0] == truth
+            rows.append({"office": office, "patience": pname, "plan_type": kind,
+                         "staff_hours": sum(plan), "days": n, "reps": E13_REPS,
+                         "correct": round(right / E13_REPS, 3)})
+        print(f"  {office:<12} {pname:<6} {kind:<7} " +
+              " ".join(f"{r['days']}:{r['correct']:.2f}" for r in rows[-len(E13_FAMILY_DAYS):]))
+    write_csv("e13d_family.csv", rows)
+    summary = []
+    for office in ("office", "R8_S16_A0.6"):
+        for kind in ("lean", "citizen"):
+            need = {}
+            for pname in ("exp30", "logn30"):
+                sub = [r for r in rows if (r["office"], r["patience"], r["plan_type"])
+                       == (office, pname, kind)]
+                ok = [r["correct"] >= 0.9 for r in sub]
+                # First grid point from which the rate stays >= 0.9
+                stays = next((sub[i]["days"] for i in range(len(sub)) if all(ok[i:])), None)
+                first = next((r["days"] for r in sub if r["correct"] >= 0.9), None)
+                need[pname] = (stays, first)
+            both = [x[0] for x in need.values()]
+            summary.append({"office": office, "plan_type": kind,
+                            "days_exp": need["exp30"][0], "days_logn": need["logn30"][0],
+                            "first_exp": need["exp30"][1], "first_logn": need["logn30"][1],
+                            "days_needed": (max(both) if all(b is not None for b in both)
+                                            else f">{E13_FAMILY_DAYS[-1]}")})
+            print(f"  {office:<12} {kind:<7} days needed: {summary[-1]['days_needed']} "
+                  f"(exp {need['exp30'][0]}, logn {need['logn30'][0]})")
+    write_csv("e13d_days_needed.csv", summary)
+
+
+def run_e13e(blocks=20, days=60):
+    """H41: Erlang-A SIPP with an exponential fitted to 60 days of the office's log."""
+    from abandonment import score, sipp_abandonment
+    from patience_logs import cs_mle
+    print("E13e: restaffing the 8 E lognormal office from its own log")
+    office, pname, kind, plan = E13_SETTINGS[7]
+    rates, s = _e13_office(office)
+    mean, dist, cv = E13_PATIENCE[pname]
+    kw = _patience_kw("renege", mean, dist, cv)
+    log = _e13_restrict(_e13_log(office, pname, kind, plan), E13_POOL)
+    scored = {}
+
+    def evaluate(p):
+        key = tuple(p)
+        if key not in scored:
+            scored[key] = score(p, rates, s, THRESHOLD, **kw)
+        return scored[key]
+
+    rows = []
+    for b in range(blocks):
+        v, a = log.first(days, offset=b * days)
+        fit = cs_mle(v, a, "exp")
+        new = sipp_abandonment(rates, s, THRESHOLD, ALPHA, "renege", fit.mean, "fail")
+        ev = evaluate(new)
+        rows.append({"route": "exp CS-MLE, 60 days", "block": b, "fitted_mean": round(fit.mean, 2),
+                     "plan": json.dumps(new), "staff_hours": sum(new),
+                     "fail_misses": ev.misses("fail", ALPHA), "worst_fail": round(ev.worst("fail"), 4)})
+        print(f"  block {b:>2}: fitted mean {fit.mean:6.1f} min -> {sum(new)} h, "
+              f"worst hour {ev.worst('fail'):.3f}, misses {ev.misses('fail', ALPHA)}")
+    # Reference routes on the same evaluation days
+    for route, m in (("mean-matched (true mean 30)", mean),):
+        p = sipp_abandonment(rates, s, THRESHOLD, ALPHA, "renege", m, "fail")
+        ev = evaluate(p)
+        rows.append({"route": route, "block": "", "fitted_mean": m, "plan": json.dumps(p),
+                     "staff_hours": sum(p), "fail_misses": ev.misses("fail", ALPHA),
+                     "worst_fail": round(ev.worst("fail"), 4)})
+    ok = sum(1 for r in rows[:blocks] if r["fail_misses"] == 0)
+    mean_h = np.mean([r["staff_hours"] for r in rows[:blocks]])
+    print(f"  {ok}/{blocks} plans meet the failure target; mean {mean_h:.1f} staff-hours")
+    write_csv("e13e_restaff.csv", rows)
+
+
+def run_e13f():
+    """Exploratory: the visible line, learned from a timestamped door counter."""
+    from patience_logs import cs_npmle, pooled_door_counts, step_at, true_cdf
+    print("E13f: balking patience from door counts (exploratory)")
+    rows = []
+    for office, pname, kind, plan in E13_SETTINGS:
+        if kind != "lean":
+            continue
+        rates, s = _e13_office(office)
+        mean, dist, cv = E13_PATIENCE[pname]
+        door = pooled_door_counts(plan, rates, s, mean, dist, cv, days=E13_POOL)
+        g_true = float(true_cdf(E13_T, mean, dist, cv))
+        t, g = cs_npmle(door.v, door.absent)
+        # Expected waits sit on a grid (q + 1) S / c; report the pooled fit there
+        pts = np.unique(np.round(door.v, 6))
+        pts = pts[pts <= 30.0]
+        grid_err = max(abs(step_at(t, g, x) - float(true_cdf(x, mean, dist, cv))) for x in pts)
+        rng = np.random.default_rng(1360)
+        rmse = {}
+        for n in (30, 100, 300):
+            xs = []
+            for _ in range(100):
+                v, a = door.sample(n, rng)
+                tt, gg = cs_npmle(v, a)
+                xs.append(step_at(tt, gg, E13_T))
+            rmse[n] = float(np.sqrt(np.mean((np.array(xs) - g_true) ** 2)))
+        below = pts[pts <= E13_T]
+        rows.append({"office": office, "patience": pname, "plan": json.dumps(plan),
+                     "arrivals_facing_a_line_per_day": round(len(door.v) / door.days, 2),
+                     "balks_per_day": round(door.absent.sum() / door.days, 2),
+                     "grid_points_le_30": len(pts),
+                     "nearest_grid_point_le_15": round(float(below.max()), 3) if len(below) else "",
+                     "G15_true": round(g_true, 4), "G15_pooled": round(step_at(t, g, E13_T), 4),
+                     "G_at_grid_point": round(float(true_cdf(below.max(), mean, dist, cv)), 4)
+                     if len(below) else "",
+                     "max_grid_error": round(grid_err, 4),
+                     "rmse_30d": round(rmse[30], 4), "rmse_100d": round(rmse[100], 4),
+                     "rmse_300d": round(rmse[300], 4)})
+        print(f"  {office:<12} {pname:<6} G(15) {g_true:.3f}, pooled {rows[-1]['G15_pooled']}, "
+              f"grid pts <=30: {len(pts)}, RMSE 30/100/300 d: "
+              f"{rmse[30]:.3f}/{rmse[100]:.3f}/{rmse[300]:.3f}")
+    write_csv("e13f_door_counter.csv", rows)
+
 EXPERIMENTS = {"e1b": run_e1b, "e1": run_e1, "e2": run_e2, "e2b": run_e2b,
                "e3a": run_e3a, "e3b": run_e3b, "e4": run_e4, "e5": run_e5, "e6": run_e6,
                "e7a": run_e7a, "e7": run_e7, "e7c": run_e7c, "e8a": run_e8a, "e8b": run_e8b,
@@ -1589,7 +1889,9 @@ EXPERIMENTS = {"e1b": run_e1b, "e1": run_e1, "e2": run_e2, "e2b": run_e2b,
                "e10e": run_e10e, "e10f": run_e10f, "e10g": run_e10g, "e10h": run_e10h,
                "e11a": run_e11a, "e11b": run_e11b, "e11c": run_e11c, "e11d": run_e11d,
                "e11e": run_e11e, "e12a": run_e12a, "e12b": run_e12b, "e12c": run_e12c,
-               "e12d": run_e12d, "e12e": run_e12e}
+               "e12d": run_e12d, "e12e": run_e12e,
+               "e13a": run_e13a, "e13b": run_e13b, "e13c": run_e13c, "e13d": run_e13d,
+               "e13e": run_e13e, "e13f": run_e13f}
 
 
 def main():
