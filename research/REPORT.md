@@ -455,6 +455,78 @@ It shows "over 15" when the q-quantile of the sampled waits is at least 15 minut
   - (b) With the twin display (q = 0.5, registered before E16d's result), they meet it in at least 8 of 12.
   - (c) Control: the hidden-staffed plans meet it on the hidden queue in 12 of 12 (Round 11b's safe rule).
 
+**Round 14** (stated after the E17p predictions and the theorems' unit tests, and before any E17a grid cell outside the planning probes and any E17b–d simulation). Round 13's cutoff display counts each citizen it sends home as a failure and stops there. For a mandatory service they come back (§5.13). So the display changes tomorrow's demand, and the question is how much of its gain survives that.
+
+*Model.* Every citizen who leaves, whether on arrival or after joining, returns with probability r (here r = 1) with the same patience. In the stationary model, the total arrival rate L solves L = λ + r(L − θ(L)), where θ(L) is the throughput of the §5.17 exact law at arrival rate L. With r = 1, the steady state serves exactly the fresh demand. The measures that matter are therefore per fresh citizen:
+- visits, L/λ;
+- the late share ℓ, the share whose eventual service is late;
+- minutes lost inside over all visits.
+The office's own figure, late or left *per visit*, is not the same thing.
+
+**Theorem T1 (no tipping with any display of V).** In §5.17's law, P(V = 0) = E/(E + λJ), with J = ∫ e^{λU−cμx}dx. U ≥ 0 does not depend on λ, and E falls as λ rises. So P(V = 0) falls strictly with λ. E[busy windows] = c(1 − P(V = 0)) + P(V = 0)·m(a), where m(a) < c is the mean of a Poisson(a) truncated below c, and m rises with a. So θ = μE[busy] rises with the arrival rate for *every* display that is a function of V. The day-to-day map then has slope r(1 − θ′) ∈ [0, r], and the steady state is unique and stable. Round 9's "a mandatory service cannot tip" survives any such display.
+
+**Theorem T2 (overstating costs visits).** If φ₁ ≥ φ₂ pointwise, then u₁ ≤ u₂, J₁ ≤ J₂ and θ₁ ≤ θ₂ at every load. So L₁* ≥ L₂*. The cutoff display always costs repeat visits, and the hidden queue needs the fewest.
+
+*The exchange rate.* Let ε be the extra visits per citizen divided by the late services avoided per citizen. To first order, ε ≈ κ/θ′:
+- κ is the throughput the display gives up per late service it prevents, at the hidden steady state;
+- 1/θ′ is the relaxation time of the day-to-day chain at r = 1, which is Round 9's critical slowing down.
+
+Near collapse κ shrinks like 1 − ρ and 1/θ′ grows like 1/(1 − ρ), so the two may cancel. Planning probes (c ∈ {4, 16}, ρ ≤ 0.995, S ∈ {8, 16}; exponential and lognormal CV 0.5 patience) found ε = 0.10–0.31, nearly flat in ρ, and about half as large at c = 16 as at c = 4. These probes are disclosed because H60 generalizes them.
+
+*The per-hour theory fails with returns (disclosed).* Run hour by hour with spread returns (E17p), the stationary theory had no steady state below 20× fresh demand in 9 of the 19 settings below. Where it had one near overload, the result was absurd: at the 8 E office with φ = 0.9 it gave 5.8 visits per citizen and a late share of 1.0, while Round 9 simulated 1.23 visits. This is H55(b)'s failure, stationary hours near overload, amplified by the returns. The registered predictor of the simulated ε is therefore the stationary law at the office's mean number of windows c̄, its S and its patience, at ρ = 0.95 (column `law_eps` in `e17p_predictions.csv`). The per-hour numbers are reported but not tested.
+
+*Checks before registration.*
+- The §5.17 correction: exact cell integration, verified by flow balance.
+- Randomized unit tests of T1, T2, conservation (served = fresh at r = 1), ℓ = 0 under the oracle cutoff, and ε > 0.
+- A smoke test of the E17b estimator on an unregistered toy office (2 E, c = 3, 50 days).
+
+**Design (E17).** Returns are spread over the day in proportion to demand (Round 9's "profile" timing), except in H61(e).
+
+*Settings.*
+- The 12 E16 offices with their plans;
+- plus the 8 E office of Round 9 (S = 16, exponential patience with mean 30), with its citizen-optimal plan scaled by φ ∈ {1.0, 0.9, 0.85, 0.8} (Round 9: 10 to 268 repeat visits per 100 on the hidden queue).
+
+*Regimes.* H, O-M15, C0-M12.5, C0-M15, and the twin display at q = 0.7 (T0.7).
+
+*Estimator (E17b).*
+- R* is first located by bisection (400 days, tolerance 2%, cap 6× fresh demand). No root below the cap counts as unbounded.
+- The day is then run at five equally spaced R around it (step max(0.1R, 0.01 × fresh)) on 2,000 days shared by all regimes (common random numbers).
+- Least-squares lines through losses, late services, services and minutes lost give R* = a/(1 − b) for L(R) = a + bR, and every measure is read at R*.
+- 95% CIs come from 400 bootstrap resamples of days, paired across regimes.
+
+*Chains and curves.*
+- E17c: 20 day-to-day chains per case with a closure on day 30, starting at the simulated R* from E17b, which avoids H34(a)'s flaw. Recovery follows the E12d rule.
+- E17d: return curves on E12's grid with 400 days.
+
+Hypotheses:
+- **H59 (the theorems).**
+  - (a) On c ∈ {1, 2, 4, 8, 16, 64}, S ∈ {8, 16}, three patience curves, displays {H, O×1.5, O×2, O×3, O-M5, O-M10, O-M15, O-M30} and 25 loads from 0.2 to 20 times capacity, throughput never falls by more than 10⁻⁹ of capacity between loads (288 curves).
+  - (b) For every pair of these displays ordered pointwise on [0, 200] minutes, the larger display's throughput never exceeds the smaller's by more than 10⁻⁶ of capacity.
+  - (c) E17d: O-M15's simulated return curve has no significant rise between grid points (paired 95% CI of the step above 0) at φ ∈ {1.0, 0.85}.
+- **H60 (the exchange-rate law, stationary; E17a).** Over c ∈ {1, 2, 4, 8, 16, 32, 64, 128}, ρ ∈ {0.8, 0.9, 0.95, 0.97, 0.99, 0.995, 0.999}, S ∈ {8, 16} and three patience curves (336 cells), for O-M15 against H:
+  - (a) 0 < ε < 0.5 in every cell where the hidden late share is at least 0.001;
+  - (b) ε(0.999)/ε(0.9) < 2 for every (c, S, patience);
+  - (c) √c·ε at ρ = 0.99 varies by less than a factor of 1.5 across c ∈ {4, …, 128}, for each (S, patience);
+  - (d) κ/θ′ is within 50% of ε in every cell of (a).
+- **H61 (the oracle cutoff with returns; E17b, 16 settings).**
+  - (a) ℓ = 0 under O-M15 in all 16 (check).
+  - (b) Returns do not erase the gain: ε < 1 in all 16, and minutes lost per citizen fall significantly in all 16.
+  - (c) The simulated ε is within a factor of 2 of `law_eps` in at least 12 of 16, with Spearman ≥ 0.6 across the 16.
+  - (d) The cancellation survives stochastic near-collapse: ε(φ = 0.8) ≤ 2·ε(φ = 1.0). If either regime has no steady state at φ = 0.8, (d) is rejected.
+  - (e) Returns at opening (8 E, φ ∈ {1.0, 0.95, 0.9}; H and O-M15 only): R*(O-M15) ≥ R*(H) at every φ, an unbounded state counting as infinite. This is T2 outside stationarity: a display never rescues a collapsing office.
+- **H62 (realistic displays with returns; E17b).** For C0-M12.5, C0-M15 and T0.7:
+  - (a) each display's ε exceeds the oracle's in at least 12 of 16. They also turn away citizens who would have been on time, who come back with no late service avoided. A display that does not lower ℓ counts as exceeding.
+  - (b) In the settings where a display lowers ℓ significantly, its ε < 1 in at least 75% of them, for each display.
+- **H63 (dynamics; 8 E office, φ ∈ {1.0, 0.9, 0.85}).**
+  - (a) E17c: every chain under H, O-M15 and C0-M15 recovers within 200 days of the closure (180 chains).
+  - (b) Stationary theory says a display lengthens recovery (1/θ′ is larger under it), more so near collapse. For O-M15 against H, the ratio of median recovery times is (b1) at least 1 at each φ, (b2) at most 2 at each φ, and (b3) at least as large at φ = 0.85 as at φ = 1.0.
+  - (c) E17d: the C0-M15 and T0.7 return curves have no significant rise at φ ∈ {1.0, 0.85}. These displays fall *outside* T1, because the head count includes tickets of citizens who have already left, so the theorem does not cover them.
+
+*Reported, not tested:*
+- the break-even trip cost K* = (minutes lost saved per citizen) / (extra visits per citizen): the display saves citizens time unless a wasted trip costs more than K* minutes;
+- the office's per-visit figure against the per-citizen measures;
+- the per-hour theory's numbers.
+
 *Change after pre-registration (Round 2):* while testing H7 we found that Ciw cannot express CivicQ's staffing-change rule (see §5.6). H7 was therefore split into a strict test for constant staffing and a bounds test for changing staffing *before* E5 was run. This deviation is disclosed here.
 
 ## 5. Results

@@ -2642,6 +2642,338 @@ def run_e16e():
     write_csv("e16e_staffing.csv", rows)
 
 
+# ============================================================================
+# Round 14: wait displays when everyone sent home comes back (E17)
+# ============================================================================
+
+E17_PHIS = [1.0, 0.9, 0.85, 0.8]            # 8 E office (Round 9), spread returns
+E17_OPEN_PHIS = [1.0, 0.95, 0.9]            # 8 E office, returns at opening
+E17_GRID_SEED = 1_400_000                   # Stage-2 days, shared by every regime (CRN)
+E17_GRID_DAYS = 2000
+E17_BOOT = 400
+E17_THEORY_DISPLAYS = {"H": ("scaled", 0.0), "O*1.5": ("scaled", 1.5),
+                       "O*2": ("scaled", 2.0), "O*3": ("scaled", 3.0),
+                       "O-M5": ("cutoff", 5.0), "O-M10": ("cutoff", 10.0),
+                       "O-M15": ("cutoff", 15.0), "O-M30": ("cutoff", 30.0)}
+
+
+def _e17_regimes():
+    count = lambda m: {"announce": "count", "display_scale": 0.0, "display_cutoff": [m]}
+    return {"H": {}, "O-M15": {"announce": "oracle", "display_cutoff": [THRESHOLD]},
+            "C0-M12.5": count(12.5), "C0-M15": count(15.0), "T0.7": _e16_twin(0.7)}
+
+
+def _e17_settings(opening=False):
+    """(office, patience, plan name, rates, S, plan, timing): the 12 E16 offices and
+    the 8 E office of Round 9 scaled by phi (spread returns), or the opening arm."""
+    scale = lambda phi: [int(math.floor(phi * c + 0.5)) for c in E12_FAIL_PLAN]
+    if opening:
+        return [("R8_S16_A0.6", "exp30", f"phi={phi:.2f}", E12_RATES, E12_S, scale(phi),
+                 "opening") for phi in E17_OPEN_PHIS]
+    out = [(o, p, k, r, s, plan, "profile") for o, p, k, r, s, plan in _e16_settings()]
+    return out + [("R8_S16_A0.6", "exp30", f"phi={phi:.2f}", E12_RATES, E12_S, scale(phi),
+                   "profile") for phi in E17_PHIS]
+
+
+def _e17_show(name):
+    from displays import cutoff, scaled
+    kind, v = E17_THEORY_DISPLAYS[name]
+    return scaled(v) if kind == "scaled" else cutoff(v)
+
+
+def run_e17p():
+    """Per-hour stationary predictions for every E17b/E17c setting (before registration)."""
+    from display_returns import (break_even_trip, day_exchange_rate, day_fixed_point,
+                                 exchange_rate)
+    from displays import cutoff
+    print("E17p: per-hour theory with returns (r = 1)")
+    rows = []
+    for office, pname, kind, rates, s, plan, timing in _e17_settings() + _e17_settings(True):
+        truth = _e16_truth(pname)
+        st = {n: day_fixed_point(plan, rates, s, truth, THRESHOLD, _e17_show(n),
+                                 timing=timing) for n in ("H", "O-M15")}
+        row = {"office": office, "patience": pname, "plan_type": kind, "timing": timing,
+               "plan": "-".join(map(str, plan)), "fresh": round(sum(rates), 2)}
+        for n, x in st.items():
+            row.update({f"{n}_R": round(x.returns, 3) if x else "inf",
+                        f"{n}_visits": round(x.visits, 5) if x else "",
+                        f"{n}_late_share": round(x.late_share, 5) if x else "",
+                        f"{n}_lost_min": round(x.lost_min_per_citizen, 3) if x else "",
+                        f"{n}_kpi": round(x.kpi, 5) if x else "",
+                        f"{n}_relax_days": round(x.relax_days, 3) if x else ""})
+        ok = all(st.values())
+        row["eps"] = round(day_exchange_rate(st["H"], st["O-M15"]), 4) if ok else ""
+        row["break_even_trip_min"] = round(break_even_trip(st["H"], st["O-M15"]), 2) if ok else ""
+        row["relax_ratio"] = round(st["O-M15"].relax_days / st["H"].relax_days, 4) if ok else ""
+        # The registered predictor (H61c): the stationary law at the office's mean
+        # windows, its S and patience, and rho = 0.95 (eps barely moves with load)
+        c_bar = max(1, int(round(sum(plan) / len(plan))))
+        law = exchange_rate(c_bar, 0.95 * c_bar / s, s, truth, THRESHOLD, cutoff(THRESHOLD))
+        row.update({"law_c": c_bar, "law_eps": round(law.eps, 4),
+                    "law_relax_ratio": round(law.relax_display / law.relax_base, 4)})
+        rows.append(row)
+        print(f"  {office:<12} {pname:<10} {kind:<9} {timing:<8} eps {row['eps']} "
+              f"visits {row['H_visits']} -> {row['O-M15_visits']}, "
+              f"late {row['H_late_share']} -> {row['O-M15_late_share']}, "
+              f"relax x{row['relax_ratio']}; law c={c_bar} eps {row['law_eps']}")
+    write_csv("e17p_predictions.csv", rows)
+
+
+def _e17a_monotone(args):
+    """H59(a, b) on one (c, S, patience) cell: throughput by load and display."""
+    from display_returns import throughput
+    c, s, pname = args
+    truth = _e16_truth(pname)
+    loads = np.geomspace(0.2, 20.0, 25) * c / s
+    th = {n: np.array([throughput(c, L, s, truth, THRESHOLD, _e17_show(n)) for L in loads])
+          for n in E17_THEORY_DISPLAYS}
+    x = np.linspace(0.0, 200.0, 4001)
+    shown = {n: np.minimum(_e17_show(n)(x), 1e12) for n in E17_THEORY_DISPLAYS}
+    rows = []
+    for n, t in th.items():
+        drops = np.diff(t) / (c / s)
+        worse = [m for m in E17_THEORY_DISPLAYS if m != n and np.all(shown[n] >= shown[m])]
+        order_gap = max([float(np.max(t - th[m])) / (c / s) for m in worse], default=0.0)
+        rows.append({"c": c, "S": s, "patience": pname, "display": n,
+                     "min_step": float(drops.min()), "monotone": bool(drops.min() > -1e-9),
+                     "dominated_by": "|".join(worse), "max_excess_over_dominating": order_gap,
+                     "ordered": bool(order_gap <= 1e-6)})
+    return rows
+
+
+def _e17a_exchange(args):
+    """H60 on one (c, S, patience, rho) cell: the oracle cutoff's exchange rate."""
+    from display_returns import exchange_rate
+    from displays import cutoff
+    c, s, pname, rho = args
+    ex = exchange_rate(c, rho * c / s, s, _e16_truth(pname), THRESHOLD, cutoff(THRESHOLD))
+    if ex is None:
+        return {"c": c, "S": s, "patience": pname, "rho": rho, "eps": ""}
+    return {"c": c, "S": s, "patience": pname, "rho": rho,
+            "H_visits": ex.base.visits, "C_visits": ex.display.visits,
+            "H_late_share": ex.base.late_share, "C_late_share": ex.display.late_share,
+            "eps": ex.eps, "kappa": ex.kappa, "theta_prime": ex.theta_prime,
+            "eps_linear": ex.eps_linear, "relax_H": ex.relax_base,
+            "relax_C": ex.relax_display, "H_kpi": ex.base.kpi, "C_kpi": ex.display.kpi,
+            "H_lost_min": ex.base.lost_min, "C_lost_min": ex.display.lost_min}
+
+
+E17_A_C = [1, 2, 4, 8, 16, 32, 64, 128]
+E17_A_RHOS = [0.8, 0.9, 0.95, 0.97, 0.99, 0.995, 0.999]
+
+
+def run_e17a():
+    """H59(a, b), H60: stationary theory of displays with returns (deterministic)."""
+    print("E17a: stationary theory with returns")
+    cells = list(itertools.product([1, 2, 4, 8, 16, 64], [8.0, 16.0], list(E16_PATIENCE)))
+    rows = [r for rs in pmap_processes(_e17a_monotone, cells) for r in rs]
+    write_csv("e17a_monotone.csv", rows)
+    print(f"  H59(a) monotone in {sum(r['monotone'] for r in rows)}/{len(rows)}; "
+          f"H59(b) ordered in {sum(r['ordered'] for r in rows)}/{len(rows)}")
+    cells = list(itertools.product(E17_A_C, [8.0, 16.0], list(E16_PATIENCE), E17_A_RHOS))
+    rows = pmap_processes(_e17a_exchange, cells)
+    write_csv("e17a_exchange.csv", rows)
+
+
+def _e17_day_arrays(r):
+    """Per-day totals from one simulation: losses, late, served, minutes lost inside."""
+    served = np.array(r.daily_arrivals, float).sum(axis=1)
+    aband = np.array(r.daily_abandoned, float).sum(axis=1)
+    late = np.array(r.daily_late, float).sum(axis=1)
+    wait = np.array(r.daily_mean_waits, float) * served
+    lost = wait + np.array(r.daily_abandoned_wait, float)
+    return np.vstack([aband, late, served, lost])
+
+
+def _e17_solve(grid, arrays, fresh, idx=None):
+    """
+    Steady state from a local grid: least-squares lines through L(R), late(R),
+    served(R) and lost(R); R* = a / (1 - b) for L = a + b R. Days `idx` (a
+    bootstrap resample) or all.
+    """
+    means = np.array([a[:, idx].mean(axis=1) if idx is not None else a.mean(axis=1)
+                      for a in arrays])                 # [grid point, quantity]
+    X = np.vstack([np.ones(len(grid)), grid]).T
+    coef = np.linalg.lstsq(X, means, rcond=None)[0]     # [2, quantity]
+    a, b = coef[:, 0]
+    R = a / (1.0 - b)
+    at = coef[0] + coef[1] * R
+    return {"R": R, "visits": 1.0 + R / fresh, "late_share": at[1] / fresh,
+            "served_share": at[2] / fresh, "lost_min": at[3] / fresh,
+            "kpi": (at[1] + R) / (fresh + R), "slope": b}
+
+
+def _e17b_one(job):
+    """Locate R* by bisection (400 days), then a 5-point local grid (2,000 CRN days)."""
+    from abandonment import return_fixed_point, return_rates
+    office, pname, kind, rates, s, plan, timing, regime = job
+    mean, dist, cv = E16_PATIENCE[pname]
+    kw = {**_patience_kw("renege", mean, dist, cv), **_e17_regimes()[regime]}
+    fresh = sum(rates)
+    loc = return_fixed_point(plan, rates, s, 1.0, timing, THRESHOLD, reps=400,
+                             seed=EVAL_SEED, tol=0.02, max_factor=6.0, **kw)
+    if not loc.stable:
+        return None
+    step = max(0.1 * loc.returns_per_day, 0.01 * fresh)
+    grid = np.maximum(loc.returns_per_day + step * np.arange(-2, 3), 0.0)
+    grid = np.unique(grid)
+    arrays = [_e17_day_arrays(run_simulation(plan, return_rates(rates, R, timing),
+                                             replications=E17_GRID_DAYS, seed=E17_GRID_SEED,
+                                             mean_service=s, wait_threshold=THRESHOLD, **kw))
+              for R in grid]
+    return {"grid": grid, "arrays": arrays, "located": loc.returns_per_day}
+
+
+def _e17b(settings, regimes, out_name):
+    jobs = [(*st, reg) for st in settings for reg in regimes]
+    res = dict(zip([(j[0], j[1], j[2], j[6], j[7]) for j in jobs], pmap(_e17b_one, jobs)))
+    rng = np.random.default_rng(17)
+    states, contrasts = [], []
+    for office, pname, kind, rates, s, plan, timing in settings:
+        fresh = sum(rates)
+        key = lambda reg: (office, pname, kind, timing, reg)
+        boots = [rng.integers(0, E17_GRID_DAYS, E17_GRID_DAYS) for _ in range(E17_BOOT)]
+        sol = {}
+        for reg in regimes:
+            r = res[key(reg)]
+            if r is None:
+                sol[reg] = None
+                states.append({"office": office, "patience": pname, "plan_type": kind,
+                               "timing": timing, "regime": reg, "R": "inf"})
+                continue
+            point = _e17_solve(r["grid"], r["arrays"], fresh)
+            bs = [_e17_solve(r["grid"], r["arrays"], fresh, idx) for idx in boots]
+            sol[reg] = (point, bs)
+            ci = lambda k: np.percentile([b[k] for b in bs], [2.5, 97.5])
+            states.append({"office": office, "patience": pname, "plan_type": kind,
+                           "timing": timing, "regime": reg, "R": round(point["R"], 3),
+                           "R_low": round(ci("R")[0], 3), "R_high": round(ci("R")[1], 3),
+                           "R_per_100": round(100 * point["R"] / fresh, 2),
+                           "visits": round(point["visits"], 5),
+                           "late_share": round(point["late_share"], 5),
+                           "late_low": round(ci("late_share")[0], 5),
+                           "late_high": round(ci("late_share")[1], 5),
+                           "lost_min": round(point["lost_min"], 3),
+                           "kpi": round(point["kpi"], 5),
+                           "served_share": round(point["served_share"], 4),
+                           "slope": round(point["slope"], 4),
+                           "grid_low": round(float(r["grid"][0]), 2),
+                           "grid_high": round(float(r["grid"][-1]), 2),
+                           "inside_grid": bool(r["grid"][0] <= point["R"] <= r["grid"][-1])})
+        for reg in regimes:
+            if reg == "H" or sol.get("H") is None or sol.get(reg) is None:
+                continue
+            (hp, hb), (dp, db) = sol["H"], sol[reg]
+            diff = lambda p, q, k: q[k] - p[k]
+            eps = lambda p, q: (diff(p, q, "visits") / -diff(p, q, "late_share")
+                                if diff(p, q, "late_share") < 0 else math.nan)
+            b_eps = np.array([eps(p, q) for p, q in zip(hb, db)])
+            row = {"office": office, "patience": pname, "plan_type": kind, "timing": timing,
+                   "regime": reg}
+            for k in ("visits", "late_share", "lost_min", "kpi", "R"):
+                d = np.array([diff(p, q, k) for p, q in zip(hb, db)])
+                lo, hi = np.percentile(d, [2.5, 97.5])
+                row.update({f"d_{k}": round(diff(hp, dp, k), 5),
+                            f"d_{k}_low": round(lo, 5), f"d_{k}_high": round(hi, 5)})
+            finite = b_eps[np.isfinite(b_eps)]
+            row.update({"eps": round(eps(hp, dp), 4),
+                        "eps_low": round(float(np.percentile(finite, 2.5)), 4) if len(finite) else "",
+                        "eps_high": round(float(np.percentile(finite, 97.5)), 4) if len(finite) else "",
+                        "eps_defined_share": round(len(finite) / len(b_eps), 3),
+                        "break_even_trip_min": round(-diff(hp, dp, "lost_min") /
+                                                     diff(hp, dp, "visits"), 2)
+                        if diff(hp, dp, "visits") > 0 else ""})
+            contrasts.append(row)
+            print(f"  {office:<12} {pname:<10} {kind:<9} {timing:<8} {reg:<8} "
+                  f"eps {row['eps']} [{row['eps_low']}, {row['eps_high']}] "
+                  f"dlate {row['d_late_share']:+.4f} dvisits {row['d_visits']:+.4f}")
+    write_csv(out_name + "_states.csv", states)
+    write_csv(out_name + "_contrasts.csv", contrasts)
+
+
+def run_e17b():
+    """H61, H62: steady states with returns in 16 offices, oracle and realistic displays;
+    H61(e): the opening arm (H vs O-M15)."""
+    print("E17b: steady states with returns (r = 1)")
+    _e17b(_e17_settings(), list(_e17_regimes()), "e17b")
+    _e17b(_e17_settings(True), ["H", "O-M15"], "e17b_opening")
+
+
+def run_e17c(chains=20, burn_in=30, after=200):
+    """H63(a, b): chains with a closure day, starting at the simulated steady state."""
+    from tipping import simulate_return_chain
+    print("E17c: day-to-day chains with a closure day, by display")
+    fresh = sum(E12_RATES)
+    start = {(r["plan_type"], r["regime"]): float(r["R"])
+             for r in load_results("e17b_states.csv")
+             if r["office"] == "R8_S16_A0.6" and r["R"] != "inf"}
+    settings = [st for st in _e17_settings()
+                if st[0] == "R8_S16_A0.6" and st[2] in ("phi=1.00", "phi=0.90", "phi=0.85")]
+    regimes = ["H", "O-M15", "C0-M15"]
+    jobs = [(st, reg, k) for st in settings for reg in regimes for k in range(chains)]
+
+    def one(job):
+        (office, pname, kind, rates, s, plan, timing), reg, k = job
+        return simulate_return_chain(plan, rates, s, 1.0, timing, burn_in + 1 + after,
+                                     shock_day=burn_in,
+                                     start_returns=start.get((kind, reg), 0.0),
+                                     seed=300_000 + 10_000 * k, threshold=THRESHOLD,
+                                     **E12_KW, **_e17_regimes()[reg])
+
+    rows = []
+    for ((office, pname, kind, *_), reg, k), path in zip(jobs, pmap(one, jobs)):
+        before = [p["returns"] for p in path[10:burn_in]]
+        base = float(np.mean(before))
+        tail = [p["returns"] for p in path[burn_in + 1:]]
+        collapsed = len(path) < burn_in + 1 + after
+        recovery = ""
+        if not collapsed:
+            for d in range(len(tail) - 6):
+                if np.mean(tail[d:d + 7]) <= base + 0.1 * fresh:
+                    recovery = d + 1
+                    break
+        rows.append({"plan_type": kind, "regime": reg, "chain": k,
+                     "start_R": round(start.get((kind, reg), 0.0), 2),
+                     "pre_shock_mean_R": round(base, 2), "collapsed": collapsed,
+                     "recovery_days": recovery,
+                     "path": json.dumps([round(p["returns"], 1) for p in path])})
+    for st in settings:
+        for reg in regimes:
+            sub = [r for r in rows if r["plan_type"] == st[2] and r["regime"] == reg]
+            rec = [r["recovery_days"] for r in sub if r["recovery_days"] != ""]
+            print(f"  {st[2]:<9} {reg:<7} recovered {len(rec)}/{len(sub)}, median "
+                  f"{np.median(rec) if rec else math.nan:.1f} days")
+    write_csv("e17c_chains.csv", rows)
+
+
+def run_e17d(reps=400):
+    """H59(c), H63(c): simulated return curves under displays (tipping check)."""
+    from tipping import return_curve, sign_changes
+    print("E17d: return curves under displays")
+    fresh = sum(E12_RATES)
+    grid = [f * fresh for f in E12_R_FACTORS]
+    settings = [st for st in _e17_settings()
+                if st[0] == "R8_S16_A0.6" and st[2] in ("phi=1.00", "phi=0.85")]
+    jobs = [(st, reg) for st in settings for reg in ("O-M15", "C0-M15", "T0.7")]
+    curves = pmap(lambda j: return_curve(j[0][5], j[0][3], j[0][4], 1.0, j[0][6], grid,
+                                         THRESHOLD, reps, EVAL_SEED, **E12_KW,
+                                         **_e17_regimes()[j[1]]), jobs)
+    rows = []
+    for (st, reg), curve in zip(jobs, curves):
+        roots = sign_changes([p["R"] for p in curve], [p["h"] for p in curve])
+        rises = sum(1 for p in curve[1:] if p["dh_low"] > 0)
+        for p in curve:
+            rows.append({"plan_type": st[2], "regime": reg, "R": round(p["R"], 3),
+                         "L": round(p["L"], 3), "h": round(p["h"], 3),
+                         "dh": round(p.get("dh", math.nan), 4),
+                         "dh_low": round(p.get("dh_low", math.nan), 4),
+                         "dh_high": round(p.get("dh_high", math.nan), 4),
+                         "n_roots": len(roots), "significant_rises": rises})
+        print(f"  {st[2]:<9} {reg:<7} roots {[round(x, 1) for x in roots]}, "
+              f"significant rises {rises}")
+    write_csv("e17d_return_curves.csv", rows)
+
+
 EXPERIMENTS = {"e1b": run_e1b, "e1": run_e1, "e2": run_e2, "e2b": run_e2b,
                "e3a": run_e3a, "e3b": run_e3b, "e4": run_e4, "e5": run_e5, "e6": run_e6,
                "e7a": run_e7a, "e7": run_e7, "e7c": run_e7c, "e8a": run_e8a, "e8b": run_e8b,
@@ -2657,7 +2989,8 @@ EXPERIMENTS = {"e1b": run_e1b, "e1": run_e1, "e2": run_e2, "e2b": run_e2b,
                "e15a": run_e15a, "e15b": run_e15b,
                "e15c": run_e15c, "e16p": run_e16p, "e16a": run_e16a, "e16b": run_e16b,
                "e16c": run_e16c, "e16d": run_e16d, "e16e": run_e16e,
-               "e16f": run_e16f}
+               "e16f": run_e16f, "e17p": run_e17p, "e17a": run_e17a, "e17b": run_e17b,
+               "e17c": run_e17c, "e17d": run_e17d}
 
 
 def main():

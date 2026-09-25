@@ -650,6 +650,103 @@ class TestDisplayTheory(unittest.TestCase):
                     self.assertLessEqual(best, display_hour(c, lam, s, p, 15.0, show).fail + 1e-9)
 
 
+class TestDisplayReturns(unittest.TestCase):
+    """Round 14: wait displays when everyone sent home comes back."""
+
+    def setUp(self):
+        from learning import Patience
+        self.pats = [Patience("exp", 30.0), Patience("lognormal", 30.0, 0.5),
+                     Patience("lognormal", 30.0, 1.5)]
+        self.rng = np.random.default_rng(14)
+
+    def _random_display(self):
+        from displays import cutoff, scaled
+        kind = self.rng.integers(3)
+        if kind == 0:
+            return scaled(self.rng.uniform(0.0, 4.0))
+        if kind == 1:
+            return cutoff(self.rng.uniform(2.0, 40.0), self.rng.uniform(0.0, 2.0))
+        a, b = sorted(self.rng.uniform(0.0, 40.0, 2))
+        k = self.rng.uniform(1.0, 5.0)
+        return lambda x, a=a, b=b, k=k: np.where((x > a) & (x < b), k * x, 0.5 * x)
+
+    def test_throughput_rises_with_load_for_any_display(self):
+        # T1: p0 falls and E[busy] rises in the arrival rate
+        from display_returns import throughput
+        for _ in range(12):
+            c = int(self.rng.choice([1, 2, 4, 8, 16]))
+            s = float(self.rng.choice([4.0, 8.0, 16.0]))
+            p = self.pats[self.rng.integers(3)]
+            show = self._random_display()
+            loads = np.geomspace(0.2, 20.0, 15) * c / s
+            th = [throughput(c, L, s, p, 15.0, show) for L in loads]
+            self.assertTrue(np.all(np.diff(th) > -1e-9), (c, s, th))
+
+    def test_overstating_more_serves_fewer(self):
+        # T2: phi1 >= phi2 pointwise => theta1 <= theta2 at every load
+        from display_returns import throughput
+        from displays import cutoff, scaled
+        for _ in range(12):
+            c = int(self.rng.choice([1, 4, 16]))
+            s = float(self.rng.choice([8.0, 16.0]))
+            p = self.pats[self.rng.integers(3)]
+            k1, k2 = sorted(self.rng.uniform(0.0, 3.0, 2))
+            m1, m2 = sorted(self.rng.uniform(3.0, 40.0, 2))
+            pairs = [(scaled(k2), scaled(k1)), (cutoff(m1), cutoff(m2)),
+                     (cutoff(m1, k2), scaled(k1))]
+            for L in np.array([0.5, 1.0, 3.0]) * c / s:
+                for more, less in pairs:
+                    self.assertLessEqual(throughput(c, L, s, p, 15.0, more),
+                                         throughput(c, L, s, p, 15.0, less) + 1e-6)
+
+    def test_mandatory_steady_state_serves_the_fresh_demand(self):
+        from display_returns import fixed_point
+        from displays import cutoff
+        for p in self.pats:
+            for show in (None, cutoff(15.0)):
+                kw = {} if show is None else {"show": show}
+                st = fixed_point(8, 0.95 * 8 / 16.0, 16.0, p, 15.0, **kw)
+                self.assertAlmostEqual(st.served, st.fresh, delta=1e-6 * st.fresh)
+                self.assertGreaterEqual(st.visits, 1.0)
+
+    def test_no_steady_state_at_capacity(self):
+        from display_returns import fixed_point
+        self.assertIsNone(fixed_point(4, 1.02 * 4 / 8.0, 8.0, self.pats[0], 15.0))
+
+    def test_oracle_cutoff_serves_nobody_late_and_costs_visits(self):
+        from display_returns import exchange_rate
+        from displays import cutoff
+        for p in self.pats:
+            for c, s in [(4, 8.0), (16, 16.0)]:
+                ex = exchange_rate(c, 0.9 * c / s, s, p, 15.0, cutoff(15.0))
+                self.assertLess(ex.display.late_share, 1e-9)
+                self.assertGreater(ex.display.visits, ex.base.visits)
+                self.assertGreater(ex.eps, 0.0)
+                self.assertGreater(ex.kappa, 0.0)
+
+    def test_without_returns_the_day_is_round_13(self):
+        from display_returns import day_fixed_point
+        from displays import cutoff, plan_prediction
+        plan, rates = [5, 6, 4, 3, 3, 5, 6, 4], [25, 40, 30, 18, 15, 28, 38, 26]
+        for show in (cutoff(15.0), cutoff(10.0)):
+            st = day_fixed_point(plan, rates, 8.0, self.pats[1], 15.0, show, return_prob=0.0)
+            self.assertAlmostEqual(st.returns, 0.0, places=6)
+            self.assertAlmostEqual(st.kpi, plan_prediction(plan, rates, 8.0, self.pats[1],
+                                                           15.0, show)["fail"], places=9)
+
+    def test_day_steady_state_is_a_fixed_point(self):
+        from display_returns import day_fixed_point
+        from displays import cutoff
+        plan, rates = [5, 6, 4, 3, 3, 5, 6, 4], [25, 40, 30, 18, 15, 28, 38, 26]
+        for p in self.pats:
+            h = day_fixed_point(plan, rates, 8.0, p, 15.0)
+            d = day_fixed_point(plan, rates, 8.0, p, 15.0, cutoff(15.0))
+            for st in (h, d):
+                self.assertAlmostEqual(st.losses, st.returns, delta=1e-6 * st.fresh)
+                self.assertLess(st.slope, 1.0)
+            self.assertGreaterEqual(d.returns, h.returns)       # T2, hour by hour
+
+
 @unittest.skipUnless(SIMULATOR.exists(), f"simulator not built at {SIMULATOR}")
 class TestOracleDisplay(unittest.TestCase):
     PLAN = [7, 13, 9, 6, 5, 8, 12, 9]
