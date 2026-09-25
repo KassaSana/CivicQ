@@ -30,6 +30,7 @@ The target is that at most 10% of each hour's arrivals wait more than 15 minutes
 - **Should offices show the wait? (Round 12).** A wait display in a ticket queue sends home at once citizens who would otherwise waste time and then leave. A simple (tickets + 1)·S/c display cut leavers' wasted minutes by 40–78% and total citizen minutes by 8–28%, and changed failures by −0.6 to +1.6 points. A display that never overstates the wait is provably outcome-neutral. The costly errors are overstatements that send home people who would have been served on time. When the people sent home would have been served late anyway (lognormal patience, lean staffing), a display *lowers* failures by freeing windows. A physical line's excess failures come mostly from commitment (joiners cannot leave), not from the information it shows.
 - **The best display answers yes or no (Round 13).** For any display that depends on the wait a citizen would have, an exact stationary model gives every outcome for any patience curve. It also proves that failures are lowest when the display shows the wait while it is under the target and "over 15 minutes" once it is not. That display sends home only citizens who would have been served late, and frees their windows for others. It was the best cutoff in all 12 new offices tested. It cut failures by 49–61% when patience is lognormal with CV 0.5, by 3–13% otherwise, and citizens' lost minutes by 14–27%. The proof also corrects Round 12: sending home citizens who would be served on time costs failures only once the late ones are turned away. The limit for a real office is predicting the wait. A cutoff on the head count recovered a median of about a fifth of the achievable gain. A full probabilistic replay of the queue from everything a ticket office can see recovered about a quarter. Plans that cut staff by 11–19% on the strength of the display broke the target once the display was realistic.
 - **When everyone sent home comes back (Round 14).** For a mandatory service, the citizens a display turns away return. We proved that with any display based on the wait, the office still has exactly one steady state, and that the more a display overstates, the more repeat visits it causes. Each late service the oracle display avoided then cost 0.19–0.42 extra visits, and it still saved citizens time unless a wasted trip costs more than about an hour. The registered law for this price failed (all four parts). The price depends on n_T = cT/S, the number of citizens the office can serve within the target: about one extra visit per late service avoided when n_T ≈ 1, falling below 0.5 by n_T ≈ 4 (found after the fact and checked on new thresholds). Realistic displays paid 0.4–2.3 visits and broke even only if a trip costs under 22–56 minutes. A display also removes the queue's role as a buffer. Offices that kept up only by working after closing had no steady state under any display. Neither did the oracle display when all returners came at opening, even in a well-staffed office.
+- **Displays as decisions (Round 15).** A ticket office's best guess of the wait is already exact: the twin display samples it from its true posterior, and that posterior was calibrated to within 0.006 in 11 of 12 offices. The rule for acting on it follows from decision theory: turn a citizen away when the expected influence of doing so, computed from the exact law, is negative. Round 13's theorem is the full-information case. Derived with no tuning, this rule was not significantly worse than the hindsight-tuned twin in 11 of 12 offices, and both recovered a median 23% of the oracle's gain. The posterior ranks late citizens only up to 0.02 AUC better than a head count, so Round 13b's limit is information, not the rule. Two versions built on the same theory failed. Refitting the rule on its own log overshot, which is a performative-prediction instability. A version pricing repeat visits, linearized around the oracle, turned away mostly citizens who would have been on time. A display's precision predicts its price in visits (Spearman 0.89, roughly ε ∝ precision^−0.45).
 - **Independent validation (Round 2).** An independent implementation in the open-source Ciw library agrees with CivicQ: 0 of 54 tests reject under constant staffing, and CivicQ stays within Ciw's bounds in all 25 hours tested under changing staffing. Along the way we found that Ciw's hourly schedules silently add overtime capacity at every shift boundary, which halves the measured lateness if used naively.
 
 ## 1. Background and gap
@@ -1499,6 +1500,88 @@ The head count slowed recovery most, to 36 days against 20 at φ = 0.85, because
 3. **A display never tips an office, but it removes its buffer.** T1 and the simulated curves agree that there is still one steady state. But the hidden queue stores work: it carries the peak's backlog into the trough and past closing, and it lets the morning's returners wait. A cutoff display turns that work away, and it comes back. An office whose open-hours capacity is below its fresh demand (here, one relying on unpaid work after closing) has no steady state under a display. Returners who all come at opening were not absorbed by the oracle display within 3× fresh demand, even at the citizen-optimal plan.
 4. **Displays slow recovery modestly.** Recovery from a closure day took 1.0–1.23 times as long under the oracle display, and up to 1.8 times as long under a head-count display, more so near collapse.
 
+### 5.19 Wait displays as decisions (E18)
+
+Round 15 asks what a ticket office should do with its posterior of the wait. H64–H67 were registered in 8adc3c5 (the ψ tables in ae85ae2), after the E18p theory tables and before any E18a–d run. Three things below are post hoc and labelled so: the diagnosis of the B* and B_K failures, the clustered standard error in H67, and the explanation of H66's slope. The companion note `STAT_LEARNING.md` places this round among other statistical-learning ideas that apply to CivicQ.
+
+**The result in one line.** The Bayes rule derived from the exact law matched the hindsight-tuned twin with no tuning in 11 of 12 offices. The twin's posterior is calibrated and ranks late citizens only slightly better than a head count. So Round 13b's limit is a limit of information, not of the rule. Two things built on the same theory failed:
+- refitting the rule on its own log overshoots;
+- a returns-aware version linearized around the oracle turned away mostly citizens who would have been on time.
+
+A display's precision, the share of the would-be-served citizens it turns away who would have been late, predicts its price in repeat visits (Spearman 0.89).
+
+**H64: (b) supported, (a) and (c) rejected.** Failure rates on 1,000 evaluation days:
+
+| Office | Patience | Plan | Hidden | Oracle cutoff | Best twin q (hindsight) | B1 (Bayes) | B1 − twin, per day [95% CI] | B* |
+|---|---|---|---|---|---|---|---|---|
+| 4 E | exp | lean | 9.8% | 8.8% | 9.62% (q 0.7) | 9.61%\* | −0.02 [−0.11, 0.08] | 9.62% |
+| 4 E | exp | safe | 6.7% | 6.4% | 6.71% (q 0.7) | 6.72% | +0.02 [−0.03, 0.06] | 6.74% |
+| 4 E | logn 0.5 | lean | 7.7% | 3.5% | 5.76% (q 0.7) | 5.75%\* | −0.03 [−0.22, 0.16] | 5.78% |
+| 4 E | logn 0.5 | safe | 3.5% | 1.8% | 3.02% (q 0.7) | 3.04%\* | +0.05 [−0.08, 0.18] | 3.17% |
+| 4 E | logn 1.5 | lean | 9.0% | 8.4% | 8.94% (q 0.7) | 8.91%\* | −0.05 [−0.14, 0.03] | 8.92% |
+| 4 E | logn 1.5 | safe | 6.1% | 5.9% | 6.11% (q 0.5) | 6.11% | +0.00 [−0.02, 0.03] | 6.14% |
+| 16 E | exp | lean | 13.4% | 11.6% | 12.47% (q 0.8) | 12.47%\* | +0.03 [−0.26, 0.31] | 12.51% |
+| 16 E | exp | safe | 7.7% | 7.4% | 7.62% (q 0.8) | 7.63% | +0.05 [−0.08, 0.18] | 7.90% |
+| 16 E | logn 0.5 | lean | 7.2% | 2.8% | 4.20% (q 0.8) | 4.25%\* | +0.26 [−0.05, 0.57] | 4.37% |
+| 16 E | logn 0.5 | safe | 4.4% | 1.8% | 2.91% (q 0.8) | 2.90%\* | −0.06 [−0.36, 0.24] | 4.09% |
+| 16 E | logn 1.5 | lean | 13.3% | 12.0% | 12.74% (q 0.8) | 12.72%\* | −0.10 [−0.38, 0.18] | 12.69% |
+| 16 E | logn 1.5 | safe | 7.5% | 7.3% | 7.49% (q 0.7) | 7.52% | **+0.17 [0.03, 0.30]** | 7.73% |
+
+\* significantly fewer failures than the hidden queue.
+
+- **(a) Rejected, 8 of 12 (registered: 10).** The four misses are all safe plans with exponential or CV 1.5 patience. There the oracle itself removes only 0.2–0.4 points, and in two of them no twin quantile was significant either.
+- **(b) Supported, 11 of 12.** B1 was derived from the exact law with no tuning, and it was not significantly worse than the best of six twin quantiles chosen in hindsight on the same days. It had the lower mean in 5. The miss is the 16 E safe office with CV 1.5 patience, 0.17 citizens a day worse.
+- **Across the 12 offices,** B1 recovered a median 23% of the oracle's gain, the same as the tuned twin (23%) and the best head count (20%).
+- **(c) Rejected, 1 of 12.** B* had more failures than B1 in 11 offices, significantly in 6. In three safe 16 E offices it ended worse than the hidden queue, by up to 0.97 times the oracle's gain.
+
+*Post hoc: why the refit fails.* Each refit estimates the admission share a(x) that the current display produces and recomputes ψ around it. B1 admits most citizens below 15 minutes. Around that base, turning away someone at V = 10 looks cheap, because the admitted queue then has citizens who would be served late. So the next table flags 1.7–5.7 times as many citizens (E18b iterations). That table admits fewer, so the one after it swings back: 1.4–4.8 times B1's count at the third refit. The first-order condition holds only at the display's own fixed point, and plain repeated refitting did not find it. In the language of performative prediction, the map from display to data is too sensitive for repeated risk minimization to settle. A damped refit (averaging successive tables) is the obvious remedy, but it was not tested.
+
+![Bayes display, theory](figures/fig26_bayes_display_theory.png)
+
+*Fig. 26a* shows why a quantile rule was already close. ψ jumps at T from +0.01…+0.31 just below (turning away a near-on-time citizen costs little, because the window goes to someone the cutoff would turn away) to −0.34…−0.89 just above. A step at T captures the jump. What the quantile rule misses is ψ's slope on either side, and in these offices that is worth at most a fraction of a point. *Fig. 26b* is the retrodiction disclosed in the registration: the ψ-implied threshold (0.11–0.39) against the tuned 1 − q (0.2–0.5), with the right order across offices.
+
+**H67: (c) supported, (a) and (b) rejected, narrowly.** On 2,000 new hidden-queue days per office (226,000–670,000 waiting walk-ins):
+- (a) The twin's P(V > 15 | X) was within 0.02 of the observed rate in every decile in 11 of 12 offices, and within 0.006 in all 11. The miss is the 4 E lean office with CV 1.5 patience. In its top decile the twin predicted 0.2216 and 0.2016 happened, a gap of 0.02003.
+  - *Post hoc:* 1,024 draws instead of 256 left the gap at 0.0187, so it is not selection on a noisy score.
+  - With day-clustered resampling its standard error is 0.0052, so the gap is 3.7 SE, the largest of 120 decile comparisons. The registered tolerance ignored within-day clustering (the naive SE is half as large).
+  - Whether this is chance across 120 comparisons or a real limit of the twin in heavy-tailed patience is not resolved. It is the only place the twin was not calibrated.
+- (b) The twin's AUC beat the head count's in 11 of 12. In the 4 E safe office with exponential patience, the head count was higher by 0.0003.
+- (c) The margin was below 0.05 in all 12: AUC 0.907–0.964 for the twin against 0.903–0.947 for the head count, a margin of −0.0003 to +0.019. It is largest in the 16 E offices, where tickets are more numerous and the posterior has more to work with.
+
+A head count already ranks late citizens almost as well as the full posterior. That is why a count cutoff came close to the twin in Round 13b, and why no rule applied to either can come near the oracle.
+
+![Bayes display in simulation](figures/fig27_bayes_display_sim.png)
+
+**H65: (d) supported, (a), (b) and (c) rejected.** With returns (r = 1), B30 and B60 in the 13 settings with a steady state:
+
+| Part | B30 | B60 |
+|---|---|---|
+| (a) Lowest M_K of the realistic displays | 1 of 13 | 5 of 13 |
+| (b) M_K not significantly above hidden | 4 of 13 | 1 of 13 |
+| (c) K* ≥ K where it adds visits | 2 of 13 | 1 of 13 |
+| (d) Turns away fewer than B30 | — | 13 of 13 |
+
+Its break-even trip costs K* were 15–38 minutes for B30 and 23–61 for B60, mostly below the K each was built for. The display did not deliver the trade it was designed for. In the three settings with no steady state under any display (§5.18), B30 and B60 had none either (pre-specified exploratory).
+
+*Post hoc: why.* B_K was linearized around the oracle cutoff's steady state. There, turning away a citizen who would be on time costs almost no losses: the window goes to someone the cutoff would turn away anyway. So ψ_K prices an on-time citizen turned away at almost no repeat visit. A realistic display does not turn those later citizens away, so each on-time citizen it sends home really does come back. B30's precision was 0.002–0.09 and B60's 0.000–0.36. For comparison, the head count at 15 had 0.10–0.39 and the twin at q = 0.7 had 0.24–0.32. The registration flagged this risk ("a one-step linearization around the oracle"). The test shows it is decisive.
+
+*The realistic displays with returns at K = 30 (Fig. 28b).* The head count and twin cutoffs beat the hidden queue by at most 0.46 minutes per citizen, and in the near-collapse 8 E office (φ = 0.85) they lost by 0.6–2.0. The oracle gained 0.27–2.27. For a mandatory service, a realistic display is close to neutral in citizen time at a trip cost of 30 minutes. This is consistent with §5.18's K* of 22–56 minutes.
+
+**H66: (a) supported, (b) rejected.** Over 65 display × setting pairs:
+- Spearman(log ε/ε_oracle, log 1/precision) = 0.89, against a registered 0.7. By display it was 0.93 for C0-M12.5, 0.97 for C0-M15, 0.94 for B30 and 0.73 for B60. For T0.7 it was 0.30, because its precision barely varies (0.24–0.32).
+- The least-squares slope was 0.45, just below the registered [0.5, 1.5]. On Round 14's three displays alone it was 0.58.
+- Check: the oracle cutoff's precision was 1 in all 13.
+
+*Post hoc: why the slope is below 1.* A would-be-on-time citizen turned away also frees a window, which avoids some late services for others. So the price grows more slowly than 1/precision. Roughly, ε/ε_oracle ≈ 1.5·(1/precision)^0.45. Halving the number of would-be-served citizens turned away per would-be-late one cuts the price by about a quarter.
+
+![Bayes display with returns](figures/fig28_bayes_display_returns.png)
+
+**What changes.**
+1. **Round 13b's limit is information, not the rule.** A rule derived from the exact law, with no tuning, did as well as the best of six tuned quantiles. The twin's posterior is calibrated (to within 0.006 in 11 of 12 offices) and ranks late citizens only up to 0.02 AUC better than a head count. What is missing is information a ticket office does not have: who has left, and how long each service will take.
+2. **Theory can replace tuning where the display is already near its optimum.** In a quantile rule, flag once P(late | X) exceeds ψ_on/(ψ_on + |ψ_late|): 0.1–0.25 for these 16 E offices and 0.3–0.4 for the 4 E ones, rather than the same q everywhere.
+3. **Do not refit a display naively on its own log.** The first-order condition holds at a fixed point, and plain refitting overshot and oscillated, costing up to all of the gain. This is performative prediction in a queue.
+4. **For a mandatory service, judge a display by its precision.** Its price in repeat visits rises like (1/precision)^0.45. A linearization around a perfect display misprices the on-time citizens a real display sends home; B_K turned away hundreds to thousands of them for each would-be-late citizen it sent home.
+
 ## 6. Threats to validity
 - **Synthetic demand.** Arrival rates follow a stylized double-peak profile. There are no public arrival-count data for walk-in offices; the CA DMV data contain only waits.
 - **Exponential service in E1.** This favours the Erlang-C rules, which assume it. With CV < 1, as is typical for lognormal service, the analytic rules would overstaff even more (E2).
@@ -1515,6 +1598,7 @@ The head count slowed recovery most, to 36 days against 20 at φ = 0.85, because
 - **The fluid (§5.11)** covers exponential service only. Its corrected version and the √R reading were fixed after the registered tests failed, and were confirmed at one new load only. Five α-programs were not solved to optimality, and the comparison of shift rosters with the corrected fluid was not pre-registered.
 - **Wait displays (§5.17)** are modelled with one fixed citizen rule (leave at once if the display exceeds patience), no misreading or distrust, and patience unchanged by what is shown. The optimality theorem is stationary, and its time-varying confirmation covers 12 offices with one demand shape. The oracle display assumes the office knows each citizen's wait exactly, so it is an upper bound on what a real display can do. The per-hour theory is unreliable near or above overload (H55b).
 - **Displays with returns (§5.18)** assume r = 1, a return on a later day with unchanged patience, and returners who see the display just like fresh citizens. Nobody learns to come at quiet hours or gives up for good. A wasted trip is not counted as a failure; its cost enters only through the break-even K*. The three offices with no steady state under a display depend on the simulator's free service after closing (see Overtime above), so that finding is partly about that modelling choice. The n_T collapse is post hoc, checked at one load (ρ = 0.95) and on two patience curves, and it is approximate (up to 1.9× spread). The opening arm used one office and only the oracle display.
+- **Displays as decisions (§5.19)** rest on a mean-field approximation: a display that does not see V is represented by its admission share a(x), as if V stayed Markov. The influence ψ is per hour and stationary, so H55(b)'s caveat about hours near overload applies. Both refit failures (B*, B_K) are diagnosed after the fact, and the damped refit that might fix B* was not tested. The twin's posterior assumes the office knows its patience and service distributions exactly. H67's one calibration miss (3.7 day-clustered SE in 1 of 120 deciles) is unresolved. The precision law's slope comes from 65 pairs in 13 settings.
 - **Rate uncertainty** is modelled as a single daily multiplier. Correlated within-day forecast errors could matter more.
 
 ## 7. Practical guidance
@@ -1531,7 +1615,7 @@ The head count slowed recovery most, to 36 days against 20 at φ = 0.85, because
 11. **Watch recovery time for mandatory services.** An office close to collapse does not look different on a normal day; it takes weeks instead of days to recover from a closure or a system outage (§5.13). If a one-day disruption is still visible in repeat visits two weeks later, add staff, first-hour staff especially when returners come at opening.
 12. **Learn patience from "called, nobody came", not from call times.** Log every ticket called with nobody there. Estimate the patience curve as current-status data (isotonic regression of "absent" on the wait until the call), never by treating the call as the moment the citizen left: that confuses patience with the office's own staffing. Expect to need months of logs, more if the office is well staffed. Trust the curve only over the waits the office actually produces, and treat any "mean patience" as a guess.
 13. **When you refit and restaff from your own log, fix the model before collecting more data.** An office that learns from a well-staffed log sees only short waits. A too-simple patience model then keeps it overstaffed, and running lean to learn costs citizens for a partial fix. A model that can represent what it sees learns within a month. And if the staffing rule itself is stationary, correct it for the lag after peaks before trusting the learned plan: the learned curve removes slack that was covering that gap.
-14. **Tell citizens whether they will be served within the target, not how long they will wait.** "Over 15 minutes" shown when the wait exceeds the target, and nothing (or the true wait) otherwise, is the failure-minimizing display for any office (§5.17). It sends home only people who would be served late anyway, and it saves citizens time. Never show an overstated number below the target: showing the head count beneath a cutoff always did worse than showing nothing. In practice, say "over 15" once the head count implies about 12.5–15 minutes, or once a model gives a 20–30% chance of a late service. Expect about a quarter of the theoretical gain, and use it to serve citizens better, not to cut staff (§5.17). For a mandatory service, everyone turned away comes back, so count the price in visits (§5.18). The oracle display paid 0.2–0.4 extra visits per late service avoided, but a head-count or model-based display paid 0.4–2.3, which is worth it only if a wasted trip costs citizens less than about 20–55 minutes. Where the office serves few citizens within the target (n_T = windows × target ÷ service time below about 4), or where returners come at opening, don't show a cutoff for a mandatory service. An office that keeps up only by working after closing will collapse under one. If the line is physical, most of its extra failures come from people being unable to leave once they join; a ticket queue with a display avoids that.
+14. **Tell citizens whether they will be served within the target, not how long they will wait.** "Over 15 minutes" shown when the wait exceeds the target, and nothing (or the true wait) otherwise, is the failure-minimizing display for any office (§5.17). It sends home only people who would be served late anyway, and it saves citizens time. Never show an overstated number below the target: showing the head count beneath a cutoff always did worse than showing nothing. In practice, say "over 15" once the head count implies about 12.5–15 minutes, or once a model gives a 20–30% chance of a late service. Expect about a quarter of the theoretical gain, and use it to serve citizens better, not to cut staff (§5.17). For a mandatory service, everyone turned away comes back, so count the price in visits (§5.18). The oracle display paid 0.2–0.4 extra visits per late service avoided, but a head-count or model-based display paid 0.4–2.3, which is worth it only if a wasted trip costs citizens less than about 20–55 minutes. Where the office serves few citizens within the target (n_T = windows × target ÷ service time below about 4), or where returners come at opening, don't show a cutoff for a mandatory service. An office that keeps up only by working after closing will collapse under one. If the line is physical, most of its extra failures come from people being unable to leave once they join; a ticket queue with a display avoids that. If the display is driven by a model of the queue, set its threshold from theory rather than by trial: flag once the chance of a late service passes ψ_on/(ψ_on + |ψ_late|), about 0.1–0.25 in larger offices and 0.3–0.4 in small ones (§5.19). Do not refit that threshold on the display's own log, and judge a display for a mandatory service by its precision: the price in repeat visits grows roughly with (1/precision)^0.45.
 15. **Don't pick Erlang-A's patience model by habit.** Its exponential assumption can understaff when few people leave early. If the line is visible, a balking model with a realistic patience distribution is exact and was safe here.
 16. **If you use Ciw for time-varying staffing, merge consecutive equal shifts.** Otherwise each shift boundary adds phantom overtime capacity.
 
@@ -1540,7 +1624,7 @@ The head count slowed recovery most, to 36 days against 20 at φ = 0.85, because
 g++ -std=c++17 -O2 -static -Icpp/include -o cpp/build/queue_sim.exe cpp/src/simulation.cpp cpp/src/main.cpp
 pip install -r research/requirements.txt   # numpy, matplotlib, scipy, ciw
 python research/test_research.py
-python research/experiments.py --all     # about 3.3 hours on 8 cores (E7 takes 25, E8a 3, E8b 5, E9 5, E10 60, E11 20, E12 3, E13 20, E14 8, E15 1, E16 10, E17 30)
+python research/experiments.py --all     # about 4 hours on 8 cores (E7 takes 25, E8a 3, E8b 5, E9 5, E10 60, E11 20, E12 3, E13 20, E14 8, E15 1, E16 10, E17 30, E18 40)
 python research/figures.py
 ```
 
@@ -1568,4 +1652,7 @@ python research/figures.py
 - Green, L. V., Kolesar, P. J., & Whitt, W. (2007). Coping with time-varying demand when setting staffing requirements for a service system. *Production and Operations Management*, 16(1), 13–39.
 - Jennings, O. B., Mandelbaum, A., Massey, W. A., & Whitt, W. (1996). Server staffing to meet time-varying demand. *Management Science*, 42(10), 1383–1394.
 - Kim, S.-H., & Whitt, W. (2014). Are call center and hospital arrivals well modeled by nonhomogeneous Poisson processes? *M&SOM*, 16(3), 464–480.
+- Perdomo, J., Zrnic, T., Mendler-Dünner, C., & Hardt, M. (2020). Performative prediction. *ICML*, 7599–7609.
+- Lakkaraju, H., Kleinberg, J., Leskovec, J., Ludwig, J., & Mullainathan, S. (2017). The selective labels problem. *KDD*, 275–284.
+- van der Vaart, A. W. (1998). *Asymptotic Statistics*. Cambridge University Press.
 - Whitt, W. (2006). Staffing a call center with uncertain arrival rate and absenteeism. *Production and Operations Management*, 15(1), 88–102.
