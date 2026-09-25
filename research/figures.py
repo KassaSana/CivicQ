@@ -999,6 +999,85 @@ def fig_patience_learning():
     save(fig, "fig18_patience_learning.png")
 
 
+POLICY_STYLE = {("A", "False"): ("#e34948", "-", "A: exponential fit, Erlang-A SIPP"),
+                ("A", "True"): ("#eda100", "--", "A + exploration (p = 0.1, φ = 0.9)"),
+                ("B", "False"): ("#2a78d6", "-", "B: AIC family, SIPP-G"),
+                ("B+lag", ""): ("#1baf7a", "-", "B, staffing by Lag-SIPP-G (H47)")}
+
+
+def fig_learning_paths():
+    """Round 11: plan staff-hours after each refit, lognormal patience."""
+    hist = load("e14c_histories.csv")
+    lag = load("e14d_histories.csv")
+    lag_sum = load("e14d_summary.csv")
+    cases = [("R8", "0.1"), ("R8", "0.2"), ("R32", "0.1"), ("R32", "0.2")]
+    fig, axes = plt.subplots(1, 4, figsize=(16, 3.9))
+    for ax, (office, alpha) in zip(axes, cases):
+        sub = [r for r in hist if r["office"] == office and r["alpha"] == alpha
+               and r["patience"] == "logn30"]
+        start = int(sub[0]["hours_run"])
+        for (rule, explore), (color, ls, label) in POLICY_STYLE.items():
+            if rule == "B+lag":
+                rows = [r for r in lag if r["office"] == office and r["alpha"] == alpha
+                        and r["patience"] == "logn30"]
+            else:
+                rows = [r for r in sub if r["rule"] == rule and r["explore"] == explore]
+            path = [start] + [np.mean([float(r["new_hours"]) for r in rows if int(r["period"]) == k])
+                              for k in range(1, 9)]
+            ax.plot(np.arange(0, 9) * 30, path, color=color, ls=ls, marker="o", ms=3, lw=1.5,
+                    label=label)
+        orc = int(sub[0]["oracle_hours"])
+        tgt = next(int(r["lag_sipp_g_true"]) for r in lag_sum if r["office"] == office
+                   and r["alpha"] == alpha and r["patience"] == "logn30")
+        ax.axhline(orc, color="#2a78d6", ls=":", lw=1)
+        ax.axhline(tgt, color="#1baf7a", ls=":", lw=1)
+        unsafe = office == "R32"
+        ax.text(240, orc, "SIPP-G oracle" + (" (misses!)" if unsafe else ""), fontsize=7.5,
+                color="#2a78d6", ha="right", va="bottom")
+        ax.text(240, tgt, "Lag-SIPP-G", fontsize=7.5, color="#1baf7a", ha="right", va="top")
+        ax.set_title(f"{office[1:]} E, α = {float(alpha):.2f}", loc="left")
+        ax.set_xlabel("Days of log")
+    axes[0].set_ylabel("Staff-hours per day after refit")
+    axes[0].legend(fontsize=7, loc="upper right")
+    fig.suptitle("Refitting on the office's own log, starting from Erlang-C SIPP "
+                 "(lognormal patience, mean of 10 histories)", x=0.01, ha="left", fontsize=10)
+    fig.tight_layout()
+    save(fig, "fig19_learning_paths.png")
+
+
+def fig_learning_tradeoff():
+    """Round 11: final staff-hours against the worst hour's failure rate."""
+    summ = load("e14c_summary.csv")
+    lag = load("e14d_summary.csv")
+    fig, axes = plt.subplots(1, 4, figsize=(16, 3.6), sharey=False)
+    for ax, (office, alpha) in zip(axes, [("R8", "0.1"), ("R8", "0.2"), ("R32", "0.1"),
+                                          ("R32", "0.2")]):
+        for pname, marker in (("logn30", "o"), ("exp30", "s")):
+            for (rule, explore), (color, _, label) in POLICY_STYLE.items():
+                if rule == "B+lag":
+                    r = next(x for x in lag if x["office"] == office and x["alpha"] == alpha
+                             and x["patience"] == pname)
+                else:
+                    r = next(x for x in summ if x["office"] == office and x["alpha"] == alpha
+                             and x["patience"] == pname and x["rule"] == rule
+                             and x["explore"] == explore)
+                ax.scatter(float(r["final_mean"]), float(r["worst_fail" if rule == "B+lag"
+                                                           else "final_worst_fail"]),
+                           color=color, marker=marker, s=40, zorder=3,
+                           edgecolor=INK if pname == "logn30" else "none", lw=0.5)
+        ax.axhline(float(alpha), color=MUTED, ls=":", lw=1)
+        ax.set_title(f"{office[1:]} E, α = {float(alpha):.2f}", loc="left")
+        ax.set_xlabel("Final staff-hours per day")
+    axes[0].set_ylabel("Worst hour: late or left")
+    handles = [plt.Line2D([], [], color=c, marker="o", ls="", label=l)
+               for c, _, l in POLICY_STYLE.values()]
+    handles += [plt.Line2D([], [], color=MUTED, marker="o", ls="", label="lognormal truth"),
+                plt.Line2D([], [], color=MUTED, marker="s", ls="", label="exponential truth")]
+    axes[3].legend(handles=handles, fontsize=7, loc="upper right")
+    fig.tight_layout()
+    save(fig, "fig20_learning_tradeoff.png")
+
+
 if __name__ == "__main__":
     fig_gap_heatmap()
     fig_hourly()
@@ -1018,3 +1097,5 @@ if __name__ == "__main__":
     fig_return_chains()
     fig_patience_estimates()
     fig_patience_learning()
+    fig_learning_paths()
+    fig_learning_tradeoff()
