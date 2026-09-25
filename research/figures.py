@@ -1350,6 +1350,195 @@ def fig_display_returns_sim():
     save(fig, "fig25_display_returns_sim.png")
 
 
+E18_OFFICE_LABEL = {"R4_S8_A0.6": "4 E", "R16_S16_A0.6": "16 E"}
+E18_PAT_LABEL = {"exp30": "exp", "logn30": "logn 0.5", "logn30cv15": "logn 1.5"}
+
+
+def _psi_table(name, office, pname, kind):
+    key = f"{office}_{pname}_{kind}".replace("=", "").replace(".", "p")
+    rows = load(f"e18_psi/{name}_{key}.csv")
+    out = {}
+    for r in rows:
+        out.setdefault(int(r["hour"]), []).append((float(r["x"]), float(r["psi"])))
+    return {h: np.array(v) for h, v in out.items()}
+
+
+def fig_bayes_display_theory():
+    """Round 15: the influence of turning a citizen away, and the threshold it implies."""
+    pred = [r for r in load("e18p_predictions.csv") if r["table"] == "B1"]
+    twin = load("e16d_twin.csv") + load("e16f_twin_high_quantiles.csv")
+    fig, (a, b) = plt.subplots(1, 2, figsize=(12.5, 4.6))
+    styles = [("R16_S16_A0.6", "logn30", "lean", "#2a78d6"),
+              ("R16_S16_A0.6", "exp30", "lean", "#e34948"),
+              ("R4_S8_A0.6", "logn30", "lean", "#1baf7a"),
+              ("R4_S8_A0.6", "logn30cv15", "safe", "#eda100")]
+    for office, pname, kind, color in styles:
+        t = _psi_table("B1", office, pname, kind)[1]          # 9-10 AM, the morning peak
+        a.plot(t[:, 0], t[:, 1], color=color, lw=1.7,
+               label=f"{E18_OFFICE_LABEL[office]}, {E18_PAT_LABEL[pname]}, {kind}")
+    a.step([0, 15, 15, 30], [1, 1, -1, -1], where="post", color=MUTED, lw=1, ls="--")
+    a.text(1, 1.04, "a quantile rule acts as if ψ were this step (±1)", color=MUTED,
+           fontsize=7.5, va="bottom")
+    a.axhline(0, color=INK_2, lw=1)
+    a.axvline(15, color=AXIS, lw=1)
+    a.set_xlim(0, 30)
+    a.set_ylim(-1.2, 1.25)
+    a.set_xlabel("Offered wait V of the citizen turned away (min)")
+    a.set_ylabel("ψ(V): failures added per citizen turned away")
+    a.set_title("(a) Influence under the oracle cutoff, 9–10 AM", loc="left")
+    a.legend(fontsize=7.5, loc="lower left")
+    for r in pred:
+        k = (r["office"], r["patience"], r["plan_type"])
+        rows = [t for t in twin if (t["office"], t["patience"], t["plan_type"]) == k]
+        best = min(rows, key=lambda t: float(t["fail"]))
+        near = sorted(float(t["quantile"]) for t in rows
+                      if float(t["fail"]) <= float(best["fail"]) + 0.0015)
+        x = float(r["implied_threshold_mean"])
+        color = "#2a78d6" if r["office"].startswith("R16") else "#e34948"
+        b.errorbar(x, 1 - float(best["quantile"]),
+                   yerr=[[1 - float(best["quantile"]) - (1 - near[-1])],
+                         [(1 - near[0]) - (1 - float(best["quantile"]))]],
+                   fmt="o" if r["plan_type"] == "lean" else "s", color=color, ms=5, capsize=2,
+                   lw=1)
+    b.plot([0, 0.6], [0, 0.6], color=MUTED, lw=1, ls="--")
+    b.set_xlim(0, 0.6)
+    b.set_ylim(0, 0.8)
+    b.set_xlabel("Threshold ψ implies: flag once P(late | X) exceeds ψ_on / (ψ_on + |ψ_late|)")
+    b.set_ylabel("1 − q of the best twin quantile (E16d/f)")
+    b.set_title("(b) Retrodiction: theory against Round 13b's tuned quantile", loc="left")
+    b.legend(handles=[plt.Line2D([], [], color="#e34948", ls="", marker="o", label="4 E"),
+                      plt.Line2D([], [], color="#2a78d6", ls="", marker="o", label="16 E"),
+                      plt.Line2D([], [], color=INK_2, ls="", marker="o", mfc="none",
+                                 label="lean plan"),
+                      plt.Line2D([], [], color=INK_2, ls="", marker="s", mfc="none",
+                                 label="safe plan")], fontsize=7.5, loc="upper left")
+    b.text(0.59, 0.02, "bars: quantiles within 0.15 points of failure rate of the best",
+           color=MUTED,
+           fontsize=7.5, ha="right")
+    fig.tight_layout()
+    save(fig, "fig26_bayes_display_theory.png")
+
+
+E18_REG_STYLE = {"C0-M12.5": ("#eda100", "D", "head count, cutoff 12.5"),
+                 "C0-M15": ("#1baf7a", "s", "head count, cutoff 15"),
+                 "T0.7": ("#e34948", "^", "twin, q = 0.7"),
+                 "B30": ("#2a78d6", "o", "Bayes, K = 30"),
+                 "B60": ("#8a5cd6", "v", "Bayes, K = 60")}
+
+
+def fig_bayes_display_sim():
+    """Round 15: the Bayes display against the tuned twin, and what the posterior knows."""
+    rows = load("e18b_bayes.csv")
+    info = load("e18a_information.csv")
+    rel = load("e18a_reliability.csv")
+    fig, (a, b, c) = plt.subplots(1, 3, figsize=(15, 4.6),
+                                  gridspec_kw={"width_ratios": [1.5, 1, 1]})
+    keys = [(r["office"], r["patience"], r["plan_type"]) for r in rows if r["regime"] == "H"]
+    share = {(r["office"], r["patience"], r["plan_type"], r["regime"]): r["share_of_oracle_gain"]
+             for r in rows}
+    order = sorted(keys, key=lambda k: float(share[(*k, "Tbest")]))
+    for regime, color, marker, label, dx in (("Tbest", "#e34948", "^", "twin, best q in hindsight", -0.2),
+                                              ("B1", "#2a78d6", "o", "Bayes B1 (no tuning)", 0.0),
+                                              ("Bstar", MUTED, "x", "B* (three refits)", 0.2)):
+        ys = [float(share[(*k, regime)]) for k in order]
+        a.scatter(np.arange(len(order)) + dx, ys, color=color, marker=marker, s=28, zorder=3,
+                  label=label)
+    a.set_xticks(range(len(order)))
+    a.set_xticklabels([f"{E18_OFFICE_LABEL[o]} {E18_PAT_LABEL[p]}\n{k}" for o, p, k in order],
+                      fontsize=6.8, rotation=90)
+    a.axhline(0, color=INK_2, lw=1)
+    a.set_ylim(-1.05, 0.8)
+    a.set_ylabel("Share of the oracle cutoff's cut in failures")
+    a.set_title("(a) Theory matches the tuned rule; refitting overshoots", loc="left")
+    a.legend(fontsize=7.5, loc="lower right")
+    for r in info:
+        color = "#2a78d6" if r["office"].startswith("R16") else "#e34948"
+        b.scatter(float(r["auc_count"]), float(r["auc_twin"]), color=color, s=26,
+                  marker="o" if r["plan_type"] == "lean" else "s")
+    b.plot([0.89, 0.97], [0.89, 0.97], color=MUTED, lw=1, ls="--")
+    b.set_xlim(0.895, 0.97)
+    b.set_ylim(0.895, 0.97)
+    b.set_xlabel("AUC of the head count for V > 15")
+    b.set_ylabel("AUC of the twin's P(V > 15 | X)")
+    b.set_title("(b) The posterior ranks barely better", loc="left")
+    b.legend(handles=[plt.Line2D([], [], color="#e34948", ls="", marker="o", label="4 E"),
+                      plt.Line2D([], [], color="#2a78d6", ls="", marker="o", label="16 E"),
+                      plt.Line2D([], [], color=INK_2, ls="", marker="s", mfc="none",
+                                 label="safe plan")], fontsize=7.5, loc="lower right")
+    for key in {(r["office"], r["patience"], r["plan_type"]) for r in rel}:
+        pts = [(float(r["predicted"]), float(r["observed"])) for r in rel
+               if (r["office"], r["patience"], r["plan_type"]) == key]
+        xs, ys = zip(*pts)
+        c.plot(xs, ys, marker="o", ms=2.5, lw=0.9, alpha=0.8,
+               color="#2a78d6" if key[0].startswith("R16") else "#e34948")
+    c.plot([0, 1], [0, 1], color=MUTED, lw=1, ls="--")
+    c.set_xlim(0, 0.75)
+    c.set_ylim(0, 0.75)
+    c.set_xlabel("Twin's predicted P(V > 15 | X), decile mean")
+    c.set_ylabel("Observed share with V > 15")
+    c.set_title("(c) The twin is calibrated", loc="left")
+    fig.tight_layout()
+    save(fig, "fig27_bayes_display_sim.png")
+
+
+def fig_bayes_display_returns():
+    """Round 15: precision sets a display's price in visits; the returns-aware display."""
+    co = {(r["office"], r["patience"], r["plan_type"], r["regime"]): r
+          for r in load("e18c_contrasts.csv")}
+    pr = load("e18d_precision.csv")
+    mk = load("e18c_mk.csv")
+    fig, (a, b) = plt.subplots(1, 2, figsize=(12.5, 4.6))
+    for reg, (color, marker, label) in E18_REG_STYLE.items():
+        xs, ys = [], []
+        for r in pr:
+            if r["regime"] != reg or r["eps"] in ("", "nan"):
+                continue
+            o = co.get((r["office"], r["patience"], r["plan_type"], "O-M15"))
+            if not o or o["eps"] in ("", "nan") or float(r["precision"]) <= 0:
+                continue
+            xs.append(1.0 / float(r["precision"]))
+            ys.append(float(r["eps"]) / float(o["eps"]))
+        a.scatter(xs, ys, color=color, marker=marker, s=26, label=label, zorder=3)
+    grid = np.geomspace(1, 5000, 50)
+    a.plot(grid, np.exp(0.428) * grid ** 0.446, color=INK_2, lw=1.2,
+           label="least squares: slope 0.45")
+    a.plot(grid, grid, color=MUTED, lw=1, ls="--", label="ε / ε_oracle = 1 / precision")
+    a.set_xscale("log")
+    a.set_yscale("log")
+    a.set_ylim(0.8, 200)
+    a.set_xlabel("1 / precision (would-be-served citizens turned away per one who "
+                 "would have been late)")
+    a.set_ylabel("ε of the display / ε of the oracle cutoff")
+    a.set_title("(a) Precision sets the price in repeat visits", loc="left")
+    a.legend(fontsize=7, loc="upper left")
+    k30 = [r for r in mk if float(r["K"]) == 30.0 and r["M_K"] != "inf"]
+    h = {(r["office"], r["patience"], r["plan_type"]): float(r["M_K"]) for r in k30
+         if r["regime"] == "H"}
+    keys = sorted((k for k in h if sum((r["office"], r["patience"], r["plan_type"]) == k
+                                       for r in k30) > 1), key=lambda k: h[k])
+    for i, (reg, (color, marker, label)) in enumerate([("O-M15", ("#0d366b", "*", "oracle cutoff"))]
+                                                       + [(k, v) for k, v in E18_REG_STYLE.items()
+                                                          if k != "B60"]):
+        xs, ys = [], []
+        for j, k in enumerate(keys):
+            r = next((r for r in k30 if (r["office"], r["patience"], r["plan_type"]) == k
+                      and r["regime"] == reg), None)
+            if r is not None:
+                xs.append(j + 0.12 * (i - 2))
+                ys.append(float(r["M_K"]) - h[k])
+        b.scatter(xs, ys, color=color, marker=marker, s=24, label=label, zorder=3)
+    b.axhline(0, color=INK_2, lw=1)
+    b.set_xticks(range(len(keys)))
+    b.set_xticklabels([f"{E18_OFFICE_LABEL.get(o, '8 E')} {E18_PAT_LABEL[p]}\n{k}"
+                       for o, p, k in keys], fontsize=6.3, rotation=90)
+    b.set_ylabel("Minutes lost + 30 × visits, minus the hidden queue's (per citizen)")
+    b.set_title("(b) With returns, K = 30: below 0 beats showing nothing\n"
+                "(13 settings with a steady state)", loc="left")
+    b.legend(fontsize=7, loc="upper left")
+    fig.tight_layout()
+    save(fig, "fig28_bayes_display_returns.png")
+
+
 if __name__ == "__main__":
     fig_gap_heatmap()
     fig_hourly()
@@ -1376,3 +1565,6 @@ if __name__ == "__main__":
     fig_display_practice()
     fig_display_returns_theory()
     fig_display_returns_sim()
+    fig_bayes_display_theory()
+    fig_bayes_display_sim()
+    fig_bayes_display_returns()

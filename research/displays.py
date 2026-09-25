@@ -126,7 +126,8 @@ def _cell_centroid(d: np.ndarray) -> np.ndarray:
 
 
 def display_hour(c: int, lam: float, mean_service: float, patience: Patience,
-                 threshold: float, show: Display = HIDDEN, h: float = 0.01) -> DisplayHour:
+                 threshold: float, show: Display = HIDDEN, h: float = 0.01,
+                 admit: Display = None) -> DisplayHour:
     """
     Exact stationary M/M/c+G ticket queue with a display of the offered wait.
 
@@ -136,6 +137,10 @@ def display_hour(c: int, lam: float, mean_service: float, patience: Patience,
     centroid. (Round 13 used the trapezoid rule on e^phi, which under-resolves
     the boundary layer below a cutoff at loads of several times capacity; see
     REPORT section 5.17, correction.)
+
+    `admit` (Round 15) is the share a(x) of arrivals at offered wait x who are
+    not told "too long" by a display that does not see V; the rest leave at
+    once. Then u = a (1 - G(max(x, phi(x)))). None means a = 1.
     """
     mu = 1.0 / mean_service
     a = lam / mu
@@ -144,6 +149,9 @@ def display_hour(c: int, lam: float, mean_service: float, patience: Patience,
         x = np.arange(0.0, X + h / 2, h)
         shown = np.minimum(show(x), 1e12)          # "Too long" = beyond any patience
         u = 1.0 - patience.cdf(np.maximum(x, shown))
+        adm = None if admit is None else np.clip(np.asarray(admit(x), dtype=float), 0.0, 1.0)
+        if adm is not None:
+            u = adm * u
         # A cutoff makes u jump at the first "too long" point: integrate that
         # cell as a step (u holds its left value up to the jump), not a ramp
         jump = (shown[1:] >= 1e12) & (shown[:-1] < 1e12)
@@ -172,12 +180,14 @@ def display_hour(c: int, lam: float, mean_service: float, patience: Patience,
     served_mass = cell * mass
     on_time = p0 + float(served_mass[below].sum())
     served = p0 + float(served_mass.sum())
-    balk = float((on_cell(patience.cdf(shown)) * mass).sum())
+    told = patience.cdf(shown) if adm is None else (1.0 - adm) + adm * patience.cdf(shown)
+    balk = float((on_cell(told) * mass).sum())
     wait_min = float((served_mass * (x[:-1] + t * h)).sum())
     # Renegers: shown(x) <= tau < x, and they stay tau minutes
     K = _partial_mean(patience, x)
     Kshown = np.interp(np.minimum(shown, x), x, K)
-    wasted = float((on_cell(np.clip(K - Kshown, 0.0, None)) * mass).sum())
+    stay = np.clip(K - Kshown, 0.0, None)
+    wasted = float((on_cell(stay if adm is None else adm * stay) * mass).sum())
     return DisplayHour(fail=1.0 - on_time, on_time=on_time, balk=balk,
                        renege=1.0 - served - balk, served_late=served - on_time,
                        p_wait=1.0 - p0, wait_min=wait_min, wasted_min=wasted, x=x, f=f)

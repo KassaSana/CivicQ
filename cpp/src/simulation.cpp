@@ -323,16 +323,16 @@ double QueueSimulator::draw_patience(std::mt19937& rng) const {
     }
 }
 
-double QueueSimulator::twin_wait() {
+void QueueSimulator::twin_draws(std::vector<double>& waits) {
     // What a ticket office can predict: it sees its uncalled tickets and their
     // ages (not whether each holder is still there) and how long each window
     // has been serving, and knows the patience and service distributions.
     // Sample the unknowns (holder still present = patience beyond the ticket's
-    // age; remaining and future service times), replay, and return the
-    // requested quantile of the sampled waits
+    // age; remaining and future service times) and replay: each sample is a
+    // draw of V from its posterior given what the office sees
     const bool may_renege = config_.abandonment == Abandonment::RENEGE && !config_.commit;
     const int k = std::max(1, config_.twin_samples);
-    std::vector<double> waits(k);
+    waits.assign(k, 0.0);
     std::vector<double> free_at(windows_.size());
     std::vector<Ahead> ahead;
     ahead.reserve(waiting_queue_.size());
@@ -370,10 +370,31 @@ double QueueSimulator::twin_wait() {
         }
         waits[s] = replay_start(free_at, ahead) - current_time_;
     }
+}
+
+double QueueSimulator::twin_quantile_of(std::vector<double> waits) const {
+    // The requested quantile of the sampled waits
+    const int k = static_cast<int>(waits.size());
     std::size_t idx = std::min<std::size_t>(
         k - 1, static_cast<std::size_t>(config_.twin_quantile * k));
     std::nth_element(waits.begin(), waits.begin() + idx, waits.end());
     return waits[idx];
+}
+
+double QueueSimulator::psi_at(int hour, double v) const {
+    // psi for this hour, linear between grid points and flat beyond them
+    const std::size_t h = std::min<std::size_t>(hour, config_.psi_x.size() - 1);
+    const std::vector<double>& x = config_.psi_x[h];
+    const std::vector<double>& y = config_.psi[h];
+    if (v <= x.front()) {
+        return y.front();
+    }
+    if (v >= x.back()) {
+        return y.back();
+    }
+    std::size_t j = std::upper_bound(x.begin(), x.end(), v) - x.begin();
+    double w = (v - x[j - 1]) / (x[j] - x[j - 1]);
+    return y[j - 1] + w * (y[j] - y[j - 1]);
 }
 
 int QueueSimulator::find_free_window() {
@@ -477,9 +498,40 @@ void QueueSimulator::admit_citizen(bool is_appointment) {
         citizen.est_tickets = free_now ? 0.0
             : (static_cast<double>(waiting_queue_.size()) + 1) * per;
         citizen.est_les = free_now ? 0.0 : last_start_wait_;
-        citizen.est_oracle = config_.announce == Announce::ORACLE ? offered_wait()
-                           : config_.announce == Announce::TWIN ? (free_now ? 0.0 : twin_wait())
-                           : 0.0;
+        citizen.est_oracle = config_.announce == Announce::ORACLE ? offered_wait() : 0.0;
+        // TWIN: a quantile of the posterior draws of V. BAYES: flag iff the
+        // posterior mean of psi_hour(V) is negative. With log_offered, also the
+        // true V and the twin's P(V > threshold), from the same draws. The twin
+        // stream is separate, so logging changes no citizen's outcome
+        citizen.offered = -1.0;
+        citizen.twin_p_late = 0.0;
+        citizen.bayes_score = 0.0;
+        const bool twin = config_.announce == Announce::TWIN;
+        const bool bayes = config_.announce == Announce::BAYES;
+        if ((twin || bayes || config_.log_offered) && !free_now) {
+            std::vector<double> draws;
+            twin_draws(draws);
+            if (twin) {
+                citizen.est_oracle = twin_quantile_of(draws);
+            }
+            int hour = get_current_slot(current_time_);
+            double late = 0.0, score = 0.0;
+            for (double v : draws) {
+                late += v > config_.wait_threshold ? 1.0 : 0.0;
+                if (bayes) {
+                    score += psi_at(hour, v);
+                }
+            }
+            citizen.twin_p_late = late / draws.size();
+            citizen.bayes_score = score / draws.size();
+            if (bayes) {
+                citizen.est_oracle = citizen.bayes_score < 0.0
+                                   ? std::numeric_limits<double>::infinity() : 0.0;
+            }
+        }
+        if (config_.log_offered) {
+            citizen.offered = free_now ? 0.0 : offered_wait();
+        }
     }
     // Drawn for every citizen, in arrival order, so patience stays aligned
     // across staffing plans just like service requirements
@@ -507,10 +559,13 @@ void QueueSimulator::admit_citizen(bool is_appointment) {
         double est = config_.announce == Announce::TICKETS ? citizen.est_tickets
                    : config_.announce == Announce::COUNT ? citizen.est_count
                    : (config_.announce == Announce::ORACLE
-                      || config_.announce == Announce::TWIN) ? citizen.est_oracle
+                      || config_.announce == Announce::TWIN
+                      || config_.announce == Announce::BAYES) ? citizen.est_oracle
                    : citizen.est_les;
         double shown = config_.display_scale * est;
-        if (!config_.display_cutoff.empty()) {
+        if (config_.announce == Announce::BAYES) {
+            shown = est;                          // "Too long" (infinity) or nothing
+        } else if (!config_.display_cutoff.empty()) {
             std::size_t hour = std::min(static_cast<std::size_t>(current_time_ / 60.0),
                                         config_.display_cutoff.size() - 1);
             if (est > 0.0 && est >= config_.display_cutoff[hour]) {
