@@ -27,6 +27,7 @@ The target is that at most 10% of each hour's arrivals wait more than 15 minutes
 - **Mandatory services fade, they do not tip (Round 9).** When every citizen who leaves must come back, the office has one steady state at every staffing level, both in theory (the fluid and stationary models) and in 12 simulated return curves. There is no second state for a bad day to push it into. What grows near collapse is recovery time: after one closure day, 5 days at the citizen-optimal plan and 47 days with 21% fewer window-hours, while the daily numbers still look calm. With returners at opening, cutting 5% of window-hours raises the steady state from 30 to 142 repeat visits per 100. The fluid's error on the steady state is a fixed number of citizens, about 30–65 a day, at both 8 and 32 Erlangs.
 - **An office can learn its citizens' patience from its own ticket log, but slowly, and not the call-center way (Round 10).** A ticket system never sees anyone leave; it sees tickets called with nobody there. That makes its log current-status data, and the current-status estimator recovers the patience curve in every setting tested. The call-center recipe (call time as departure time) measures the patience CDF times the hazard of the office's own waits. Its error flips sign with the staffing plan: +28% to +39% at the citizen-optimal plans, −14% to −61% elsewhere. Learning runs at the cube-root rate: over a year of logs to pin G(15) to ±0.02, and 180 days for a well-staffed small office to tell exponential from lognormal patience. Mean patience is not identified at all. An exponential deliberately fitted to 60 days of log made Erlang-A safe in the one case where it had failed (20 of 20 plans met the target, at 77 h against the 72 h optimum).
 - **Learning by staffing (Round 11).** An office that refits patience on its own log and restaffs is running a feedback loop. With the right patience family it lands on its staffing within one month of normal operation, and running lean to learn is unnecessary. A simpler misspecified model (exponential patience) is trapped: at a safe plan citizens seldom wait long enough to reveal how patient they are, so it stops 1–4% above the right plan. Exploration days free it only partly, at 2.5–3.6 extra citizens failed per staff-hour saved. The surprise is that the correctly learned plan was *unsafe* at 32 Erlangs: the misspecified model's overstaffing had been hiding the stationary model's blind spot after the peaks. Learning the curve and staffing on lagged rates was safe in all 80 confirmatory histories and 6–7% cheaper. A new exact model for any patience curve (M/M/c+G) makes this possible.
+- **Should offices show the wait? (Round 12).** A wait display in a ticket queue sends home at once citizens who would otherwise waste time and then leave. A simple (tickets + 1)·S/c display cut leavers' wasted minutes by 40–78% and total citizen minutes by 8–28%, and changed failures by −0.6 to +1.6 points. A display that never overstates the wait is provably outcome-neutral. The costly errors are overstatements that send home people who would have been served on time. When the people sent home would have been served late anyway (lognormal patience, lean staffing), a display *lowers* failures by freeing windows. A physical line's excess failures come mostly from commitment (joiners cannot leave), not from the information it shows.
 - **Independent validation (Round 2).** An independent implementation in the open-source Ciw library agrees with CivicQ: 0 of 54 tests reject under constant staffing, and CivicQ stays within Ciw's bounds in all 25 hours tested under changing staffing. Along the way we found that Ciw's hourly schedules silently add overtime capacity at every shift boundary, which halves the measured lateness if used naively.
 
 ## 1. Background and gap
@@ -277,7 +278,7 @@ Hypotheses:
 
   The reasoning: a wrong family fitted to where the waits are should get G right over those waits, which is what staffing needs. Matching the mean does not.
 
-An exploratory run with no hypothesis, E13f, covers the visible line.
+An exploratory run with no hypothesis, E13f, covers the visible line. The ticket log holds no trace of balkers. With a timestamped door counter, each arrival's decision is current-status data at its expected wait (q + 1)·S/c, which can be rebuilt from the log.
 
 **Round 11** (stated after the theory runs E14a and E14b and before the simulated histories E14c). Round 10 showed an office learns patience only from citizens who wait, so what it learns depends on how it staffs. Refitting and restaffing is a feedback loop, plan → waits in the log → fitted patience → new plan. Its fixed points are *self-confirming*: the plan produces exactly the data that justify it. Round 11 asks whether an office that learns passively gets stuck, and whether deliberately running lean on some days ("exploration") pays.
 
@@ -335,7 +336,41 @@ Hypotheses:
 - **H47 (confirmatory; learn the curve and staff for the lag).** Rule B restaffing by Lag-SIPP-G, from Erlang-C, in 10 new histories per setting and truth (log seeds 800000 onwards), all 4 settings and both truths:
   - (a) the final plans meet the failure target in at least 95% of the 80 histories;
   - (b) the final plan is within ±2 h (8 E) or ±3 h (32 E) of Lag-SIPP-G with the true curve in at least 9 of 10 histories per setting;
-  - (c) under lognormal patience its final plans use at least 3 h fewer than rule A's (E14c) in both 32 E settings, and no more at 8 E. The ticket log holds no trace of balkers. With a timestamped door counter, each arrival's decision is current-status data at its expected wait (q + 1)·S/c, which can be rebuilt from the log.
+  - (c) under lognormal patience its final plans use at least 3 h fewer than rule A's (E14c) in both 32 E settings, and no more at 8 E.
+
+**Round 12** (stated before any E15 run). Should an office show citizens the wait? Round 4 compared two regimes that differ in two ways at once. A hidden ticket queue shows nothing and lets citizens leave at any time. A visible line shows the queue, and a citizen who joins stays (commitment). The visible line had the higher failure rate in 34 of 34 comparisons. The simulator now supports a third kind of office: a ticket queue with a wait display (`--announce`). A walk-in shown an estimate w leaves at once if w exceeds their patience, and otherwise joins and may still leave later. Optionally, joiners commit (`--commit`). The visible line is then exactly "real-people count + commitment": outputs are byte-identical for both patience families, checked before this registration.
+
+**Proposition.** In a ticket queue where joiners may still leave, let V be the wait a citizen would have if they stayed. A display that never shows more than V changes no citizen's outcome (served or left, and when served). It only shortens the time leavers spend inside.
+
+*Proof.* A citizen who leaves on seeing w ≤ V has patience τ < w ≤ V, so in the hidden queue they would have reneged. Any other citizen joins and meets exactly the hidden-queue outcome. A citizen who leaves never delays anyone, because their ticket is skipped when called. So every other citizen's V is unchanged, by induction over arrivals. ∎
+
+Only overstatement (w > V) can hurt. It creates *false balkers*, citizens with V ≤ τ < w who would have been served, and their absence shortens the line for the people behind them.
+
+The displays tested:
+- **tickets:** (uncalled tickets + 1)·S/c. A ticket office knows only its uncalled tickets, which include holders who already left, and the estimate ignores who will still leave.
+- **count:** (people actually waiting + 1)·S/c, as an app queue or a physical line shows. It ignores only future leavers.
+- **LES:** the wait of the last citizen to start service (Ibrahim & Whitt 2009). That citizen stayed, so under reneging the display is survivor-biased toward short waits.
+
+**Design (E15).** The 8 settings of E13 (office and 8 E, exponential and lognormal patience, lean and citizen-optimal plans), each under 5 regimes with common random numbers on the evaluation days:
+- hidden (H);
+- tickets display (T);
+- count display (C);
+- LES display (L);
+- visible line (V = C + commitment).
+
+E15a reads each display's accuracy from the hidden queue's own citizen log (2,000 days, log seeds 900000 onwards), where the displays are computed but nobody acts on them. There V is observed for every ticket, and false balkers are counted counterfactually.
+
+Hypotheses:
+- **H48 (who overstates).** Among citizens who face a wait in the hidden queue:
+  - the tickets display overstates V for at least 50% in all 8 settings;
+  - the count display overstates less often than the tickets display in all 8;
+  - LES overstates for fewer than 50% in all 8.
+- **H49 (overstating displays turn waiting citizens into walk-outs).** Against the hidden queue at the same plan:
+  - T raises the overall failure rate in all 8 settings;
+  - |L − H| < T − H in all 8.
+- **H50 (a first-order account holds).** For T and C, the rise in failures per day is positive and at most E15a's counterfactual count of *on-time false balkers* (V ≤ T and V ≤ τ < w, with T the threshold) in at least 7 of 8 settings each. The removals shorten the line for others, which damps the first-order effect.
+- **H51 (commitment, not information, makes the visible line fail).** The commitment effect V − C is positive in 8 of 8 settings, and at least as large as the information effect C − H in at least 6 of 8.
+- **H52 (time against failures).** The displays that save leavers the most time are those that lose the most citizens: across T, C and L, the ranking by wasted minutes saved against H equals the ranking by failure increase in at least 6 of 8 settings.
 
 *Change after pre-registration (Round 2):* while testing H7 we found that Ciw cannot express CivicQ's staffing-change rule (see §5.6). H7 was therefore split into a strict test for constant staffing and a bounds test for changing staffing *before* E5 was run. This deviation is disclosed here.
 
@@ -1047,13 +1082,64 @@ At the 8 E office with α = 0.10 it reaches 73 h, against the simulation optimum
 2. **A simple, misspecified model traps the office above the right plan, and exploration only partly frees it.** Exploration buys staff-hours with citizens' failures (2.5–3.6 per hour saved here), and the answer then depends on how much the office explored.
 3. **Learning the truth can make a plan less safe if the staffing model is wrong in another way.** The misspecified rule's overstaffing had been covering the stationary model's blind spot after the peaks. Improve the model and the data together: learned patience plus a lag-aware rule was safe everywhere and cheapest.
 
+### 5.16 Should offices show the wait? (E15)
+
+Round 12 separates the two things a visible line changes, information and commitment, by adding wait displays to the ticket queue. H48–H52 and the Proposition were registered in 31e3797 before any E15 run. E15c (paired day-level CIs) and the false-balker composition analysis below are post hoc.
+
+**H48: supported.** Among citizens who face a wait:
+- the tickets display overstates their wait for 64–74%;
+- the count display overstates it slightly less often in all 8 settings (63–69%);
+- LES overstates it for only 18–31%, the survivor bias predicted.
+
+The tickets display is the worse of the two only a little. Departed tickets are skipped at once when called, so few of them sit in the count at any moment.
+
+**Failures, paired over 1,000 evaluation days (E15c, post hoc):**
+
+| Setting | Tickets − hidden | LES − hidden | Commitment (visible − count) | Visible − hidden |
+|---|---|---|---|---|
+| Office, exp, lean | +1.44 [1.31, 1.57] | +0.62 | +0.73 | +2.14 |
+| Office, exp, citizen | +0.86 [0.80, 0.92] | +0.28 | **−0.20** [−0.26, −0.14] | +0.65 |
+| Office, logn, lean | +0.14 | +0.19 | +0.82 | +0.95 |
+| Office, logn, citizen | +0.12 | +0.15 | +0.59 | +0.71 |
+| 8 E, exp, lean | +0.57 | +0.59 | +3.77 | +4.32 |
+| 8 E, exp, citizen | +1.96 | +1.15 | 0.00 [−0.17, 0.18] | +1.93 |
+| 8 E, logn, lean | **−1.52** [−1.92, −1.12] | −0.43 | +3.37 | +1.85 |
+| 8 E, logn, citizen | −0.06 [−0.33, 0.21] | +0.16 | +1.92 | +1.87 |
+
+Units are citizens late or left per day, with 95% CIs where the sign is in doubt. Every visible − hidden difference is significant.
+
+**H49: rejected.** The tickets display raised the failure rate in 6 of 8 settings. In the lean 8 E office with lognormal patience it **lowered** it, from 8.8% to 8.1% (−1.5 citizens a day, significant), and at the citizen-optimal plan it changed nothing measurable. LES moved failures less than the tickets display in only 3 of 8. With lognormal patience it was no better, because there the tickets display barely hurts.
+
+**H50: rejected (6 of 8 for each display).** Where failures rose, they rose by less than the counterfactual number of on-time false balkers, as predicted. But at 8 E with lognormal patience they fell.
+
+*Post hoc, the mechanism.* A false balker who would have been served **late** was a failure anyway. Sending that citizen home frees a window for the people behind. What decides the sign is the share of false balkers who would have been served on time, and across all 24 display × setting cases it predicts the failure change (Spearman 0.82, p = 10⁻⁶).
+- With exponential patience, 91–99% of false balkers would have been on time, so displays add failures.
+- With lognormal patience only 72–79% would have been, and at a lean office the freed capacity wins.
+
+**H51: rejected.** Commitment raised failures significantly in 6 of 8 settings. It lowered them in one: the office with exponential patience and its citizen-optimal plan, where a line short enough to join is rarely long enough to matter. In another (8 E exponential, citizen-optimal) the effect is zero. Commitment outweighed the information effect in 5 of 8 settings, against the registered 6. The visible line's excess failures over the hidden queue are therefore a mix of the two. Commitment dominates in lean offices and with lognormal patience (+0.8 to +3.8 a day). Information dominates in well-staffed offices with exponential patience.
+
+**H52: rejected (3 of 8).** Every display saved leavers time (tickets or count 40–78% of their minutes, LES 16–46%), but that ranking did not follow the failure ranking. Where displays lower failures, the display saving most time also loses the fewest citizens.
+
+![Wait displays](figures/fig21_wait_displays.png)
+
+**Citizen time.** Counting everyone's minutes, served waits plus leavers' time inside:
+- a tickets or count display lowered minutes lost per arrival by 8–28% against the hidden queue;
+- LES lowered them by 4–16%;
+- the visible line lowered them by 1–18%, but always with more failures.
+
+**What changes.**
+1. **Showing the wait saves citizens time at a small, predictable price in failures.** A simple (tickets + 1)·S/c display cut leavers' wasted minutes by 40–78% and total citizen minutes by 8–28%. It changed failures by −0.6 to +1.6 points.
+2. **Whether a display costs failures depends on who it sends home.** It costs failures when the people it sends away would have been served on time (exponential patience, many early leavers). It saves failures when they would have been served late anyway (lognormal patience, lean staffing). An accurate display that never overstates the wait is outcome-neutral (Proposition).
+3. **Survivor-biased displays (LES) are safe but weak.** They seldom overstate, so they rarely add failures, but they also save citizens less than half as much time.
+4. **The visible line's problem is mainly commitment when the office is lean.** A physical line whose joiners cannot leave had 0.6–4.3 more failures a day than the hidden queue in every setting. A ticket queue with a count display keeps the information and drops the commitment.
+
 ## 6. Threats to validity
 - **Synthetic demand.** Arrival rates follow a stylized double-peak profile. There are no public arrival-count data for walk-in offices; the CA DMV data contain only waits.
 - **Exponential service in E1.** This favours the Erlang-C rules, which assume it. With CV < 1, as is typical for lognormal service, the analytic rules would overstaff even more (E2).
 - **Fixed service threshold.** T = 15 min is the same for every S. The same target is harder to meet with S = 32 than with S = 4.
 - **Fixed schedule structure.** One-hour blocks. §5.5 adds shifts, but without lunch breaks, part-time limits or labor rules. Rounds 1–2 have no abandonment or appointments, and every round has a single service type.
 - **The regime analysis (§5.9) is per hour and stationary.** The crossover and the fluid limit come from steady-state models. The time-varying tests agree with them, but the office's own +1 h is a marginal effect near the target, not a stationary one. The fluid limit is an asymptotic argument; the table shows how fast each case converges. Round 6 (§5.10) is also stationary, per hour, and limited to exponential patience and service. Its diffusion constants are heuristic, and the variable that governs convergence (β̂) was identified only after the results were in.
-- **Abandonment is stylized (§5.8).** Patience distributions are assumed, not calibrated; no public data measure walk-away behaviour at government offices. §5.14 shows how an office could calibrate from its own ticket log, but it was tested only on simulated logs whose patience comes from the assumed families. It also assumes calling an absent ticket takes no clerk time, that every absence is a reneger (not someone who stepped out and came back), and that patience does not depend on things the log cannot see, such as the line a citizen saw on arrival. §5.15's histories refit every 30 days with a stationary per-hour model; demand is the same every day, and patience does not change over time or in response to service. Balkers judge the wait from the line with the true mean service time and ignore people ahead who would leave. There is no mixed behaviour (balking *and* reneging) and no priority or callback. In E7c every leaver returns (r = 1) with the same patience, either following the demand curve or all at opening; real return timing lies somewhere between, and the fixed point assumes a stationary day-to-day regime.
+- **Abandonment is stylized (§5.8).** Patience distributions are assumed, not calibrated; no public data measure walk-away behaviour at government offices. §5.14 shows how an office could calibrate from its own ticket log, but it was tested only on simulated logs whose patience comes from the assumed families. It also assumes calling an absent ticket takes no clerk time, that every absence is a reneger (not someone who stepped out and came back), and that patience does not depend on things the log cannot see, such as the line a citizen saw on arrival. §5.16's citizens act on a display by one fixed rule (leave if the shown wait exceeds their patience), with no learning, trust or misreading, and a display does not change their patience. §5.15's histories refit every 30 days with a stationary per-hour model; demand is the same every day, and patience does not change over time or in response to service. Balkers judge the wait from the line with the true mean service time and ignore people ahead who would leave. There is no mixed behaviour (balking *and* reneging) and no priority or callback. In E7c every leaver returns (r = 1) with the same patience, either following the demand curve or all at opening; real return timing lies somewhere between, and the fixed point assumes a stationary day-to-day regime.
 - **Appointments are simplified.** They are served FIFO, with no priority for booked citizens. No-shows are independent with a fixed rate, bookings are evenly spaced within each hour, and there are no walk-in balking or booking-lead-time effects.
 - **Integrated search is a local search.** It is multi-started and never worse than its two-step start, but it is not proven optimal for large offices.
 - **The Ciw bounds test is weak for long-service, large offices** (§5.6); the strict constant-staffing test is the main evidence.
@@ -1077,15 +1163,16 @@ At the 8 E office with α = 0.10 it reaches 73 h, against the simulation optimum
 11. **Watch recovery time for mandatory services.** An office close to collapse does not look different on a normal day; it takes weeks instead of days to recover from a closure or a system outage (§5.13). If a one-day disruption is still visible in repeat visits two weeks later, add staff, first-hour staff especially when returners come at opening.
 12. **Learn patience from "called, nobody came", not from call times.** Log every ticket called with nobody there. Estimate the patience curve as current-status data (isotonic regression of "absent" on the wait until the call), never by treating the call as the moment the citizen left: that confuses patience with the office's own staffing. Expect to need months of logs, more if the office is well staffed. Trust the curve only over the waits the office actually produces, and treat any "mean patience" as a guess.
 13. **When you refit and restaff from your own log, fix the model before collecting more data.** An office that learns from a well-staffed log sees only short waits. A too-simple patience model then keeps it overstaffed, and running lean to learn costs citizens for a partial fix. A model that can represent what it sees learns within a month. And if the staffing rule itself is stationary, correct it for the lag after peaks before trusting the learned plan: the learned curve removes slack that was covering that gap.
-14. **Don't pick Erlang-A's patience model by habit.** Its exponential assumption can understaff when few people leave early. If the line is visible, a balking model with a realistic patience distribution is exact and was safe here.
-15. **If you use Ciw for time-varying staffing, merge consecutive equal shifts.** Otherwise each shift boundary adds phantom overtime capacity.
+14. **Show the wait, and don't overstate it.** A wait display saves citizens a great deal of time at a small cost in failures. It costs failures only when it overstates waits for people who would have been served on time. Prefer a display based on the queue (the count of uncalled tickets works) to one based on the last citizen served, which is safe but weak. If the line is physical, most of its extra failures come from people being unable to leave once they join; a ticket queue with a display avoids that.
+15. **Don't pick Erlang-A's patience model by habit.** Its exponential assumption can understaff when few people leave early. If the line is visible, a balking model with a realistic patience distribution is exact and was safe here.
+16. **If you use Ciw for time-varying staffing, merge consecutive equal shifts.** Otherwise each shift boundary adds phantom overtime capacity.
 
 ## 8. Reproducing
 ```bash
 g++ -std=c++17 -O2 -static -Icpp/include -o cpp/build/queue_sim.exe cpp/src/simulation.cpp cpp/src/main.cpp
 pip install -r research/requirements.txt   # numpy, matplotlib, scipy, ciw
 python research/test_research.py
-python research/experiments.py --all     # about 2.8 hours on 8 cores (E7 takes 25, E8a 3, E8b 5, E9 5, E10 60, E11 20, E12 3, E13 20, E14 8)
+python research/experiments.py --all     # about 2.8 hours on 8 cores (E7 takes 25, E8a 3, E8b 5, E9 5, E10 60, E11 20, E12 3, E13 20, E14 8, E15 1)
 python research/figures.py
 ```
 
@@ -1103,6 +1190,7 @@ python research/figures.py
 - Staffing a service system with appointment-based customer arrivals (2014). *Journal of the Operational Research Society*, 65(10). doi:10.1057/jors.2013.110
 - Brown, L., Gans, N., Mandelbaum, A., Sakov, A., Shen, H., Zeltyn, S., & Zhao, L. (2005). Statistical analysis of a telephone call center: A queueing-science perspective. *JASA*, 100(469), 36–50.
 - Baccelli, F., & Hebuterne, G. (1981). On queues with impatient customers. In *Performance '81*, 159–179. North-Holland.
+- Ibrahim, R., & Whitt, W. (2009). Real-time delay estimation based on delay history. *Manufacturing & Service Operations Management*, 11(3), 397–415.
 - Groeneboom, P., & Wellner, J. A. (1992). *Information Bounds and Nonparametric Maximum Likelihood Estimation*. DMV Seminar 19, Birkhäuser.
 - Atlason, J., Epelman, M. A., & Henderson, S. G. (2004). Call center staffing with simulation and cutting plane methods. *Annals of Operations Research*, 127, 333–358.
 - Ingolfsson, A., Haque, M. A., & Umnikov, A. (2002). Accounting for time-varying queueing effects in workforce scheduling. *European Journal of Operational Research*, 139(3), 585–597.

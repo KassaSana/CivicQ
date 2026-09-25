@@ -42,6 +42,18 @@ enum class Abandonment {
 };
 
 /**
+ * @brief What a walk-in is told on arrival in a ticket queue (RENEGE mode)
+ *
+ * Every estimate is 0 when a window is free and nobody waits. Otherwise:
+ */
+enum class Announce {
+    NONE,      // Nothing: the hidden queue
+    TICKETS,   // (uncalled tickets + 1) S / c; counts tickets whose holders have left
+    COUNT,     // (people actually waiting + 1) S / c, as a physical line shows
+    LES        // Wait of the last citizen to start service
+};
+
+/**
  * @brief Service-time distribution family (all parameterized by their mean)
  */
 enum class ServiceDist {
@@ -81,6 +93,10 @@ struct Citizen {
     double call_time;            // When the ticket reached the front with a window free:
                                  // service start, or when a reneger's ticket was called
                                  // and nobody came (-1 for a balk)
+    bool balked;                 // Left on arrival (visible line or announcement)
+    double est_tickets;          // What each display would have shown on arrival
+    double est_count;
+    double est_les;
     int queue_ahead;             // Citizens waiting when this one arrived
     int open_at_arrival;         // Windows open when this one arrived
 };
@@ -115,6 +131,7 @@ struct SimulationResults {
     double spill_minutes;                      // Service on windows already closed (a closing
                                                // window finishing its citizen), before closing
     double overtime_busy_minutes;              // Service delivered after the doors close
+    int balked;                                // Walk-ins who left on arrival
     std::vector<double> utilization_per_slot;  // 8 hourly slots
     std::vector<double> all_wait_times;        // For distribution analysis
     std::vector<Citizen> citizen_log;          // Every citizen, only with log_citizens
@@ -141,6 +158,9 @@ struct SimulationConfig {
     ServiceDist patience_dist;             // Patience distribution family
     double patience_cv;                    // Patience CV (lognormal only)
     bool log_citizens;                     // Keep a per-citizen record in the results
+    Announce announce;                     // RENEGE mode: estimate shown on arrival;
+                                           // leave at once if it exceeds patience
+    bool commit;                           // RENEGE mode: joiners never leave
 
     SimulationConfig()
         : mean_service_time(8.0)
@@ -156,7 +176,9 @@ struct SimulationConfig {
         , mean_patience(30.0)
         , patience_dist(ServiceDist::EXPONENTIAL)
         , patience_cv(1.0)
-        , log_citizens(false) {}
+        , log_citizens(false)
+        , announce(Announce::NONE)
+        , commit(false) {}
 };
 
 /**
@@ -219,6 +241,7 @@ private:
     std::vector<double> slot_busy_time_;  // Cumulative busy time per slot
     double spill_minutes_;                // Busy time on closed windows before closing
     double overtime_busy_minutes_;        // Busy time after closing
+    double last_start_wait_;              // Wait of the last citizen to start service
 
     // Helper methods
     double get_arrival_rate(double time) const;

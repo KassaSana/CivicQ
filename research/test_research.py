@@ -30,7 +30,8 @@ from learning import (  # noqa: E402
     Patience, explore_plan, limit_fit, mmcg_hour, run_history, sipp_g,
 )
 from patience_logs import (  # noqa: E402
-    ARRIVAL, CALL, LEAVE, OUTCOME, PATIENCE, cs_mle, cs_npmle, naive_km, pick_family, raw_log,
+    ARRIVAL, CALL, EST_COUNT, EST_TICKETS, LEAVE, OUTCOME, PATIENCE, cs_mle, cs_npmle, naive_km,
+    pick_family, raw_log,
 )
 
 SIMULATOR = find_simulator()
@@ -526,6 +527,40 @@ class TestLearning(unittest.TestCase):
         self.assertTrue(all(len(r["new_plan"]) == 8 for r in out))
         # Exploration days run fewer windows, so paid hours fall below the plan
         self.assertLess(out[0]["paid_hours_per_day"], out[0]["hours_run"])
+
+
+class TestWaitDisplays(unittest.TestCase):
+    PLAN = [2, 2, 2, 2, 2, 2, 2, 2]
+
+    def _run(self, *extra):
+        import subprocess
+        args = [str(SIMULATOR), "--staffing", ",".join(map(str, self.PLAN)), "--replications",
+                "60", "--seed", "3", "--per-replication", "--patience-dist", "lognormal",
+                "--patience-cv", "0.5", *extra]
+        return subprocess.run(args, capture_output=True, text=True, check=True).stdout
+
+    def test_visible_line_is_count_display_plus_commitment(self):
+        self.assertEqual(self._run("--abandonment", "balk"),
+                         self._run("--abandonment", "renege", "--announce", "count", "--commit"))
+
+    def test_no_display_is_the_hidden_queue(self):
+        self.assertEqual(self._run("--abandonment", "renege"),
+                         self._run("--abandonment", "renege", "--announce", "none"))
+
+    def test_displays_and_balkers_in_the_log(self):
+        rows = raw_log(self.PLAN, OFFICE_RATES, 8.0, mode="renege", days=40, seed=11)
+        v = rows[:, CALL] - rows[:, ARRIVAL]
+        waited = rows[:, OUTCOME] == 0
+        # All displays are 0 exactly when a window was free on arrival
+        free = rows[:, EST_COUNT] == 0
+        np.testing.assert_array_equal(free, rows[:, EST_TICKETS] == 0)
+        self.assertTrue(np.all(v[free & waited] < 1e-9))
+        # Uncalled tickets include holders who left, so tickets >= count
+        self.assertTrue(np.all(rows[:, EST_TICKETS] >= rows[:, EST_COUNT] - 1e-9))
+        # With a display, balkers leave on arrival and are counted per day
+        r = run_simulation(self.PLAN, OFFICE_RATES, replications=40, seed=11,
+                           abandonment="renege", patience=30.0, announce="tickets")
+        self.assertGreater(sum(r.daily_balked), 0)
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

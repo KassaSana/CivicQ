@@ -129,6 +129,7 @@ class SimulationResult:
     daily_abandoned_wait: list = field(default_factory=list)  # Minutes those citizens spent inside
     daily_spill: list = field(default_factory=list)     # Service minutes on just-closed windows
     daily_overtime_busy: list = field(default_factory=list)  # Service minutes after closing
+    daily_balked: list = field(default_factory=list)    # Walk-ins who left on arrival, per day
     mean_service: float = 0.0
     # (result, mean cost difference, 95% CI) for finalists statistically tied with this one
     tied_alternatives: list = field(default_factory=list)
@@ -174,7 +175,9 @@ def run_simulation(
     abandonment: str = "none",
     patience: float = 30.0,
     patience_dist: str = "exp",
-    patience_cv: float = 1.0
+    patience_cv: float = 1.0,
+    announce: str = "none",
+    commit: bool = False
 ) -> SimulationResult:
     """
     Execute C++ simulator with given staffing configuration.
@@ -204,6 +207,9 @@ def run_simulation(
         patience: Mean walk-in patience in minutes
         patience_dist: "exp", "lognormal" or "det"
         patience_cv: Patience CV (lognormal only)
+        announce: renege mode only: wait shown on arrival ("none", "tickets",
+            "count" or "les"); a walk-in shown more than their patience leaves
+        commit: renege mode only: walk-ins who join never leave
 
     Returns:
         SimulationResult with aggregated metrics and 95% CIs
@@ -237,6 +243,10 @@ def run_simulation(
     if abandonment != "none":
         cmd += ["--abandonment", abandonment, "--patience", str(patience),
                 "--patience-dist", patience_dist, "--patience-cv", str(patience_cv)]
+    if announce != "none":
+        cmd += ["--announce", announce]
+    if commit:
+        cmd += ["--commit"]
 
     try:
         result = subprocess.run(
@@ -294,6 +304,7 @@ def run_simulation(
         daily_abandoned_wait=[row['aband_wait_sum'] for row in rows],
         daily_spill=[row['spill_busy'] for row in rows],
         daily_overtime_busy=[row['overtime_busy'] for row in rows],
+        daily_balked=[int(row['balked']) for row in rows],
         mean_service=mean(column('mean_service'))
     )
 
