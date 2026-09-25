@@ -1,0 +1,200 @@
+E18b: Bayes displays in the 12 E16 offices, 1,000 evaluation days
+  R4_S8_A0.6   exp30      lean  H 0.0977 O 0.0885 T0.7 0.0962 B1 0.0961 B* 0.0962 (B1-T -0.01 [-0.114, 0.084])
+  R4_S8_A0.6   exp30      safe  H 0.0674 O 0.0636 T0.7 0.0671 B1 0.0672 B* 0.0674 (B1-T +0.02 [-0.026, 0.064])
+  R4_S8_A0.6   logn30     lean  H 0.0773 O 0.0348 T0.7 0.0576 B1 0.0575 B* 0.0578 (B1-T -0.03 [-0.223, 0.159])
+  R4_S8_A0.6   logn30     safe  H 0.0354 O 0.0175 T0.7 0.0302 B1 0.0304 B* 0.0317 (B1-T +0.05 [-0.079, 0.181])
+  R4_S8_A0.6   logn30cv15 lean  H 0.0899 O 0.0836 T0.7 0.0893 B1 0.0891 B* 0.0892 (B1-T -0.05 [-0.138, 0.032])
+  R4_S8_A0.6   logn30cv15 safe  H 0.0611 O 0.0586 T0.5 0.0611 B1 0.0611 B* 0.0614 (B1-T +0.00 [-0.023, 0.029])
+  R16_S16_A0.6 exp30      lean  H 0.1337 O 0.1162 T0.8 0.1247 B1 0.1247 B* 0.1251 (B1-T +0.03 [-0.256, 0.314])
+  R16_S16_A0.6 exp30      safe  H 0.0767 O 0.0738 T0.8 0.0762 B1 0.0763 B* 0.0790 (B1-T +0.05 [-0.079, 0.183])
+  R16_S16_A0.6 logn30     lean  H 0.0715 O 0.0276 T0.8 0.0420 B1 0.0425 B* 0.0437 (B1-T +0.26 [-0.047, 0.573])
+  R16_S16_A0.6 logn30     safe  H 0.0439 O 0.0182 T0.8 0.0291 B1 0.0290 B* 0.0409 (B1-T -0.06 [-0.361, 0.243])
+  R16_S16_A0.6 logn30cv15 lean  H 0.1326 O 0.1201 T0.8 0.1274 B1 0.1272 B* 0.1269 (B1-T -0.10 [-0.377, 0.179])
+  R16_S16_A0.6 logn30cv15 safe  H 0.0751 O 0.0729 T0.7 0.0749 B1 0.0752 B* 0.0773 (B1-T +0.17 [0.032, 0.298])
+  wrote research\results\e18b_bayes.csv (72 rows)
+  wrote research\results\e18b_iterations.csv (36 rows)
+  (e18b took 318s)
+
+E18a: twin posterior vs head count on 2000 hidden-queue days
+  R4_S8_A0.6   exp30      lean  n 266207 AUC twin 0.916 count 0.915  worst decile gap 0.0030
+  R4_S8_A0.6   exp30      safe  n 225897 AUC twin 0.920 count 0.920  worst decile gap 0.0053
+  R4_S8_A0.6   logn30     lean  n 284749 AUC twin 0.938 count 0.929  worst decile gap 0.0042
+  R4_S8_A0.6   logn30     safe  n 241241 AUC twin 0.945 count 0.933  worst decile gap 0.0023
+  R4_S8_A0.6   logn30cv15 lean  n 270320 AUC twin 0.907 count 0.903  worst decile gap 0.0200
+  R4_S8_A0.6   logn30cv15 safe  n 230711 AUC twin 0.919 count 0.914  worst decile gap 0.0012
+  R16_S16_A0.6 exp30      lean  n 642801 AUC twin 0.948 count 0.936  worst decile gap 0.0049
+  R16_S16_A0.6 exp30      safe  n 522968 AUC twin 0.957 count 0.944  worst decile gap 0.0017
+  R16_S16_A0.6 logn30     lean  n 534460 AUC twin 0.962 count 0.947  worst decile gap 0.0059
+  R16_S16_A0.6 logn30     safe  n 527477 AUC twin 0.964 count 0.945  worst decile gap 0.0052
+  R16_S16_A0.6 logn30cv15 lean  n 669510 AUC twin 0.939 count 0.922  worst decile gap 0.0030
+  R16_S16_A0.6 logn30cv15 safe  n 553981 AUC twin 0.950 count 0.937  worst decile gap 0.0010
+  wrote research\results\e18a_information.csv (12 rows)
+  wrote research\results\e18a_reliability.csv (120 rows)
+  (e18a took 309s)
+
+E18c: returns-aware Bayes displays (r = 1)
+  R4_S8_A0.6   exp30      lean      profile  O-M15    eps 0.326 [0.3003, 0.3523] dlate -0.0324 dvisits +0.0106
+  R4_S8_A0.6   exp30      lean      profile  C0-M12.5 eps 1.2009 [1.1227, 1.2927] dlate -0.0216 dvisits +0.0259
+  R4_S8_A0.6   exp30      lean      profile  C0-M15   eps 0.8809 [0.8031, 0.9506] dlate -0.0155 dvisits +0.0137
+  R4_S8_A0.6   exp30      lean      profile  T0.7     eps 0.8935 [0.8222, 0.9688] dlate -0.0141 dvisits +0.0126
+  R4_S8_A0.6   exp30      lean      profile  B30      eps 2.0596 [1.9072, 2.2389] dlate -0.0213 dvisits +0.0438
+  R4_S8_A0.6   exp30      lean      profile  B60      eps 0.8899 [0.7931, 0.9946] dlate -0.0143 dvisits +0.0128
+  R4_S8_A0.6   exp30      safe      profile  O-M15    eps 0.3704 [0.3347, 0.4036] dlate -0.0099 dvisits +0.0037
+  R4_S8_A0.6   exp30      safe      profile  C0-M12.5 eps 1.793 [1.6334, 1.981] dlate -0.0056 dvisits +0.0100
+  R4_S8_A0.6   exp30      safe      profile  C0-M15   eps 1.2461 [1.0881, 1.4271] dlate -0.0032 dvisits +0.0040
+  R4_S8_A0.6   exp30      safe      profile  T0.7     eps 1.158 [1.0072, 1.3544] dlate -0.0024 dvisits +0.0028
+  R4_S8_A0.6   exp30      safe      profile  B30      eps 3.7726 [3.3935, 4.1501] dlate -0.0064 dvisits +0.0242
+  R4_S8_A0.6   exp30      safe      profile  B60      eps 1.1562 [0.9851, 1.3555] dlate -0.0026 dvisits +0.0029
+  R4_S8_A0.6   logn30     lean      profile  O-M15    eps 0.2703 [0.2592, 0.2803] dlate -0.0664 dvisits +0.0180
+  R4_S8_A0.6   logn30     lean      profile  C0-M12.5 eps 0.7966 [0.7553, 0.8396] dlate -0.0460 dvisits +0.0367
+  R4_S8_A0.6   logn30     lean      profile  C0-M15   eps 0.6347 [0.6026, 0.6707] dlate -0.0338 dvisits +0.0214
+  R4_S8_A0.6   logn30     lean      profile  T0.7     eps 0.6672 [0.638, 0.6994] dlate -0.0412 dvisits +0.0275
+  R4_S8_A0.6   logn30     lean      profile  B30      eps 0.9209 [0.8755, 0.9756] dlate -0.0467 dvisits +0.0430
+  R4_S8_A0.6   logn30     lean      profile  B60      eps 0.4156 [0.3894, 0.441] dlate -0.0251 dvisits +0.0104
+  R4_S8_A0.6   logn30     safe      profile  O-M15    eps 0.295 [0.2818, 0.309] dlate -0.0285 dvisits +0.0084
+  R4_S8_A0.6   logn30     safe      profile  C0-M12.5 eps 1.0049 [0.9447, 1.0728] dlate -0.0193 dvisits +0.0194
+  R4_S8_A0.6   logn30     safe      profile  C0-M15   eps 0.7232 [0.6671, 0.7818] dlate -0.0125 dvisits +0.0090
+  R4_S8_A0.6   logn30     safe      profile  T0.7     eps 0.7238 [0.676, 0.7676] dlate -0.0154 dvisits +0.0111
+  R4_S8_A0.6   logn30     safe      profile  B30      eps 1.5093 [1.4035, 1.6284] dlate -0.0201 dvisits +0.0303
+  R4_S8_A0.6   logn30     safe      profile  B60      eps 0.5312 [0.4812, 0.5771] dlate -0.0091 dvisits +0.0048
+  R4_S8_A0.6   logn30cv15 lean      profile  O-M15    eps 0.3511 [0.3169, 0.3863] dlate -0.0214 dvisits +0.0075
+  R4_S8_A0.6   logn30cv15 lean      profile  C0-M12.5 eps 1.6721 [1.5333, 1.8137] dlate -0.0132 dvisits +0.0221
+  R4_S8_A0.6   logn30cv15 lean      profile  C0-M15   eps 1.2102 [1.1003, 1.3337] dlate -0.0091 dvisits +0.0111
+  R4_S8_A0.6   logn30cv15 lean      profile  T0.7     eps 1.0002 [0.8977, 1.1147] dlate -0.0069 dvisits +0.0069
+  R4_S8_A0.6   logn30cv15 lean      profile  B30      eps 3.2088 [2.9168, 3.4976] dlate -0.0134 dvisits +0.0431
+  R4_S8_A0.6   logn30cv15 lean      profile  B60      eps 1.3769 [1.2141, 1.558] dlate -0.0092 dvisits +0.0126
+  R4_S8_A0.6   logn30cv15 safe      profile  O-M15    eps 0.3251 [0.2808, 0.368] dlate -0.0070 dvisits +0.0023
+  R4_S8_A0.6   logn30cv15 safe      profile  C0-M12.5 eps 2.2644 [2.0365, 2.5797] dlate -0.0037 dvisits +0.0083
+  R4_S8_A0.6   logn30cv15 safe      profile  C0-M15   eps 1.4915 [1.2717, 1.7777] dlate -0.0020 dvisits +0.0029
+  R4_S8_A0.6   logn30cv15 safe      profile  T0.7     eps 1.2216 [0.9678, 1.5149] dlate -0.0011 dvisits +0.0013
+  R4_S8_A0.6   logn30cv15 safe      profile  B30      eps 5.921 [5.3881, 6.7237] dlate -0.0042 dvisits +0.0248
+  R4_S8_A0.6   logn30cv15 safe      profile  B60      eps 1.5583 [1.3055, 1.8694] dlate -0.0018 dvisits +0.0028
+  R16_S16_A0.6 exp30      safe      profile  O-M15    eps 0.2529 [0.2194, 0.2796] dlate -0.0233 dvisits +0.0059
+  R16_S16_A0.6 exp30      safe      profile  C0-M12.5 eps 1.232 [1.1122, 1.362] dlate -0.0181 dvisits +0.0222
+  R16_S16_A0.6 exp30      safe      profile  C0-M15   eps 0.9017 [0.7939, 1.0167] dlate -0.0132 dvisits +0.0119
+  R16_S16_A0.6 exp30      safe      profile  T0.7     eps 0.6311 [0.5401, 0.722] dlate -0.0099 dvisits +0.0063
+  R16_S16_A0.6 exp30      safe      profile  B30      eps 10.1452 [9.011, 11.395] dlate -0.0179 dvisits +0.1813
+  R16_S16_A0.6 exp30      safe      profile  B60      eps 6.2436 [5.5604, 6.8863] dlate -0.0184 dvisits +0.1149
+  R16_S16_A0.6 logn30     lean      profile  O-M15    eps 0.1868 [0.1791, 0.1946] dlate -0.0714 dvisits +0.0133
+  R16_S16_A0.6 logn30     lean      profile  C0-M12.5 eps 0.5324 [0.5096, 0.5522] dlate -0.0547 dvisits +0.0291
+  R16_S16_A0.6 logn30     lean      profile  C0-M15   eps 0.414 [0.3941, 0.4353] dlate -0.0411 dvisits +0.0170
+  R16_S16_A0.6 logn30     lean      profile  T0.7     eps 0.3958 [0.3769, 0.4129] dlate -0.0504 dvisits +0.0199
+  R16_S16_A0.6 logn30     lean      profile  B30      eps 1.6738 [1.5954, 1.7509] dlate -0.0616 dvisits +0.1031
+  R16_S16_A0.6 logn30     lean      profile  B60      eps 0.8607 [0.8142, 0.9068] dlate -0.0504 dvisits +0.0434
+  R16_S16_A0.6 logn30     safe      profile  O-M15    eps 0.1943 [0.184, 0.205] dlate -0.0395 dvisits +0.0077
+  R16_S16_A0.6 logn30     safe      profile  C0-M12.5 eps 0.6445 [0.608, 0.6877] dlate -0.0309 dvisits +0.0199
+  R16_S16_A0.6 logn30     safe      profile  C0-M15   eps 0.4841 [0.4554, 0.5204] dlate -0.0230 dvisits +0.0112
+  R16_S16_A0.6 logn30     safe      profile  T0.7     eps 0.4248 [0.404, 0.4516] dlate -0.0257 dvisits +0.0109
+  R16_S16_A0.6 logn30     safe      profile  B30      eps 5.5646 [5.1376, 5.9614] dlate -0.0321 dvisits +0.1787
+  R16_S16_A0.6 logn30     safe      profile  B60      eps 3.4111 [3.1613, 3.6506] dlate -0.0324 dvisits +0.1107
+  R16_S16_A0.6 logn30cv15 safe      profile  O-M15    eps 0.2327 [0.188, 0.2732] dlate -0.0177 dvisits +0.0041
+  R16_S16_A0.6 logn30cv15 safe      profile  C0-M12.5 eps 1.8413 [1.6664, 2.0145] dlate -0.0134 dvisits +0.0248
+  R16_S16_A0.6 logn30cv15 safe      profile  C0-M15   eps 1.2344 [1.0623, 1.4128] dlate -0.0096 dvisits +0.0119
+  R16_S16_A0.6 logn30cv15 safe      profile  T0.7     eps 0.7448 [0.5941, 0.9006] dlate -0.0055 dvisits +0.0041
+  R16_S16_A0.6 logn30cv15 safe      profile  B30      eps 15.9978 [14.2175, 18.2319] dlate -0.0117 dvisits +0.1877
+  R16_S16_A0.6 logn30cv15 safe      profile  B60      eps 9.8191 [8.714, 11.0826] dlate -0.0118 dvisits +0.1161
+  R8_S16_A0.6  exp30      phi=1.00  profile  O-M15    eps 0.3509 [0.3199, 0.3827] dlate -0.0152 dvisits +0.0053
+  R8_S16_A0.6  exp30      phi=1.00  profile  C0-M12.5 eps 1.6922 [1.5516, 1.8551] dlate -0.0087 dvisits +0.0147
+  R8_S16_A0.6  exp30      phi=1.00  profile  C0-M15   eps 1.345 [1.1966, 1.4865] dlate -0.0062 dvisits +0.0083
+  R8_S16_A0.6  exp30      phi=1.00  profile  T0.7     eps 1.0096 [0.9139, 1.1402] dlate -0.0053 dvisits +0.0053
+  R8_S16_A0.6  exp30      phi=1.00  profile  B30      eps 5.3808 [4.9278, 5.9504] dlate -0.0106 dvisits +0.0570
+  R8_S16_A0.6  exp30      phi=1.00  profile  B60      eps 1.7757 [1.5996, 1.9817] dlate -0.0077 dvisits +0.0137
+  R8_S16_A0.6  exp30      phi=0.90  profile  O-M15    eps 0.3355 [0.3087, 0.3681] dlate -0.0706 dvisits +0.0237
+  R8_S16_A0.6  exp30      phi=0.90  profile  C0-M12.5 eps 1.4693 [1.3567, 1.6085] dlate -0.0522 dvisits +0.0766
+  R8_S16_A0.6  exp30      phi=0.90  profile  C0-M15   eps 1.0994 [1.0012, 1.2028] dlate -0.0417 dvisits +0.0459
+  R8_S16_A0.6  exp30      phi=0.90  profile  T0.7     eps 0.9705 [0.8876, 1.0655] dlate -0.0377 dvisits +0.0365
+  R8_S16_A0.6  exp30      phi=0.90  profile  B30      eps 2.7029 [2.4736, 3.0087] dlate -0.0485 dvisits +0.1310
+  R8_S16_A0.6  exp30      phi=0.90  profile  B60      eps 1.2441 [1.1416, 1.3788] dlate -0.0439 dvisits +0.0546
+  R8_S16_A0.6  exp30      phi=0.85  profile  O-M15    eps 0.4147 [0.3706, 0.459] dlate -0.2012 dvisits +0.0834
+  R8_S16_A0.6  exp30      phi=0.85  profile  C0-M12.5 eps 1.4306 [1.2468, 1.6196] dlate -0.1672 dvisits +0.2392
+  R8_S16_A0.6  exp30      phi=0.85  profile  C0-M15   eps 1.1593 [1.0122, 1.3126] dlate -0.1435 dvisits +0.1664
+  R8_S16_A0.6  exp30      phi=0.85  profile  T0.7     eps 1.0622 [0.9051, 1.2268] dlate -0.1311 dvisits +0.1393
+  R8_S16_A0.6  exp30      phi=0.85  profile  B30      eps 1.7808 [1.5693, 1.998] dlate -0.1492 dvisits +0.2657
+  R8_S16_A0.6  exp30      phi=0.85  profile  B60      eps 1.1047 [0.9907, 1.2461] dlate -0.1405 dvisits +0.1552
+  wrote research\results\e18c_states.csv (112 rows)
+  wrote research\results\e18c_contrasts.csv (78 rows)
+  wrote research\results\e18c_mk.csv (224 rows)
+  (e18c took 1658s)
+
+E18d: precision of the displays at their steady states
+  R4_S8_A0.6   exp30      lean      O-M15     precision 1.000 recall 1.000 eps 0.326
+  R4_S8_A0.6   exp30      lean      C0-M12.5  precision 0.157 recall 0.340 eps 1.2009
+  R4_S8_A0.6   exp30      lean      C0-M15    precision 0.297 recall 0.241 eps 0.8809
+  R4_S8_A0.6   exp30      lean      T0.7      precision 0.315 recall 0.213 eps 0.8935
+  R4_S8_A0.6   exp30      lean      B30       precision 0.029 recall 0.171 eps 2.0596
+  R4_S8_A0.6   exp30      lean      B60       precision 0.099 recall 0.115 eps 0.8899
+  R4_S8_A0.6   exp30      safe      O-M15     precision 1.000 recall 1.000 eps 0.3704
+  R4_S8_A0.6   exp30      safe      C0-M12.5  precision 0.120 recall 0.254 eps 1.793
+  R4_S8_A0.6   exp30      safe      C0-M15    precision 0.266 recall 0.164 eps 1.2461
+  R4_S8_A0.6   exp30      safe      T0.7      precision 0.312 recall 0.122 eps 1.158
+  R4_S8_A0.6   exp30      safe      B30       precision 0.018 recall 0.154 eps 3.7726
+  R4_S8_A0.6   exp30      safe      B60       precision 0.151 recall 0.076 eps 1.1562
+  R4_S8_A0.6   logn30     lean      O-M15     precision 1.000 recall 1.000 eps 0.2703
+  R4_S8_A0.6   logn30     lean      C0-M12.5  precision 0.247 recall 0.379 eps 0.7966
+  R4_S8_A0.6   logn30     lean      C0-M15    precision 0.394 recall 0.270 eps 0.6347
+  R4_S8_A0.6   logn30     lean      T0.7      precision 0.288 recall 0.323 eps 0.6672
+  R4_S8_A0.6   logn30     lean      B30       precision 0.093 recall 0.230 eps 0.9209
+  R4_S8_A0.6   logn30     lean      B60       precision 0.363 recall 0.150 eps 0.4156
+  R4_S8_A0.6   logn30     safe      O-M15     precision 1.000 recall 1.000 eps 0.295
+  R4_S8_A0.6   logn30     safe      C0-M12.5  precision 0.174 recall 0.340 eps 1.0049
+  R4_S8_A0.6   logn30     safe      C0-M15    precision 0.312 recall 0.194 eps 0.7232
+  R4_S8_A0.6   logn30     safe      T0.7      precision 0.280 recall 0.245 eps 0.7238
+  R4_S8_A0.6   logn30     safe      B30       precision 0.052 recall 0.215 eps 1.5093
+  R4_S8_A0.6   logn30     safe      B60       precision 0.312 recall 0.117 eps 0.5312
+  R4_S8_A0.6   logn30cv15 lean      O-M15     precision 1.000 recall 1.000 eps 0.3511
+  R4_S8_A0.6   logn30cv15 lean      C0-M12.5  precision 0.117 recall 0.326 eps 1.6721
+  R4_S8_A0.6   logn30cv15 lean      C0-M15    precision 0.209 recall 0.227 eps 1.2102
+  R4_S8_A0.6   logn30cv15 lean      T0.7      precision 0.237 recall 0.145 eps 1.0002
+  R4_S8_A0.6   logn30cv15 lean      B30       precision 0.016 recall 0.134 eps 3.2088
+  R4_S8_A0.6   logn30cv15 lean      B60       precision 0.047 recall 0.098 eps 1.3769
+  R4_S8_A0.6   logn30cv15 safe      O-M15     precision 1.000 recall 1.000 eps 0.3251
+  R4_S8_A0.6   logn30cv15 safe      C0-M12.5  precision 0.086 recall 0.238 eps 2.2644
+  R4_S8_A0.6   logn30cv15 safe      C0-M15    precision 0.156 recall 0.112 eps 1.4915
+  R4_S8_A0.6   logn30cv15 safe      T0.7      precision 0.277 recall 0.090 eps 1.2216
+  R4_S8_A0.6   logn30cv15 safe      B30       precision 0.012 recall 0.164 eps 5.921
+  R4_S8_A0.6   logn30cv15 safe      B60       precision 0.109 recall 0.098 eps 1.5583
+  R16_S16_A0.6 exp30      safe      O-M15     precision 1.000 recall 1.000 eps 0.2529
+  R16_S16_A0.6 exp30      safe      C0-M12.5  precision 0.067 recall 0.325 eps 1.232
+  R16_S16_A0.6 exp30      safe      C0-M15    precision 0.163 recall 0.235 eps 0.9017
+  R16_S16_A0.6 exp30      safe      T0.7      precision 0.258 recall 0.168 eps 0.6311
+  R16_S16_A0.6 exp30      safe      B30       precision 0.002 recall 0.120 eps 10.1452
+  R16_S16_A0.6 exp30      safe      B60       precision 0.000 recall 0.021 eps 6.2436
+  R16_S16_A0.6 logn30     lean      O-M15     precision 1.000 recall 1.000 eps 0.1868
+  R16_S16_A0.6 logn30     lean      C0-M12.5  precision 0.237 recall 0.386 eps 0.5324
+  R16_S16_A0.6 logn30     lean      C0-M15    precision 0.390 recall 0.271 eps 0.414
+  R16_S16_A0.6 logn30     lean      T0.7      precision 0.315 recall 0.335 eps 0.3958
+  R16_S16_A0.6 logn30     lean      B30       precision 0.037 recall 0.330 eps 1.6738
+  R16_S16_A0.6 logn30     lean      B60       precision 0.056 recall 0.150 eps 0.8607
+  R16_S16_A0.6 logn30     safe      O-M15     precision 1.000 recall 1.000 eps 0.1943
+  R16_S16_A0.6 logn30     safe      C0-M12.5  precision 0.153 recall 0.344 eps 0.6445
+  R16_S16_A0.6 logn30     safe      C0-M15    precision 0.275 recall 0.239 eps 0.4841
+  R16_S16_A0.6 logn30     safe      T0.7      precision 0.296 recall 0.268 eps 0.4248
+  R16_S16_A0.6 logn30     safe      B30       precision 0.007 recall 0.146 eps 5.5646
+  R16_S16_A0.6 logn30     safe      B60       precision 0.001 recall 0.025 eps 3.4111
+  R16_S16_A0.6 logn30cv15 safe      O-M15     precision 1.000 recall 1.000 eps 0.2327
+  R16_S16_A0.6 logn30cv15 safe      C0-M12.5  precision 0.042 recall 0.324 eps 1.8413
+  R16_S16_A0.6 logn30cv15 safe      C0-M15    precision 0.097 recall 0.222 eps 1.2344
+  R16_S16_A0.6 logn30cv15 safe      T0.7      precision 0.270 recall 0.138 eps 0.7448
+  R16_S16_A0.6 logn30cv15 safe      B30       precision 0.003 recall 0.138 eps 15.9978
+  R16_S16_A0.6 logn30cv15 safe      B60       precision 0.000 recall 0.009 eps 9.8191
+  R8_S16_A0.6  exp30      phi=1.00  O-M15     precision 1.000 recall 1.000 eps 0.3509
+  R8_S16_A0.6  exp30      phi=1.00  C0-M12.5  precision 0.125 recall 0.292 eps 1.6922
+  R8_S16_A0.6  exp30      phi=1.00  C0-M15    precision 0.207 recall 0.219 eps 1.345
+  R8_S16_A0.6  exp30      phi=1.00  T0.7      precision 0.274 recall 0.164 eps 1.0096
+  R8_S16_A0.6  exp30      phi=1.00  B30       precision 0.010 recall 0.166 eps 5.3808
+  R8_S16_A0.6  exp30      phi=1.00  B60       precision 0.069 recall 0.175 eps 1.7757
+  R8_S16_A0.6  exp30      phi=0.90  O-M15     precision 1.000 recall 1.000 eps 0.3355
+  R8_S16_A0.6  exp30      phi=0.90  C0-M12.5  precision 0.146 recall 0.439 eps 1.4693
+  R8_S16_A0.6  exp30      phi=0.90  C0-M15    precision 0.217 recall 0.316 eps 1.0994
+  R8_S16_A0.6  exp30      phi=0.90  T0.7      precision 0.273 recall 0.290 eps 0.9705
+  R8_S16_A0.6  exp30      phi=0.90  B30       precision 0.019 recall 0.157 eps 2.7029
+  R8_S16_A0.6  exp30      phi=0.90  B60       precision 0.066 recall 0.195 eps 1.2441
+  R8_S16_A0.6  exp30      phi=0.85  O-M15     precision 1.000 recall 1.000 eps 0.4147
+  R8_S16_A0.6  exp30      phi=0.85  C0-M12.5  precision 0.141 recall 0.544 eps 1.4306
+  R8_S16_A0.6  exp30      phi=0.85  C0-M15    precision 0.233 recall 0.446 eps 1.1593
+  R8_S16_A0.6  exp30      phi=0.85  T0.7      precision 0.270 recall 0.402 eps 1.0622
+  R8_S16_A0.6  exp30      phi=0.85  B30       precision 0.036 recall 0.222 eps 1.7808
+  R8_S16_A0.6  exp30      phi=0.85  B60       precision 0.046 recall 0.169 eps 1.1047
+  wrote research\results\e18d_precision.csv (78 rows)
+  (e18d took 77s)
+

@@ -1,0 +1,71 @@
+E19a: Frank-Wolfe displays (failures) in the 12 E16 offices
+    12/12 cases
+  R4_S8_A0.6   exp30      lean  H 0.0977 B1 0.0961 FW 0.0963 (FW-B1 +0.04 [-0.121, 0.203]) trace told 1.6 3.5 3.6 3.7 3.8 3.8 3.8
+  R4_S8_A0.6   exp30      safe  H 0.0674 B1 0.0672 FW 0.0674 (FW-B1 +0.05 [-0.036, 0.14]) trace told 0.3 1.1 1.2 1.2 1.2 1.2 1.2
+  R4_S8_A0.6   logn30     lean  H 0.0773 B1 0.0575 FW 0.0578 (FW-B1 +0.09 [-0.227, 0.397]) trace told 6.6 10.1 10.5 10.6 10.8 10.8 10.8
+  R4_S8_A0.6   logn30     safe  H 0.0354 B1 0.0304 FW 0.0318 (FW-B1 +0.33 [0.123, 0.535]) trace told 2.4 4.6 4.9 4.8 4.9 4.8 4.9
+  R4_S8_A0.6   logn30cv15 lean  H 0.0899 B1 0.0891 FW 0.0894 (FW-B1 +0.06 [-0.066, 0.178]) trace told 1.0 2.5 2.6 2.7 2.7 2.7 2.7
+  R4_S8_A0.6   logn30cv15 safe  H 0.0611 B1 0.0611 FW 0.0615 (FW-B1 +0.09 [0.043, 0.143]) trace told 0.2 0.6 0.6 0.7 0.7 0.7 0.7
+  R16_S16_A0.6 exp30      lean  H 0.1337 B1 0.1247 FW 0.1253 (FW-B1 +0.29 [-0.06, 0.64]) trace told 10.9 18.9 19.2 19.2 19.1 19.1 19.2
+  R16_S16_A0.6 exp30      safe  H 0.0767 B1 0.0763 FW 0.0784 (FW-B1 +0.97 [0.782, 1.168]) trace told 2.4 7.9 7.4 7.2 6.9 6.8 7.0
+  R16_S16_A0.6 logn30     lean  H 0.0715 B1 0.0425 FW 0.0441 (FW-B1 +0.77 [0.335, 1.195]) trace told 12.0 18.3 18.2 18.3 18.1 18.0 18.1
+  R16_S16_A0.6 logn30     safe  H 0.0439 B1 0.0290 FW 0.0355 (FW-B1 +3.10 [2.72, 3.482]) trace told 7.9 16.1 15.4 14.9 14.4 14.2 14.0
+  R16_S16_A0.6 logn30cv15 lean  H 0.1326 B1 0.1272 FW 0.1276 (FW-B1 +0.19 [-0.162, 0.544]) trace told 11.1 18.8 19.1 19.2 19.3 19.4 19.3
+  R16_S16_A0.6 logn30cv15 safe  H 0.0751 B1 0.0752 FW 0.0763 (FW-B1 +0.53 [0.342, 0.708]) trace told 2.4 6.0 5.9 6.1 6.2 6.1 6.1
+  wrote research\results\e19a_frank_wolfe.csv (60 rows)
+  wrote research\results\e19a_trace.csv (84 rows)
+  (e19a took 494s)
+
+E19b: Frank-Wolfe displays with returns (K = 30)
+concurrent.futures.process._RemoteTraceback: 
+"""
+Traceback (most recent call last):
+  File "C:\Users\Kassa\AppData\Local\Programs\Python\Python312\Lib\concurrent\futures\process.py", line 264, in _process_worker
+    r = call_item.fn(*call_item.args, **call_item.kwargs)
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Kassa\Projects\CivicQ\research\experiments.py", line 3492, in _e19_fw_returns
+    loc = return_fixed_point(plan, rates, s, 1.0, timing, THRESHOLD, reps=E19_LOG_DAYS,
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Kassa\Projects\CivicQ\research\abandonment.py", line 395, in return_fixed_point
+    loss_hi, _ = losses(hi)
+                 ^^^^^^^^^^
+  File "C:\Users\Kassa\Projects\CivicQ\research\abandonment.py", line 385, in losses
+    ev = score(staffing, return_rates(rates, R, timing), mean_service, threshold,
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Kassa\Projects\CivicQ\research\abandonment.py", line 316, in score
+    r = run_simulation(list(staffing), rates, replications=reps, seed=seed,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Kassa\Projects\CivicQ\python\optimizer.py", line 282, in run_simulation
+    result = subprocess.run(
+             ^^^^^^^^^^^^^^^
+  File "C:\Users\Kassa\AppData\Local\Programs\Python\Python312\Lib\subprocess.py", line 550, in run
+    stdout, stderr = process.communicate(input, timeout=timeout)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Kassa\AppData\Local\Programs\Python\Python312\Lib\subprocess.py", line 1209, in communicate
+    stdout, stderr = self._communicate(input, endtime, timeout)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Kassa\AppData\Local\Programs\Python\Python312\Lib\subprocess.py", line 1630, in _communicate
+    raise TimeoutExpired(self.args, orig_timeout)
+subprocess.TimeoutExpired: Command '['C:\\Users\\Kassa\\Projects\\CivicQ\\cpp\\build\\queue_sim.exe', '--staffing', '16,22,12,8,8,16,20,12', '--arrivals', '177.13548387096773,249.6,128.8258064516129,80.51612903225806,80.51612903225806,177.13548387096773,225.44516129032257,128.8258064516129', '--service-time', '16.0', '--seed', '1', '--replications', '400', '--per-replication', '--abandonment', 'renege', '--patience', '30.0', '--patience-dist', 'exp', '--patience-cv', '1.0', '--announce', 'bayes', '--display-psi', 'C:\\Users\\Kassa\\Projects\\CivicQ\\research\\results\\e19_psi\\never_R16_S16_A0p6_exp30_lean.csv', '--twin-samples', '64']' timed out after 300 seconds
+"""
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "C:\Users\Kassa\Projects\CivicQ\research\experiments.py", line 3632, in <module>
+    main()
+  File "C:\Users\Kassa\Projects\CivicQ\research\experiments.py", line 3627, in main
+    EXPERIMENTS[name]()
+  File "C:\Users\Kassa\Projects\CivicQ\research\experiments.py", line 3526, in run_e19b
+    fw = dict(zip([st[:3] for st in settings], pmap_processes(_e19_fw_returns, settings)))
+                                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Kassa\Projects\CivicQ\research\experiments.py", line 955, in pmap_processes
+    out.append(f.result())
+               ^^^^^^^^^^
+  File "C:\Users\Kassa\AppData\Local\Programs\Python\Python312\Lib\concurrent\futures\_base.py", line 456, in result
+    return self.__get_result()
+           ^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Kassa\AppData\Local\Programs\Python\Python312\Lib\concurrent\futures\_base.py", line 401, in __get_result
+    raise self._exception
+subprocess.TimeoutExpired: Command '['C:\\Users\\Kassa\\Projects\\CivicQ\\cpp\\build\\queue_sim.exe', '--staffing', '16,22,12,8,8,16,20,12', '--arrivals', '177.13548387096773,249.6,128.8258064516129,80.51612903225806,80.51612903225806,177.13548387096773,225.44516129032257,128.8258064516129', '--service-time', '16.0', '--seed', '1', '--replications', '400', '--per-replication', '--abandonment', 'renege', '--patience', '30.0', '--patience-dist', 'exp', '--patience-cv', '1.0', '--announce', 'bayes', '--display-psi', 'C:\\Users\\Kassa\\Projects\\CivicQ\\research\\results\\e19_psi\\never_R16_S16_A0p6_exp30_lean.csv', '--twin-samples', '64']' timed out after 300 seconds
+exit 1
