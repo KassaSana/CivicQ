@@ -2181,6 +2181,132 @@ def run_e14d():
     write_csv("e14d_summary.csv", summary)
 
 
+
+# ============================================================================
+# Round 12: should offices show the wait? (E15)
+# ============================================================================
+
+E15_DISPLAYS = {"T": "tickets", "C": "count", "L": "les"}
+E15_REGIMES = {"H": {}, "T": {"announce": "tickets"}, "C": {"announce": "count"},
+               "L": {"announce": "les"}, "V": {"announce": "count", "commit": True}}
+E15_LOG_SEED = 900_000
+
+
+def run_e15a(days=2000):
+    """H48 (and H50's counterfactual): how each display compares with the wait V."""
+    from patience_logs import (ARRIVAL, BOOKED, CALL, EST_COUNT, EST_LES, EST_TICKETS,
+                               OUTCOME, PATIENCE, raw_log)
+    print("E15a: accuracy of wait displays, read from the hidden queue's own log")
+    rows = []
+    for office, pname, kind, plan in E13_SETTINGS:
+        rates, s = _e13_office(office)
+        mean, dist, cv = E13_PATIENCE[pname]
+        log = raw_log(plan, rates, s, "renege", mean, dist, cv, days=days, seed=E15_LOG_SEED)
+        walk = log[log[:, BOOKED] == 0]
+        v = walk[:, CALL] - walk[:, ARRIVAL]
+        tau = walk[:, PATIENCE]
+        waits = walk[:, EST_COUNT] > 0            # A window was not free on arrival
+        reneged = walk[:, OUTCOME] == 1
+        row = {"office": office, "patience": pname, "plan_type": kind, "staff_hours": sum(plan),
+               "days": days, "facing_a_wait_per_day": round(waits.sum() / days, 2),
+               "reneged_per_day": round(reneged.sum() / days, 2),
+               "wasted_min_per_day": round(float((tau * reneged).sum()) / days, 2)}
+        for key, col in (("T", EST_TICKETS), ("C", EST_COUNT), ("L", EST_LES)):
+            w = walk[:, col]
+            false_balk = waits & (v <= tau) & (tau < w)
+            row.update({
+                f"{key}_overstates": round(float(np.mean(w[waits] > v[waits])), 4),
+                f"{key}_mean_error": round(float(np.mean(w[waits] - v[waits])), 3),
+                f"{key}_mae": round(float(np.mean(np.abs(w[waits] - v[waits]))), 3),
+                f"{key}_false_balks_per_day": round(false_balk.sum() / days, 3),
+                f"{key}_ontime_false_balks_per_day": round(
+                    (false_balk & (v <= THRESHOLD)).sum() / days, 3),
+                # Post hoc: false balkers who would have been served late (failures anyway)
+                f"{key}_late_false_balks_per_day": round(
+                    (false_balk & (v > THRESHOLD)).sum() / days, 3),
+                # Renegers the display would have sent home at once
+                f"{key}_time_saved_min_per_day": round(
+                    float((tau * (reneged & (tau < w))).sum()) / days, 2)})
+        rows.append(row)
+        print(f"  {office:<12} {pname:<6} {kind:<7} overstates T {row['T_overstates']:.2f} "
+              f"C {row['C_overstates']:.2f} L {row['L_overstates']:.2f}; on-time false balks/day "
+              f"T {row['T_ontime_false_balks_per_day']:.2f} C {row['C_ontime_false_balks_per_day']:.2f} "
+              f"L {row['L_ontime_false_balks_per_day']:.2f}")
+    write_csv("e15a_display_accuracy.csv", rows)
+
+
+def run_e15b():
+    """H49-H52: the five regimes on the evaluation days (common random numbers)."""
+    from abandonment import score
+    print("E15b: hidden queue, three wait displays, and the visible line")
+    jobs = []
+    for office, pname, kind, plan in E13_SETTINGS:
+        for regime, extra in E15_REGIMES.items():
+            jobs.append((office, pname, kind, plan, regime, extra))
+
+    def one(job):
+        office, pname, kind, plan, regime, extra = job
+        rates, s = _e13_office(office)
+        mean, dist, cv = E13_PATIENCE[pname]
+        return score(plan, rates, s, THRESHOLD, **_patience_kw("renege", mean, dist, cv), **extra)
+
+    rows = []
+    for (office, pname, kind, plan, regime, _), ev in zip(jobs, pmap(one, jobs)):
+        served = ev.arrivals_per_day - ev.abandoned_per_day
+        rows.append({"office": office, "patience": pname, "plan_type": kind,
+                     "staff_hours": sum(plan), "regime": regime,
+                     "overall_fail": round(ev.overall_fail, 5),
+                     "failures_per_day": round(ev.overall_fail * ev.arrivals_per_day, 3),
+                     "worst_fail": round(ev.worst("fail"), 4),
+                     "fail_misses": ev.misses("fail", ALPHA),
+                     "overall_abandon": round(ev.overall_abandon, 5),
+                     "left_per_day": round(ev.abandoned_per_day, 3),
+                     "balked_per_day": round(ev.balked_per_day, 3),
+                     "wasted_min_per_day": round(ev.wasted_minutes_per_day, 2),
+                     "mean_wait_served": round(ev.mean_wait_served, 3),
+                     "lost_min_per_arrival": round((ev.mean_wait_served * served
+                                                    + ev.wasted_minutes_per_day)
+                                                   / ev.arrivals_per_day, 3),
+                     "arrivals_per_day": round(ev.arrivals_per_day, 2)})
+    write_csv("e15b_regimes.csv", rows)
+    for office, pname, kind, _ in E13_SETTINGS:
+        sub = {r["regime"]: r for r in rows if (r["office"], r["patience"], r["plan_type"])
+               == (office, pname, kind)}
+        print(f"  {office:<12} {pname:<6} {kind:<7} fail " + "  ".join(
+            f"{k} {sub[k]['overall_fail']:.3f}" for k in E15_REGIMES) + " | wasted min/day " +
+            "  ".join(f"{k} {sub[k]['wasted_min_per_day']:.0f}" for k in E15_REGIMES))
+
+
+
+def run_e15c():
+    """Supplementary (post hoc): paired day-level 95% CIs for the regime differences."""
+    from optimizer import run_simulation
+    print("E15c: paired differences in failures per day (1,000 evaluation days)")
+    rows = []
+    for office, pname, kind, plan in E13_SETTINGS:
+        rates, s = _e13_office(office)
+        mean, dist, cv = E13_PATIENCE[pname]
+        daily = {}
+        for regime, extra in E15_REGIMES.items():
+            r = run_simulation(plan, rates, replications=EVAL_REPS, seed=EVAL_SEED,
+                               mean_service=s, wait_threshold=THRESHOLD,
+                               **_patience_kw("renege", mean, dist, cv), **extra)
+            daily[regime] = (np.array(r.daily_late).sum(axis=1)
+                             + np.array(r.daily_abandoned).sum(axis=1))
+        for a, b in (("T", "H"), ("C", "H"), ("L", "H"), ("V", "C"), ("V", "H")):
+            d = daily[a] - daily[b]
+            half = 1.96 * d.std(ddof=1) / math.sqrt(len(d))
+            rows.append({"office": office, "patience": pname, "plan_type": kind,
+                         "contrast": f"{a}-{b}", "mean": round(float(d.mean()), 3),
+                         "ci_low": round(float(d.mean() - half), 3),
+                         "ci_high": round(float(d.mean() + half), 3),
+                         "significant": bool(abs(d.mean()) > half)})
+        print(f"  {office:<12} {pname:<6} {kind:<7} " + "  ".join(
+            f"{r['contrast']} {r['mean']:+.2f} [{r['ci_low']:+.2f},{r['ci_high']:+.2f}]"
+            for r in rows[-5:]))
+    write_csv("e15c_paired_contrasts.csv", rows)
+
+
 EXPERIMENTS = {"e1b": run_e1b, "e1": run_e1, "e2": run_e2, "e2b": run_e2b,
                "e3a": run_e3a, "e3b": run_e3b, "e4": run_e4, "e5": run_e5, "e6": run_e6,
                "e7a": run_e7a, "e7": run_e7, "e7c": run_e7c, "e8a": run_e8a, "e8b": run_e8b,
@@ -2192,7 +2318,9 @@ EXPERIMENTS = {"e1b": run_e1b, "e1": run_e1, "e2": run_e2, "e2b": run_e2b,
                "e12d": run_e12d, "e12e": run_e12e,
                "e13a": run_e13a, "e13b": run_e13b, "e13c": run_e13c, "e13d": run_e13d,
                "e13e": run_e13e, "e13f": run_e13f, "e14a": run_e14a, "e14b": run_e14b,
-               "e14c": run_e14c, "e14d": run_e14d}
+               "e14c": run_e14c, "e14d": run_e14d,
+               "e15a": run_e15a, "e15b": run_e15b,
+               "e15c": run_e15c}
 
 
 def main():

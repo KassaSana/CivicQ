@@ -115,6 +115,7 @@ def _key(kind, plan, rates, mean_service, mode, mean, dist, cv, days, seed):
 
 # Column indices of the simulator's citizen log
 REP, ARRIVAL, BOOKED, PATIENCE, OUTCOME, CALL, LEAVE, QAHEAD, OPEN = range(9)
+EST_TICKETS, EST_COUNT, EST_LES = 9, 10, 11   # What each wait display would show
 
 
 def pooled_ticket_log(plan, rates, mean_service, mean=30.0, dist="exp", cv=1.0,

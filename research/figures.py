@@ -1078,6 +1078,61 @@ def fig_learning_tradeoff():
     save(fig, "fig20_learning_tradeoff.png")
 
 
+E15_LABELS = [("office", "exp30", "lean", "Office, exp, lean"),
+              ("office", "exp30", "citizen", "Office, exp, citizen"),
+              ("office", "logn30", "lean", "Office, logn, lean"),
+              ("office", "logn30", "citizen", "Office, logn, citizen"),
+              ("R8_S16_A0.6", "exp30", "lean", "8 E, exp, lean"),
+              ("R8_S16_A0.6", "exp30", "citizen", "8 E, exp, citizen"),
+              ("R8_S16_A0.6", "logn30", "lean", "8 E, logn, lean"),
+              ("R8_S16_A0.6", "logn30", "citizen", "8 E, logn, citizen")]
+
+
+def fig_wait_displays():
+    """Round 12: what showing the wait does, per setting (paired 95% CIs)."""
+    con = load("e15c_paired_contrasts.csv")
+    reg = load("e15b_regimes.csv")
+    contrasts = [("T-H", "#e34948", "tickets display vs hidden"),
+                 ("L-H", "#2a78d6", "LES display vs hidden"),
+                 ("V-C", "#eda100", "commitment: visible line vs count display"),
+                 ("V-H", INK, "visible line vs hidden")]
+    fig, (a, b) = plt.subplots(1, 2, figsize=(14, 4.6), gridspec_kw={"width_ratios": [1.5, 1]})
+    y0 = np.arange(len(E15_LABELS))[::-1]
+    for j, (name, color, label) in enumerate(contrasts):
+        for yi, (o, p, k, _) in zip(y0, E15_LABELS):
+            r = next(x for x in con if (x["office"], x["patience"], x["plan_type"], x["contrast"])
+                     == (o, p, k, name))
+            y = yi + 0.3 - 0.2 * j
+            a.plot([float(r["ci_low"]), float(r["ci_high"])], [y, y], color=color, lw=1.6)
+            a.plot(float(r["mean"]), y, "o", color=color, ms=4,
+                   label=label if yi == y0[0] else None)
+    a.axvline(0, color=MUTED, lw=1)
+    a.set_yticks(y0)
+    a.set_yticklabels([lab for *_, lab in E15_LABELS])
+    a.set_xlabel("Change in citizens late or left per day (paired, 1,000 days)")
+    a.set_title("(a) Failures: displays, commitment, and the visible line", loc="left")
+    a.legend(fontsize=7.5, loc="upper right")
+    for regime, color, marker in (("T", "#e34948", "o"), ("C", "#b0301f", "^"),
+                                  ("L", "#2a78d6", "s"), ("V", INK, "D")):
+        xs, ys = [], []
+        for o, p, k, _ in E15_LABELS:
+            sub = {r["regime"]: r for r in reg if (r["office"], r["patience"], r["plan_type"])
+                   == (o, p, k)}
+            xs.append(100 * (1 - float(sub[regime]["lost_min_per_arrival"])
+                             / float(sub["H"]["lost_min_per_arrival"])))
+            ys.append(100 * (float(sub[regime]["overall_fail"]) - float(sub["H"]["overall_fail"])))
+        b.scatter(xs, ys, color=color, marker=marker, s=30,
+                  label={"T": "tickets display", "C": "count display", "L": "LES display",
+                         "V": "visible line"}[regime])
+    b.axhline(0, color=MUTED, lw=1)
+    b.set_xlabel("Citizen minutes lost per arrival, % below the hidden queue")
+    b.set_ylabel("Failure rate vs hidden (points)")
+    b.set_title("(b) Time saved against failures added", loc="left")
+    b.legend(fontsize=7.5)
+    fig.tight_layout()
+    save(fig, "fig21_wait_displays.png")
+
+
 if __name__ == "__main__":
     fig_gap_heatmap()
     fig_hourly()
@@ -1099,3 +1154,4 @@ if __name__ == "__main__":
     fig_patience_learning()
     fig_learning_paths()
     fig_learning_tradeoff()
+    fig_wait_displays()

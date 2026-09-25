@@ -301,6 +301,7 @@ class AbandonEval:
     arrivals_per_day: float
     wasted_minutes_per_day: float   # Time spent inside by citizens who then left
     mean_wait_served: float
+    balked_per_day: float = 0.0     # Left on arrival (visible line or a wait display)
 
     def worst(self, metric: str) -> float:
         return max(self.fail if metric == "fail" else self.served_late)
@@ -334,6 +335,7 @@ def score(staffing: list, rates: list, mean_service: float, threshold: float = 1
         arrivals_per_day=float(everyone.sum(axis=1).mean()),
         wasted_minutes_per_day=float(np.mean(r.daily_abandoned_wait or [0.0])),
         mean_wait_served=r.mean_wait,
+        balked_per_day=float(np.mean(r.daily_balked)) if r.daily_balked else 0.0,
     )
 
 
