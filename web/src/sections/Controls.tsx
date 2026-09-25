@@ -1,5 +1,5 @@
 import { type Dispatch, useState } from 'react';
-import type { Placement, ServiceDist } from '../sim/model';
+import type { Abandonment, Placement, ServiceDist } from '../sim/model';
 import type { Action, Params } from '../state';
 
 function Slider({ id, label, value, min, max, step, format, onChange }: {
@@ -81,6 +81,37 @@ export function Controls({ params, dispatch, onClose }: { params: Params; dispat
             format={(v) => `${v} min`} onChange={(v) => set({ punctualitySd: v })} />
           <div className="note">
             Slots are overbooked by 1/(1 − no-show) so expected arrivals stay the same; walk-ins shrink by the booked share.
+          </div>
+        </>
+      )}
+      <div className="divider" />
+      <span className="rail-group">Walking away</span>
+      <div className="field">
+        <label htmlFor="aband" style={{ fontSize: 13 }}>Do walk-ins give up?</label>
+        <select id="aband" value={params.abandonment} onChange={(e) => set({ abandonment: e.target.value as Abandonment })}>
+          <option value="none">No one leaves</option>
+          <option value="renege">Hidden queue (ticket number): leave after waiting too long</option>
+          <option value="balk">Visible line: leave on arrival if it looks too long</option>
+        </select>
+      </div>
+      {params.abandonment !== 'none' && (
+        <>
+          <Slider id="pat" label="Mean patience" value={params.meanPatience} min={5} max={90} step={5}
+            format={(v) => `${v} min`} onChange={(v) => set({ meanPatience: v })} />
+          <div className="field">
+            <label htmlFor="pdist" style={{ fontSize: 13 }}>Patience distribution</label>
+            <select id="pdist" value={params.patienceDist} onChange={(e) => set({ patienceDist: e.target.value as ServiceDist })}>
+              <option value="exp">Exponential (CV 1)</option>
+              <option value="lognormal">Lognormal</option>
+              <option value="det">Everyone the same</option>
+            </select>
+          </div>
+          {params.patienceDist === 'lognormal' && (
+            <Slider id="pcv" label="Patience CV" value={params.patienceCv} min={0.25} max={2} step={0.05}
+              format={(v) => v.toFixed(2)} onChange={(v) => set({ patienceCv: v })} />
+          )}
+          <div className="note">
+            Booked visitors never leave. People who leave are not in the wait statistics, just as they are missing from an office’s ticket log.
           </div>
         </>
       )}

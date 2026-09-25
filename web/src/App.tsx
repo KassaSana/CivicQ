@@ -110,7 +110,8 @@ export function App() {
         <LiveQueue cfg={cfg} seed={params.seed} />
         <PlanEditor params={params} dispatch={dispatch} hourly={hourly} arrivals={rates}
           meanWait={!updating && agg ? agg.meanWait : erlangWait} meanWaitSimulated={!updating && !!agg} />
-        <Results agg={agg} hourly={hourly} alpha={params.alpha} threshold={params.threshold} updating={updating} />
+        <Results agg={agg} hourly={hourly} alpha={params.alpha} threshold={params.threshold} updating={updating}
+          leaving={params.abandonment !== 'none'} />
         <MathExplained params={params} dispatch={dispatch} hourly={hourly} agg={agg} cfg={cfg} />
         <ComparePlans params={params} dispatch={dispatch} cfg={cfg} />
         <Frontier params={params} dispatch={dispatch} cfg={cfg} />
