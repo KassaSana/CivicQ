@@ -54,8 +54,10 @@ enum class Announce {
     LES,       // Wait of the last citizen to start service
     ORACLE,    // The wait V this citizen would have if they stayed (replays FIFO
                // over the people ahead with their drawn service times and patience)
-    TWIN       // A quantile of V predicted from what a ticket office can see
+    TWIN,      // A quantile of V predicted from what a ticket office can see
                // (ticket ages, elapsed services) and the known distributions
+    BAYES      // "Too long" iff the twin's posterior mean of an influence
+               // function psi_hour(V) is negative (Round 15); nothing otherwise
 };
 
 /**
@@ -103,6 +105,9 @@ struct Citizen {
     double est_count;
     double est_les;
     double est_oracle;
+    double offered;              // True V, logged only with log_offered (-1 otherwise)
+    double twin_p_late;          // Twin posterior P(V > threshold), with log_offered
+    double bayes_score;          // BAYES: posterior mean of psi (0 otherwise)
     int queue_ahead;             // Citizens waiting when this one arrived
     int open_at_arrival;         // Windows open when this one arrived
 };
@@ -173,6 +178,9 @@ struct SimulationConfig {
                                            // one value, or one per hour; empty = none)
     int twin_samples;                      // TWIN display: sampled replays per arrival
     double twin_quantile;                  // TWIN display: quantile of the sampled waits
+    std::vector<std::vector<double>> psi_x;   // BAYES: per hour, grid of V (ascending)
+    std::vector<std::vector<double>> psi;     // BAYES: per hour, psi on that grid
+    bool log_offered;                      // Log each arrival's true V and twin P(late)
 
     SimulationConfig()
         : mean_service_time(8.0)
@@ -193,7 +201,8 @@ struct SimulationConfig {
         , commit(false)
         , display_scale(1.0)
         , twin_samples(64)
-        , twin_quantile(0.5) {}
+        , twin_quantile(0.5)
+        , log_offered(false) {}
 };
 
 /**
@@ -283,7 +292,9 @@ private:
     };
     double replay_start(std::vector<double> free_at, const std::vector<Ahead>& ahead) const;
     double offered_wait() const;
-    double twin_wait();
+    double twin_quantile_of(std::vector<double> waits) const;
+    void twin_draws(std::vector<double>& waits);
+    double psi_at(int hour, double v) const;
     double draw_service(std::mt19937& rng) const;
     double draw_patience(std::mt19937& rng) const;
     int find_free_window();

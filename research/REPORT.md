@@ -528,6 +528,64 @@ Hypotheses:
 - the office's per-visit figure against the per-citizen measures;
 - the per-hour theory's numbers.
 
+**Round 15** (stated after the E18p theory tables and a disclosed development check, and before any E18a–d run). Rounds 12–14 treat a display as a function of the offered wait V. A real office does not see V. It sees a state X: its tickets and their ages, how long each window has been serving, and the hour. Round 13b's twin samples V from its exact posterior given X, because a holder's presence depends only on their ticket's age. So what remains is a *decision*: which posterior should turn into "too long"? Round 13b's quantile rule was tuned after the fact (best q = 0.7–0.8). Round 15 derives the rule from statistical decision theory instead.
+
+*Model.* A display that does not see V still admits a share a(x) = 1 − E[π(X) | V = x] of arrivals at offered wait x. In §5.17's exact law this is u(x) = a(x)(1 − G(x)), so every outcome Q (failures, minutes lost, losses) is a functional of a.
+
+*Influence.* ψ(x) is the change in Q per extra arrival told "too long" at offered wait x. Patience is independent of X and V, so flagging an arrival with state X changes Q by E[ψ(V) | X] to first order.
+
+**Proposition (the Bayes display).** dQ = E[E[ψ_a(V) | X]·dπ(X)]. So a locally optimal display flags exactly the arrivals with E[ψ_a(V) | X] < 0. This is a fixed point, because ψ depends on the a the display induces. Two special cases follow:
+- With full information and the cutoff at T, §5.17's (i) and (ii) give ψ > 0 below T and ψ < 0 above T, so the Round 13 theorem is the special case.
+- The twin's quantile rule is the special case of a ψ that is a step at T. A Bayes display with ψ = +1 below 15 and −1 from 15 on reproduced the twin display at q = 31/64 byte for byte, 40 days (unit test).
+
+*With returns (r = 1).* Linearized around a steady state with day-map slope s and m_R extra minutes lost per extra returner, the citizen-time objective M_K = minutes lost inside + K × visits (per fresh citizen) has, per flagged arrival,
+
+ψ_K(x) = Δlost(x) + (K + m_R)·Δlosses(x)/(1 − s).
+
+*Precision.* Turning away a would-be-served citizen who would have been on time buys a repeat visit and saves no late service. So Round 14's ε should grow with 1/precision, where precision is the share of would-be-served citizens turned away who would have been served late.
+
+*Computing ψ (`display_decisions.py`).*
+- Bump finite differences on the exact law: in each 0.5-minute bin of V up to 60 minutes, flag (or admit, where the base admits nobody) 10% of arrivals, and divide the change by the flagged mass. The difference is central where the base admits a share between 0.1 and 0.9. The simulator holds ψ flat beyond 60 minutes.
+- B1 uses the oracle cutoff as its base, at each hour's fresh rate.
+- B_K linearizes at E17b's *simulated* O-M15 steady state. The hourly loads include its returners, s is E17b's fitted slope, and m_R and ψ come from the per-hour theory at those loads. Round 14 found that the per-hour theory with returns often has no steady state (disclosed there), which is why it is not used for the linearization point.
+- Near overload, a cutoff base makes flagging nearly free in losses: the window freed goes to a citizen the cutoff would otherwise turn away. This is a one-step linearization around the oracle, and H55(b)'s warning about stationary hours near overload applies to it.
+
+*Checks before registration (disclosed; they are not tests).*
+- **Theory grid (E18p; was the planned H64).** c ∈ {1, 2, 4, 8, 16, 64}, S ∈ {8, 16}, ρ ∈ {0.8, 0.95, 1.2}, three patience curves (108 cells). Under the cutoff base, ψ > 0 in every live bin below T and ψ < 0 above T in 108 of 108 cells. For a random perturbation of 2–8% of arrivals per cell, the first-order prediction was within 5% of the exact change in 88 of 108 cells and within 25% in 107 of 108, never with the wrong sign. The misses are overloaded or large offices, where second-order terms matter.
+- **The tuned twin quantile.** The implied posterior threshold ψ_on/(ψ_on + |ψ_late|), with ψ averaged within 5 minutes of T, is 0.11–0.39 across the 12 E16 offices (hour-weighted means). That is a flag once P(late | X) ≈ 0.1–0.4, against E16f's hindsight-best 0.2–0.3. This was computed on 4 cells during planning and on all 12 offices here, after E16f's result was known, so it is a retrodiction and not a test.
+- **Development runs** on an unregistered toy office (3 windows, S = 8, 20–26 arrivals an hour, development seeds 1–400):
+  - the pipeline;
+  - B1 cut failures from 29% to 19% on 50 days;
+  - the twin's P(V > 15 | X) was calibrated to within 0.014 in every decile on 400 days (exponential and lognormal CV 0.5 patience).
+- **Simulator.** `--announce bayes`, `--display-psi` and `--log-offered` (true V, the twin's P(late) and the Bayes score, appended to the citizen log). The per-day output is byte-identical to the previous executable in 9 configurations, with and without logging. The twin stream is separate, so logging changes no outcome.
+
+**Design (E18).**
+- *No returns (E18b):* the 12 E16 offices and plans, 1,000 evaluation days, common random numbers. Twin samples: 64 for every display, as in Round 13b. B* refits B1 three times: log 400 design days under the current table, estimate each hour's a(x) in 1-minute bins (at least 20 citizens, else the nearest estimate), and recompute ψ with that base. B* is the third refit.
+- *Returns (E18c):* E17b's estimator and days for regimes H, O-M15, C0-M12.5, C0-M15, T0.7, B30 and B60, in E17's 16 settings. E17b's five regimes are re-run on the same days, and their states must reproduce `e17b_states.csv` (a regression check).
+- *Precision (E18d):* 300 days per display at its own steady state, with the true V logged.
+- *Information (E18a):* hidden-queue logs of 2,000 new days (seed 1,500,000) in the 12 offices, with 256 twin samples.
+
+Hypotheses:
+- **H64 (the Bayes display without returns; E18b, 12 offices).**
+  - (a) B1 has significantly fewer failures than the hidden queue (paired day-level 95% CI below 0) in at least 10 of 12.
+  - (b) B1 is not significantly worse than the hindsight-best twin quantile of E16d/E16f (paired CI of B1 − T_best not entirely above 0) in at least 9 of 12. B1 uses no tuning.
+  - (c) B*'s failure rate is at most B1's in at least 8 of 12.
+  - *Reported, not tested:* the decomposition of the oracle's gain into information loss (B* − oracle) and rule loss (best twin q − B*).
+- **H65 (the returns-aware display; E18c, the 13 settings where O-M15 has a steady state in E17b).** For each K ∈ {30, 60}:
+  - (a) M_K under B_K is lower than under each of C0-M12.5, C0-M15 and T0.7 in at least 10 of 13;
+  - (b) M_K under B_K is not significantly higher than under the hidden queue (paired bootstrap 95% CI) in at least 11 of 13;
+  - (c) where B_K adds repeat visits, its break-even trip cost satisfies K* ≥ K in at least 75% of those settings (B_K saves citizens time at the trip cost it was built for);
+  - (d) B60 turns away fewer citizens a day than B30 in all 13 (a check of monotonicity in K).
+  - *Pre-specified, exploratory:* whether B30 or B60 has a steady state in E17's three no-steady-state settings, where the tables were linearized at the hidden queue's state.
+- **H66 (precision governs the price; E18d).** Over the realistic display × setting pairs (C0-M12.5, C0-M15, T0.7, B30, B60) where both the display's ε and the oracle's ε are defined and positive:
+  - Spearman(log(ε/ε_oracle), log(1/precision)) ≥ 0.7;
+  - the least-squares slope is in [0.5, 1.5].
+  - Check: the oracle cutoff's precision is 1.
+- **H67 (what the posterior knows; E18a, 12 offices).**
+  - (a) The twin is calibrated: in every decile of its P(V > 15 | X), predicted and observed differ by at most 0.02, in all 12. This validates the twin as the posterior the Proposition needs.
+  - (b) The twin's AUC for "V > 15" exceeds the head count's in 12 of 12.
+  - (c) The margin is below 0.05 in at least 8 of 12. This is why a head-count cutoff came close to the twin in Round 13b.
+
 *Change after pre-registration (Round 2):* while testing H7 we found that Ciw cannot express CivicQ's staffing-change rule (see §5.6). H7 was therefore split into a strict test for constant staffing and a bounds test for changing staffing *before* E5 was run. This deviation is disclosed here.
 
 ## 5. Results

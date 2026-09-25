@@ -181,7 +181,8 @@ def run_simulation(
     display_scale: float = 1.0,
     display_cutoff: Optional[list] = None,
     twin_quantile: float = 0.5,
-    twin_samples: int = 64
+    twin_samples: int = 64,
+    display_psi: Optional[str] = None
 ) -> SimulationResult:
     """
     Execute C++ simulator with given staffing configuration.
@@ -220,6 +221,8 @@ def run_simulation(
             walk-in who sees it leaves
         twin_quantile, twin_samples: announce="twin" shows this quantile of
             the wait predicted by replaying the queue with sampled unknowns
+        display_psi: announce="bayes": CSV (hour, x, psi); a walk-in is told
+            "too long" iff the twin's posterior mean of psi_hour(V) is negative
 
     Returns:
         SimulationResult with aggregated metrics and 95% CIs
@@ -264,6 +267,8 @@ def run_simulation(
     if announce == "twin":
         cmd += ["--twin-quantile", repr(float(twin_quantile)),
                 "--twin-samples", str(int(twin_samples))]
+    if announce == "bayes":
+        cmd += ["--display-psi", str(display_psi), "--twin-samples", str(int(twin_samples))]
 
     try:
         result = subprocess.run(

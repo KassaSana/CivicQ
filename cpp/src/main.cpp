@@ -40,6 +40,7 @@ void print_usage() {
               << "  --per-replication          One CSV row per replication instead of averages\n"
               << "  --citizen-log PATH         Also write one CSV row per citizen to PATH\n"
               << "  --announce NAME            renege mode: none | tickets | count | les | oracle | twin\n"
+              << "                             | bayes\n"
               << "                             (default: none)\n"
               << "  --commit                   renege mode: citizens who join never leave\n"
               << "  --display-scale K          Shown wait = K * estimate (default: 1)\n"
@@ -47,8 +48,54 @@ void print_usage() {
               << "                             (one value, or one per hour)\n"
               << "  --twin-samples K           Twin display: sampled replays per arrival (default: 64)\n"
               << "  --twin-quantile Q          Twin display: quantile of the sampled waits (default: 0.5)\n"
+              << "  --display-psi PATH         Bayes display: CSV hour,x,psi; 'too long' iff the twin's\n"
+              << "                             posterior mean of psi_hour(V) is negative\n"
+              << "  --log-offered              Citizen log: append each arrival's true V, the twin's\n"
+              << "                             P(V > threshold) and the Bayes score\n"
               << "  --output-waits             Include all wait times in output\n"
               << "  --help                     Show this help\n";
+}
+
+bool load_psi(const std::string& path, SimulationConfig& config) {
+    // Rows hour,x,psi (header first), grouped by hour and ascending in x
+    std::ifstream in(path);
+    if (!in) {
+        std::cerr << "Error: cannot read " << path << "\n";
+        return false;
+    }
+    std::string line;
+    std::getline(in, line);
+    config.psi_x.assign(NUM_SLOTS, {});
+    config.psi.assign(NUM_SLOTS, {});
+    while (std::getline(in, line)) {
+        if (line.empty() || line == "\r") {
+            continue;
+        }
+        std::stringstream row(line);
+        std::string h, x, v;
+        std::getline(row, h, ',');
+        std::getline(row, x, ',');
+        std::getline(row, v, ',');
+        int hour = std::stoi(h);
+        if (hour < 0 || hour >= NUM_SLOTS) {
+            std::cerr << "Error: psi hour out of range in " << path << "\n";
+            return false;
+        }
+        double xv = std::stod(x);
+        if (!config.psi_x[hour].empty() && xv <= config.psi_x[hour].back()) {
+            std::cerr << "Error: psi grid must ascend within each hour in " << path << "\n";
+            return false;
+        }
+        config.psi_x[hour].push_back(xv);
+        config.psi[hour].push_back(std::stod(v));
+    }
+    for (int hour = 0; hour < NUM_SLOTS; ++hour) {
+        if (config.psi_x[hour].empty()) {
+            std::cerr << "Error: psi missing for hour " << hour << " in " << path << "\n";
+            return false;
+        }
+    }
+    return true;
 }
 
 bool parse_dist(const std::string& name, ServiceDist& out) {
@@ -182,6 +229,7 @@ int main(int argc, char* argv[]) {
             else if (name == "les") config.announce = Announce::LES;
             else if (name == "oracle") config.announce = Announce::ORACLE;
             else if (name == "twin") config.announce = Announce::TWIN;
+            else if (name == "bayes") config.announce = Announce::BAYES;
             else {
                 std::cerr << "Error: unknown announcement '" << name << "'\n";
                 return 1;
@@ -205,6 +253,14 @@ int main(int argc, char* argv[]) {
             while (std::getline(list, item, ',')) {
                 config.display_cutoff.push_back(std::stod(item));
             }
+        }
+        else if (arg == "--display-psi" && i + 1 < argc) {
+            if (!load_psi(argv[++i], config)) {
+                return 1;
+            }
+        }
+        else if (arg == "--log-offered") {
+            config.log_offered = true;
         }
         else if (arg == "--citizen-log" && i + 1 < argc) {
             citizen_log_path = argv[++i];
@@ -242,6 +298,10 @@ int main(int argc, char* argv[]) {
         std::cerr << "Error: patience mean and CV must be positive\n";
         return 1;
     }
+    if (config.announce == Announce::BAYES && config.psi.empty()) {
+        std::cerr << "Error: --announce bayes needs --display-psi\n";
+        return 1;
+    }
     if (replications < 1) {
         std::cerr << "Error: replications must be at least 1\n";
         return 1;
@@ -260,7 +320,8 @@ int main(int argc, char* argv[]) {
         }
         log << std::setprecision(10);
         log << "rep,arrival,booked,patience,outcome,call_time,leave_time,queue_ahead,open_windows,"
-               "est_tickets,est_count,est_les\n";
+               "est_tickets,est_count,est_les"
+            << (config.log_offered ? ",offered,twin_p_late,bayes_score" : "") << "\n";
         for (size_t r = 0; r < results.size(); ++r) {
             for (const auto& c : results[r].citizen_log) {
                 double leave = c.abandoned ? c.abandon_time : c.departure_time;
@@ -269,7 +330,11 @@ int main(int argc, char* argv[]) {
                     << c.patience << "," << (!c.abandoned ? 0 : c.balked ? 2 : 1) << ","
                     << c.call_time << "," << leave << "," << c.queue_ahead << ","
                     << c.open_at_arrival << "," << c.est_tickets << "," << c.est_count << ","
-                    << c.est_les << "\n";
+                    << c.est_les;
+                if (config.log_offered) {
+                    log << "," << c.offered << "," << c.twin_p_late << "," << c.bayes_score;
+                }
+                log << "\n";
             }
         }
     }

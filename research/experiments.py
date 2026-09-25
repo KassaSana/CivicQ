@@ -2827,7 +2827,9 @@ def _e17b_one(job):
     from abandonment import return_fixed_point, return_rates
     office, pname, kind, rates, s, plan, timing, regime = job
     mean, dist, cv = E16_PATIENCE[pname]
-    kw = {**_patience_kw("renege", mean, dist, cv), **_e17_regimes()[regime]}
+    # A regime is a name in _e17_regimes, or (name, simulator keywords) (Round 15)
+    extra = _e17_regimes()[regime] if isinstance(regime, str) else regime[1]
+    kw = {**_patience_kw("renege", mean, dist, cv), **extra}
     fresh = sum(rates)
     loc = return_fixed_point(plan, rates, s, 1.0, timing, THRESHOLD, reps=400,
                              seed=EVAL_SEED, tol=0.02, max_factor=6.0, **kw)
@@ -2843,11 +2845,15 @@ def _e17b_one(job):
     return {"grid": grid, "arrays": arrays, "located": loc.returns_per_day}
 
 
-def _e17b(settings, regimes, out_name):
-    jobs = [(*st, reg) for st in settings for reg in regimes]
-    res = dict(zip([(j[0], j[1], j[2], j[6], j[7]) for j in jobs], pmap(_e17b_one, jobs)))
+def _e17b(settings, regimes, out_name, kw_for=None):
+    """kw_for(setting, regime) -> simulator keywords, for regimes outside _e17_regimes."""
+    jobs = [(*st, reg if kw_for is None else (reg, kw_for(st, reg)))
+            for st in settings for reg in regimes]
+    names = [j[7] if isinstance(j[7], str) else j[7][0] for j in jobs]
+    res = dict(zip([(j[0], j[1], j[2], j[6], n) for j, n in zip(jobs, names)],
+                   pmap(_e17b_one, jobs)))
     rng = np.random.default_rng(17)
-    states, contrasts = [], []
+    states, contrasts, solved = [], [], {}
     for office, pname, kind, rates, s, plan, timing in settings:
         fresh = sum(rates)
         key = lambda reg: (office, pname, kind, timing, reg)
@@ -2906,8 +2912,10 @@ def _e17b(settings, regimes, out_name):
             print(f"  {office:<12} {pname:<10} {kind:<9} {timing:<8} {reg:<8} "
                   f"eps {row['eps']} [{row['eps_low']}, {row['eps_high']}] "
                   f"dlate {row['d_late_share']:+.4f} dvisits {row['d_visits']:+.4f}")
+        solved[(office, pname, kind, timing)] = sol
     write_csv(out_name + "_states.csv", states)
     write_csv(out_name + "_contrasts.csv", contrasts)
+    return solved
 
 
 def run_e17b():
@@ -3012,6 +3020,351 @@ def run_e17f(reps=2000):
     write_csv("e17f_opening_curves.csv", rows)
 
 
+# ============================================================================
+# Round 15: wait displays as decisions under partial information (E18)
+# ============================================================================
+
+E18_PSI_DIR = RESULTS / "e18_psi"            # Registered influence tables (theory)
+E18_LOG_SEED = 1_500_000                     # H68: hidden-queue logs
+E18_LOG_DAYS = 2000
+E18_DESIGN_DAYS = 400                        # B* iterations, on design seeds
+E18_ITERATIONS = 3                           # B* = the third refit after B1
+E18_KS = [30.0, 60.0]                        # Minutes a wasted trip costs (returns objective)
+E18_PRECISION_DAYS = 300                     # H67 logs at each steady state
+E18_H64_C = [1, 2, 4, 8, 16, 64]
+E18_H64_RHO = [0.8, 0.95, 1.2]
+
+
+def _e18_key(office, pname, kind):
+    return f"{office}_{pname}_{kind}".replace("=", "").replace(".", "p")
+
+
+def _e18_psi_path(name, office, pname, kind):
+    return E18_PSI_DIR / f"{name}_{_e18_key(office, pname, kind)}.csv"
+
+
+def _e18_bayes_kw(path):
+    return {"announce": "bayes", "display_psi": str(path), "twin_samples": 64}
+
+
+def _e18_h64_cell(args):
+    """H64 on one stationary cell: psi's sign under the cutoff base, and a Taylor check."""
+    from display_decisions import influence
+    from displays import HIDDEN, display_hour
+    i, c, s, rho, pname = args
+    truth = _e16_truth(pname)
+    lam = rho * c / s
+    inf = influence(c, lam, s, truth, THRESHOLD)
+    psi, live = inf.psi["fail"], inf.mass >= 1e-6
+    below, above = live & (inf.x < THRESHOLD), live & (inf.x > THRESHOLD)
+    rng = np.random.default_rng(1000 + i)
+    k, ph, w = rng.uniform(0.02, 0.08), rng.uniform(0.0, 6.0), rng.uniform(3.0, 12.0)
+    pert = lambda x: k * np.sin(np.asarray(x, dtype=float) / w + ph) ** 2
+    adm = lambda x: np.where(np.asarray(x, dtype=float) < THRESHOLD, 1.0 - pert(x), pert(x))
+    exact = display_hour(c, lam, s, truth, THRESHOLD, HIDDEN, admit=adm).fail - inf.base["fail"]
+    flagged = np.where(inf.x < THRESHOLD, pert(inf.x), -pert(inf.x)) * inf.mass
+    first = float((psi * flagged).sum())
+    from display_decisions import implied_threshold
+    return {"c": c, "S": s, "rho": rho, "patience": pname,
+            "fail_cutoff": round(inf.base["fail"], 6),
+            "live_bins_below": int(below.sum()), "live_bins_above": int(above.sum()),
+            "min_psi_below": round(float(psi[below].min()), 5) if below.any() else "",
+            "max_psi_above": round(float(psi[above].max()), 5) if above.any() else "",
+            "sign_ok": bool((psi[below] > 0).all() and (psi[above] < 0).all()),
+            "taylor_exact": exact, "taylor_first_order": first,
+            "taylor_rel_err": abs(first - exact) / abs(exact) if exact else math.nan,
+            "implied_threshold": round(implied_threshold(inf, THRESHOLD), 4)}
+
+
+def _e18_steady_states():
+    """Simulated steady states of E17b: (office, patience, plan, regime) -> row."""
+    return {(r["office"], r["patience"], r["plan_type"], r["regime"]): r
+            for r in load_results("e17b_states.csv")}
+
+
+def run_e18p():
+    """
+    Theory only, before registration: H64's grid, and the influence tables the
+    Bayes displays use (B1 per E16 office; B30, B60 per E17 setting).
+    """
+    from display_decisions import (implied_threshold, psi_table_failures, psi_table_returns,
+                                   return_linearization, write_psi)
+    from displays import cutoff
+    print("E18p: influence functions (theory)")
+    cells = [(i, *cell) for i, cell in enumerate(itertools.product(
+        E18_H64_C, [8.0, 16.0], E18_H64_RHO, list(E16_PATIENCE)))]
+    grid = pmap_processes(_e18_h64_cell, cells)
+    write_csv("e18p_influence_grid.csv", grid)
+    good = [r for r in grid if np.isfinite(r["taylor_rel_err"])]
+    print(f"  H64(a) sign structure in {sum(r['sign_ok'] for r in grid)}/{len(grid)} cells; "
+          f"(b) Taylor within 5% in {sum(r['taylor_rel_err'] <= 0.05 for r in good)}/{len(good)}")
+
+    rows = []
+    for office, pname, kind, rates, s, plan in _e16_settings():
+        truth = _e16_truth(pname)
+        table, infs = psi_table_failures(plan, rates, s, truth, THRESHOLD)
+        write_psi(_e18_psi_path("B1", office, pname, kind), table)
+        thr = [implied_threshold(inf, THRESHOLD) for inf in infs]
+        rows.append({"table": "B1", "office": office, "patience": pname, "plan_type": kind,
+                     "timing": "none", "linearized_at": "fresh rates, O-M15 base",
+                     "slope": "", "m_R": "",
+                     "implied_threshold_by_hour": "|".join(f"{t:.3f}" for t in thr),
+                     "implied_threshold_mean": round(float(np.mean(thr)), 4)})
+        print(f"  B1  {office:<12} {pname:<10} {kind:<5} implied P(late) threshold "
+              + " ".join(f"{t:.2f}" for t in thr))
+
+    states = _e18_steady_states()
+    for office, pname, kind, rates, s, plan, timing in _e17_settings():
+        truth = _e16_truth(pname)
+        at = "O-M15" if states[(office, pname, kind, "O-M15")]["R"] != "inf" else "H"
+        st = states[(office, pname, kind, at)]
+        if st["R"] == "inf":
+            continue
+        # Hourly loads at the simulated steady state; s from the simulation (E17b);
+        # m_R and psi from the per-hour theory at those loads
+        from abandonment import return_rates
+        from display_returns import _day
+        R = float(st["R"])
+        fresh = sum(rates)
+        d = max(1e-3 * fresh, 1e-6)
+        lost = lambda x: _day(plan, return_rates(rates, x, timing), s, truth, THRESHOLD,
+                              cutoff(THRESHOLD))[2]
+        lo = max(R - d, 0.0)
+        lin = {"rates": list(return_rates(rates, R, timing)), "slope": float(st["slope"]),
+               "m_R": (lost(R + d) - lost(lo)) / (R + d - lo)}
+        for K in E18_KS:
+            table, infs = psi_table_returns(plan, rates, s, truth, THRESHOLD, K, lin)
+            name = f"B{K:g}"
+            write_psi(_e18_psi_path(name, office, pname, kind), table)
+            # The same summary on psi_K: the posterior P(V > T) above which it flags
+            import display_decisions as dd
+            thr = []
+            for h, inf in enumerate(infs):
+                gain = (K + lin["m_R"]) / (1.0 - lin["slope"])
+                tmp = dd.Influence(inf.x, inf.mass,
+                                   {"k": inf.psi["lost_min"] + gain * inf.psi["losses"]}, {})
+                thr.append(implied_threshold(tmp, THRESHOLD, key="k"))
+            rows.append({"table": name, "office": office, "patience": pname, "plan_type": kind,
+                         "timing": timing, "linearized_at": f"{at} steady state R={R:g}",
+                         "slope": lin["slope"], "m_R": round(lin["m_R"], 4),
+                         "implied_threshold_by_hour": "|".join(f"{t:.3f}" for t in thr),
+                         "implied_threshold_mean": round(float(np.mean(thr)), 4)})
+            print(f"  {name:<3} {office:<12} {pname:<10} {kind:<9} at {at} "
+                  f"s {lin['slope']:.3f} m_R {lin['m_R']:.1f}: threshold "
+                  + " ".join(f"{t:.2f}" for t in thr))
+    write_csv("e18p_predictions.csv", rows)
+
+
+def _e18_eval(plan, rates, s, pname, kw, days=EVAL_REPS, seed=EVAL_SEED):
+    """Per-day failures, arrivals, balkers and minutes lost on the evaluation days."""
+    mean, dist, cv = E16_PATIENCE[pname]
+    r = run_simulation(plan, rates, replications=days, seed=seed, mean_service=s,
+                       wait_threshold=THRESHOLD, **_patience_kw("renege", mean, dist, cv), **kw)
+    late = np.array(r.daily_late, dtype=float).sum(axis=1)
+    aband = np.array(r.daily_abandoned, dtype=float).sum(axis=1)
+    served = np.array(r.daily_arrivals, dtype=float).sum(axis=1)
+    wait = np.array(r.daily_mean_waits, dtype=float) * served
+    return {"fail_day": late + aband, "arrivals": served + aband,
+            "balked": np.array(r.daily_balked, dtype=float),
+            "lost_day": wait + np.array(r.daily_abandoned_wait, dtype=float)}
+
+
+def _e18b_iterate(job):
+    """B*: refit psi on the admission shares B_k produced on design days, three times."""
+    from display_decisions import (admit_from_log, psi_table_failures, simulate_log,
+                                   write_psi)
+    office, pname, kind, rates, s, plan = job
+    truth = _e16_truth(pname)
+    path = _e18_psi_path("B1", office, pname, kind)
+    trace = []
+    for k in range(1, E18_ITERATIONS + 1):
+        rows = simulate_log(plan, rates, s, truth, E18_DESIGN_DAYS, DESIGN_SEED,
+                            THRESHOLD, announce="bayes", display_psi=path, twin_samples=64)
+        w = rows[(rows[:, 2] == 0)]
+        fails = float(((w[:, 4] > 0) | (w[:, 5] - w[:, 1] > THRESHOLD)).sum()) / E18_DESIGN_DAYS
+        bases = [admit_from_log(rows, h) for h in range(len(plan))]
+        table, _ = psi_table_failures(plan, rates, s, truth, THRESHOLD, bases=bases)
+        path = E18_PSI_DIR / "iterations" / f"Bstar{k}_{_e18_key(office, pname, kind)}.csv"
+        write_psi(path, table)
+        trace.append({"step": k, "design_fail_per_day": round(fails, 3),
+                      "told_per_day": round(float((w[:, 4] == 2).sum()) / E18_DESIGN_DAYS, 3)})
+    return path, trace
+
+
+def run_e18b():
+    """H65: the Bayes display B1 and its refit B* in the 12 E16 offices (no returns)."""
+    print("E18b: Bayes displays in the 12 E16 offices, 1,000 evaluation days")
+    settings = _e16_settings()
+    iterated = dict(zip([st[:3] for st in settings], pmap(_e18b_iterate, settings)))
+    b = {(r["office"], r["patience"], r["plan_type"], r["regime"]): r
+         for r in load_results("e16b_regimes.csv")}
+    twin = load_results("e16d_twin.csv") + load_results("e16f_twin_high_quantiles.csv")
+    jobs = []
+    for office, pname, kind, rates, s, plan in settings:
+        best_q = min((r for r in twin if (r["office"], r["patience"], r["plan_type"])
+                      == (office, pname, kind)), key=lambda r: float(r["fail"]))["quantile"]
+        best_c0 = min(E16_CUTOFFS, key=lambda m: float(b[(office, pname, kind, f"C0-M{m:g}")]
+                                                       ["fail"]))
+        regimes = {"H": {}, "O-M15": _e16_regimes()["O-M15"][0],
+                   "Tbest": _e16_twin(float(best_q)),
+                   "C0best": _e16_regimes()[f"C0-M{best_c0:g}"][0],
+                   "B1": _e18_bayes_kw(_e18_psi_path("B1", office, pname, kind)),
+                   "Bstar": _e18_bayes_kw(iterated[(office, pname, kind)][0])}
+        for name, kw in regimes.items():
+            jobs.append(((office, pname, kind, rates, s, plan), name, kw, best_q, best_c0))
+    out = pmap(lambda j: _e18_eval(j[0][5], j[0][3], j[0][4], j[0][1], j[2]), jobs)
+    res = {(j[0][:3], j[1]): o for j, o in zip(jobs, out)}
+    rows = []
+    for (office, pname, kind, rates, s, plan), name, kw, best_q, best_c0 in jobs:
+        o = res[((office, pname, kind), name)]
+        fail = lambda n: float(res[((office, pname, kind), n)]["fail_day"].sum()
+                               / res[((office, pname, kind), n)]["arrivals"].sum())
+        row = {"office": office, "patience": pname, "plan_type": kind, "regime": name,
+               "best_twin_q": best_q, "best_count_cutoff": best_c0,
+               "fail": round(fail(name), 5),
+               "share_of_oracle_gain": round((fail("H") - fail(name)) / (fail("H") - fail("O-M15")), 3)
+               if fail("H") > fail("O-M15") else "",
+               "told_per_day": round(float(o["balked"].mean()), 3),
+               "lost_min_per_arrival": round(float(o["lost_day"].sum() / o["arrivals"].sum()), 3)}
+        for ref in ("H", "O-M15", "Tbest", "C0best", "B1"):
+            d = o["fail_day"] - res[((office, pname, kind), ref)]["fail_day"]
+            half = 1.96 * d.std(ddof=1) / math.sqrt(len(d)) if d.any() else 0.0
+            row.update({f"d_{ref}": round(float(d.mean()), 3),
+                        f"d_{ref}_lo": round(float(d.mean() - half), 3),
+                        f"d_{ref}_hi": round(float(d.mean() + half), 3)})
+        rows.append(row)
+    for office, pname, kind, rates, s, plan in settings:
+        sub = {r["regime"]: r for r in rows if (r["office"], r["patience"], r["plan_type"])
+               == (office, pname, kind)}
+        print(f"  {office:<12} {pname:<10} {kind:<5} H {sub['H']['fail']:.4f} "
+              f"O {sub['O-M15']['fail']:.4f} T{sub['H']['best_twin_q']} {sub['Tbest']['fail']:.4f} "
+              f"B1 {sub['B1']['fail']:.4f} B* {sub['Bstar']['fail']:.4f} "
+              f"(B1-T {sub['B1']['d_Tbest']:+.2f} [{sub['B1']['d_Tbest_lo']}, "
+              f"{sub['B1']['d_Tbest_hi']}])")
+    write_csv("e18b_bayes.csv", rows)
+    write_csv("e18b_iterations.csv",
+              [{"office": k[0], "patience": k[1], "plan_type": k[2], **t}
+               for k, (p, tr) in iterated.items() for t in tr])
+
+
+def _e18_regime_kw(st, reg):
+    office, pname, kind = st[0], st[1], st[2]
+    if reg in _e17_regimes():
+        return _e17_regimes()[reg]
+    return _e18_bayes_kw(_e18_psi_path(reg, office, pname, kind))
+
+
+def run_e18c():
+    """H66: returns-aware Bayes displays with returns (r = 1), E17's 16 settings.
+    Re-runs E17b's regimes on the same days (a regression check) for paired contrasts."""
+    print("E18c: returns-aware Bayes displays (r = 1)")
+    settings = [st for st in _e17_settings()
+                if _e18_psi_path("B30", st[0], st[1], st[2]).exists()]
+    regimes = ["H", "O-M15", "C0-M12.5", "C0-M15", "T0.7"] + [f"B{K:g}" for K in E18_KS]
+    solved = _e17b(settings, regimes, "e18c", kw_for=_e18_regime_kw)
+    rng = np.random.default_rng(18)
+    rows = []
+    for office, pname, kind, rates, s, plan, timing in settings:
+        sol = solved[(office, pname, kind, timing)]
+        for K in E18_KS:
+            mk = lambda p: p["lost_min"] + K * p["visits"]
+            own = f"B{K:g}"
+            for reg in regimes:
+                if sol.get(reg) is None:
+                    rows.append({"office": office, "patience": pname, "plan_type": kind,
+                                 "K": K, "regime": reg, "M_K": "inf"})
+                    continue
+                point, bs = sol[reg]
+                row = {"office": office, "patience": pname, "plan_type": kind, "K": K,
+                       "regime": reg, "M_K": round(mk(point), 3)}
+                if sol.get(own) is not None and reg != own:
+                    ob, obs = sol[own]
+                    d = np.array([mk(b1) - mk(b0) for b1, b0 in zip(obs, bs)])
+                    lo, hi = np.percentile(d, [2.5, 97.5])
+                    row.update({"d_own_minus_this": round(mk(ob) - mk(point), 3),
+                                "d_low": round(float(lo), 3), "d_high": round(float(hi), 3)})
+                rows.append(row)
+    write_csv("e18c_mk.csv", rows)
+
+
+def run_e18d():
+    """H67: the precision of each display at its own steady state, from logs with true V."""
+    from abandonment import return_rates
+    from display_decisions import simulate_log, turned_away_precision
+    print("E18d: precision of the displays at their steady states")
+    states = {(r["office"], r["patience"], r["plan_type"], r["regime"]): r
+              for r in load_results("e18c_states.csv")}
+    regimes = ["O-M15", "C0-M12.5", "C0-M15", "T0.7"] + [f"B{K:g}" for K in E18_KS]
+    jobs = [(st, reg) for st in _e17_settings() for reg in regimes
+            if states.get((st[0], st[1], st[2], reg), {}).get("R", "inf") != "inf"]
+
+    def one(job):
+        (office, pname, kind, rates, s, plan, timing), reg = job
+        R = float(states[(office, pname, kind, reg)]["R"])
+        kw = _e18_regime_kw((office, pname, kind), reg)
+        args = {"announce": kw.get("announce", "none"),
+                "display_scale": kw.get("display_scale"),
+                "display_cutoff": kw.get("display_cutoff"),
+                "twin_quantile": kw.get("twin_quantile"),
+                "twin_samples": kw.get("twin_samples", 64),
+                "display_psi": kw.get("display_psi")}
+        rows = simulate_log(plan, list(return_rates(rates, R, timing)), s, _e16_truth(pname),
+                            E18_PRECISION_DAYS, E17_GRID_SEED, THRESHOLD, **args)
+        return turned_away_precision(rows, THRESHOLD)
+
+    out = pmap(one, jobs)
+    eps = {(r["office"], r["patience"], r["plan_type"], r["regime"]): r
+           for r in load_results("e18c_contrasts.csv")}
+    rows = []
+    for ((office, pname, kind, *_), reg), p in zip(jobs, out):
+        e = eps.get((office, pname, kind, reg), {}).get("eps", "")
+        rows.append({"office": office, "patience": pname, "plan_type": kind, "regime": reg,
+                     **{k: (round(v, 4) if isinstance(v, float) else v) for k, v in p.items()},
+                     "eps": e})
+        print(f"  {office:<12} {pname:<10} {kind:<9} {reg:<9} precision {p['precision']:.3f} "
+              f"recall {p['recall']:.3f} eps {e}")
+    write_csv("e18d_precision.csv", rows)
+
+
+def run_e18a():
+    """H68: how much the twin's posterior knows, on hidden-queue logs (12 E16 offices)."""
+    from display_decisions import (OFFERED, TWIN_P_LATE, EST_COUNT, auc, reliability,
+                                   simulate_log, waiting_walkins)
+    print(f"E18a: twin posterior vs head count on {E18_LOG_DAYS} hidden-queue days")
+
+    def one(st):
+        office, pname, kind, rates, s, plan = st
+        parts = []
+        for start in range(0, E18_LOG_DAYS, 250):
+            rows = simulate_log(plan, rates, s, _e16_truth(pname), 250, E18_LOG_SEED + start,
+                                THRESHOLD, twin_samples=256)
+            w = waiting_walkins(rows)
+            parts.append(w[:, [OFFERED, TWIN_P_LATE, EST_COUNT]])
+        return np.concatenate(parts)
+
+    settings = _e16_settings()
+    data = pmap(one, settings)
+    rows, rel = [], []
+    for (office, pname, kind, *_), d in zip(settings, data):
+        y = d[:, 0] > THRESHOLD
+        a_twin, a_count = auc(d[:, 1], y), auc(d[:, 2], y)
+        deciles = reliability(d[:, 1], y)
+        worst = max(abs(p - o) for p, o, n in deciles)
+        rows.append({"office": office, "patience": pname, "plan_type": kind,
+                     "waiting_walkins": len(d), "late_share": round(float(y.mean()), 4),
+                     "auc_twin": round(a_twin, 4), "auc_count": round(a_count, 4),
+                     "auc_gap": round(a_twin - a_count, 4),
+                     "brier_twin": round(float(((d[:, 1] - y) ** 2).mean()), 5),
+                     "worst_decile_gap": round(worst, 4)})
+        rel += [{"office": office, "patience": pname, "plan_type": kind, "decile": i + 1,
+                 "predicted": round(p, 4), "observed": round(o, 4), "n": n}
+                for i, (p, o, n) in enumerate(deciles)]
+        print(f"  {office:<12} {pname:<10} {kind:<5} n {len(d)} AUC twin {a_twin:.3f} "
+              f"count {a_count:.3f}  worst decile gap {worst:.4f}")
+    write_csv("e18a_information.csv", rows)
+    write_csv("e18a_reliability.csv", rel)
+
+
 EXPERIMENTS = {"e1b": run_e1b, "e1": run_e1, "e2": run_e2, "e2b": run_e2b,
                "e3a": run_e3a, "e3b": run_e3b, "e4": run_e4, "e5": run_e5, "e6": run_e6,
                "e7a": run_e7a, "e7": run_e7, "e7c": run_e7c, "e8a": run_e8a, "e8b": run_e8b,
@@ -3028,7 +3381,9 @@ EXPERIMENTS = {"e1b": run_e1b, "e1": run_e1, "e2": run_e2, "e2b": run_e2b,
                "e15c": run_e15c, "e16p": run_e16p, "e16a": run_e16a, "e16b": run_e16b,
                "e16c": run_e16c, "e16d": run_e16d, "e16e": run_e16e,
                "e16f": run_e16f, "e17p": run_e17p, "e17a": run_e17a, "e17b": run_e17b,
-               "e17c": run_e17c, "e17d": run_e17d, "e17e": run_e17e, "e17f": run_e17f}
+               "e17c": run_e17c, "e17d": run_e17d, "e17e": run_e17e, "e17f": run_e17f,
+               "e18p": run_e18p, "e18a": run_e18a, "e18b": run_e18b, "e18c": run_e18c,
+               "e18d": run_e18d}
 
 
 def main():

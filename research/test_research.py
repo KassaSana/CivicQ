@@ -793,5 +793,89 @@ class TestOracleDisplay(unittest.TestCase):
         self.assertEqual([r["served"] for r in a], [r["served"] for r in b])
 
 
+class TestDisplayDecisions(unittest.TestCase):
+    """Round 15: displays as decisions under partial information."""
+
+    def test_full_admission_is_the_plain_law(self):
+        from displays import display_hour
+        p = Patience("lognormal", 30.0, 0.5)
+        a = display_hour(4, 0.5, 8.0, p, 15.0)
+        b = display_hour(4, 0.5, 8.0, p, 15.0, admit=lambda x: np.ones_like(x))
+        for k in ("fail", "balk", "renege", "served_late", "wait_min", "wasted_min"):
+            self.assertAlmostEqual(getattr(a, k), getattr(b, k), places=12)
+
+    def test_admitting_nobody_above_t_is_the_cutoff_display(self):
+        from display_decisions import cutoff_admit
+        from displays import HIDDEN, cutoff, display_hour
+        p = Patience("exp", 30.0)
+        a = display_hour(4, 0.55, 8.0, p, 15.0, cutoff(15.0))
+        b = display_hour(4, 0.55, 8.0, p, 15.0, HIDDEN, admit=cutoff_admit(15.0))
+        self.assertAlmostEqual(a.fail, b.fail, places=3)
+        # cutoff() shows V below T, so leavers go at once instead of reneging
+        self.assertAlmostEqual(a.balk + a.renege, b.balk + b.renege, places=3)
+
+    def test_influence_has_the_theorem_signs_and_is_first_order(self):
+        # Round 13's theorem: under the cutoff, flagging below T costs failures,
+        # flagging above T saves them
+        from display_decisions import influence
+        from displays import HIDDEN, display_hour
+        p = Patience("lognormal", 30.0, 0.5)
+        inf = influence(4, 0.5, 8.0, p, 15.0)
+        live = inf.mass > 1e-6
+        self.assertTrue((inf.psi["fail"][live & (inf.x < 15)] > 0).all())
+        self.assertTrue((inf.psi["fail"][live & (inf.x > 15)] < 0).all())
+        pert = lambda x: 0.03 * (np.asarray(x) < 40)
+        adm = lambda x: np.where(np.asarray(x) < 15, 1 - pert(x), pert(x))
+        exact = display_hour(4, 0.5, 8.0, p, 15.0, HIDDEN, admit=adm).fail - inf.base["fail"]
+        flagged = np.where(inf.x < 15, pert(inf.x), -pert(inf.x)) * inf.mass
+        self.assertAlmostEqual(float((inf.psi["fail"] * flagged).sum()) / exact, 1.0, delta=0.05)
+
+    def test_auc_and_reliability(self):
+        from display_decisions import auc, reliability
+        rng = np.random.default_rng(0)
+        s, y = rng.normal(size=300), rng.random(300) < 0.4
+        s[::7] = 0.5                          # Ties
+        brute = np.mean([(a > b) + 0.5 * (a == b) for a in s[y] for b in s[~y]])
+        self.assertAlmostEqual(auc(s, y), brute, places=12)
+        rel = reliability(np.linspace(0, 1, 100), np.ones(100), bins=4)
+        self.assertEqual([n for _, _, n in rel], [25] * 4)
+
+
+@unittest.skipUnless(SIMULATOR.exists(), f"simulator not built at {SIMULATOR}")
+class TestBayesDisplay(unittest.TestCase):
+    PLAN, RATES, _rows = TestOracleDisplay.PLAN, TestOracleDisplay.RATES, TestOracleDisplay._rows
+
+    def test_step_psi_is_the_twin_quantile_rule(self):
+        # The twin's quantile rule is the Bayes display with a step psi at T:
+        # flag iff more than half of 64 draws reach 15 <=> the 32nd smallest does
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "step.csv"
+            path.write_text("hour,x,psi\n" + "".join(
+                f"{h},{x!r},{v}\n" for h in range(8)
+                for x, v in ((0.0, 1), (15 - 1e-9, 1), (15.0, -1), (1000.0, -1))))
+            bayes = self._rows("--announce", "bayes", "--display-psi", str(path))
+        twin = self._rows("--announce", "twin", "--display-scale", "0",
+                          "--display-cutoff", "15", "--twin-quantile", "0.484375")
+        self.assertEqual(bayes, twin)
+        self.assertGreater(sum(int(r["balked"]) for r in bayes), 0)
+
+    def test_logging_the_offered_wait_changes_nothing_and_is_exact(self):
+        # --log-offered draws only on the twin stream; the logged V is the wait a
+        # ticket actually had (served or called absent)
+        import tempfile
+        from display_decisions import OFFERED, waiting_walkins
+        with tempfile.TemporaryDirectory() as tmp:
+            log = Path(tmp) / "c.csv"
+            logged = self._rows("--log-offered", "--citizen-log", str(log))
+            rows = np.loadtxt(log, delimiter=",", skiprows=1, ndmin=2)
+        self.assertEqual(logged, self._rows())
+        w = waiting_walkins(rows)
+        called = w[w[:, CALL] >= 0]
+        np.testing.assert_allclose(called[:, OFFERED], called[:, CALL] - called[:, ARRIVAL],
+                                   atol=1e-6)
+        self.assertGreater(len(called), 1000)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
