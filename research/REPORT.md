@@ -239,6 +239,44 @@ Here "days to recover" is the time for the fluid map to come back within 10% of 
 
 - **H35 (confirmatory; the fluid's error shrinks like 1/√R).** Take the same office at 32 E: rates ×4, and the φ-plans ×4, which is exact for the fluid. For spread-over-the-day returns at φ = 0.95, 0.90 and 0.85, the excess (simulated R\* − fluid R\*) per 100 fresh citizens is 0.25–0.75 of its 8 E value in each case (13.0, 19.4 and 26.4 at 8 E; √R scaling predicts 0.5). A ratio of 0.75 or more would mean the error does not shrink with size; 0.25 or less would mean it is not a √R effect.
 
+**Round 10** (stated before any E13 run). Can an office learn its citizens' patience from its own ticket log? Rounds 4–9 found that almost every abandonment result turns on the *shape* of patience: H11 and H14 split on exponential against lognormal, and the Round 5–6 saving is min(α, G(T)), where G is the patience CDF. §6 lists uncalibrated patience as a threat, and no public data exist.
+
+A call center records when a caller hangs up, which is how Brown et al. (2005) estimate patience with Kaplan–Meier. A walk-in ticket system does not record when a citizen left. It records that the ticket was **called and nobody came**. Each ticket gives its virtual wait V, from issue to call, and whether its holder was present:
+- present means patience τ ≥ V;
+- absent means τ < V.
+
+This is **current-status data** (interval censoring, case 1). Under FIFO a citizen's V depends only on the people ahead and on staffing, never on their own patience, so V ⊥ τ. Three things follow from standard theory (Groeneboom & Wellner 1992):
+- the call-center estimator is biased, because it records a leaver at V > τ;
+- the nonparametric MLE (isotonic regression of "absent" on V) is consistent, but converges at n^(−1/3) rather than n^(−1/2);
+- only waits carry information, so an office that serves people quickly learns slowly.
+
+**Settings (E13).** Hidden queue only.
+- **Offices:** the studied office (S = 8) and the 8 E office (S = 16).
+- **Patience:** exponential with mean 30, or lognormal with mean 30 and CV 0.5.
+- **Plans:** each setting's E7 served-late plan (*lean*) and its E7 failure plan (*citizen-optimal*): office exp 16 / 22 h, office logn 18 / 20 h, 8 E exp 57 / 71 h, 8 E logn 69 / 72 h.
+- **Data:** one ticket log per simulated day, walk-ins only. A ticket served at once (V = 0) carries no information.
+- **Estimands:** mainly G(15), the share who would leave within the threshold. Secondary estimands are the family (exponential or lognormal) and the mean.
+- **Estimators:**
+  - *naive KM*: Kaplan–Meier with an absent ticket's call time as its departure time;
+  - *CS-NPMLE*: the current-status NPMLE;
+  - *CS-MLE*: parametric current-status maximum likelihood for an exponential or a lognormal, with the family chosen by AIC.
+
+Hypotheses:
+- **H36 (validation: the log is current-status data).** On 20,000 pooled days per setting, walk-ins with V > 0 have |Kendall τ(V, patience)| < 0.01. The CS-NPMLE is within 0.02 of G everywhere between the 5th and 95th percentiles of the informative V.
+- **H37 (the call-center estimator is biased).** Naive KM underestimates G(15) by at least 25% of its true value in all 8 settings (20,000 days each).
+- **H38 (cube-root learning).** In office exp at 16 h and 8 E exp at 71 h, take n = 10, 30, 100, 300 and 1000 days, with 200 replicates each. The OLS slope of log RMSE against log n for G(15) is:
+  - in [−0.42, −0.25] for the CS-NPMLE (theory: −1/3);
+  - in [−0.58, −0.42] for the exponential CS-MLE (theory: −1/2).
+- **H39 (days needed to identify the family).** Under the citizen-optimal plans, take the days of log after which AIC picks the true family in at least 90% of 200 replicates, for both truths (the larger of the two). The grid is n ∈ {5, 10, 20, 30, 45, 60, 90, 120, 180, 250, 365, 500}. The prediction is ≤ 20 days at 8 E, and more than 60 days (a working quarter) in the office.
+- **H40 (learning against service).** In each office, the days needed under the citizen-optimal plans are at least twice the days needed under the lean plans.
+- **H41 (fit the model where the data are).** This targets H14's one miss: at 8 E, lognormal patience, hidden queue, mean-matched Erlang-A SIPP gave 73 h and a worst hour of 13.1%. Suppose the office runs its failure plan (72 h) for 60 days, fits an *exponential* CS-MLE to its log, and restaffs by Erlang-A SIPP with the fitted mean. Then, over 20 independent 60-day logs:
+  - the new plan meets the failure target (no hour significantly above α; E7's scoring) in at least 18 of 20;
+  - its mean is 72–77 staff-hours, below Erlang-C SIPP's 81 h.
+
+  The reasoning: a wrong family fitted to where the waits are should get G right over those waits, which is what staffing needs. Matching the mean does not.
+
+An exploratory run with no hypothesis, E13f, covers the visible line. The ticket log holds no trace of balkers. With a timestamped door counter, each arrival's decision is current-status data at its expected wait (q + 1)·S/c, which can be rebuilt from the log.
+
 *Change after pre-registration (Round 2):* while testing H7 we found that Ciw cannot express CivicQ's staffing-change rule (see §5.6). H7 was therefore split into a strict test for constant staffing and a bounds test for changing staffing *before* E5 was run. This deviation is disclosed here.
 
 ## 5. Results
