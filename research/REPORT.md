@@ -427,7 +427,33 @@ Hypotheses:
   - (b) Showing nothing below the cutoff is never significantly worse than showing the count estimate, for C0-M against C1-M at M ≤ 15 (48 pairs), and it has the lower mean in at least 36 of 48. The count estimate ignores people ahead who will leave, so it overstates V, and by the theorem, overstating below T with a cutoff hurts.
   - (c) For the same reason, the best count cutoff is at least 15 minutes in at least 10 of 12 offices.
 
-H57, what the cutoff display means for staffing, will be registered separately after E16a–c.
+**Round 13b** (stated after E16a–c and before any E16d or E16e run). E16b showed that a head count predicts V poorly: a count cutoff recovered a median of a fifth of the oracle cutoff's gain. How much can a ticket office do with *all* it knows? It sees its uncalled tickets and their ages, but not whether each holder is still there. It also sees how long each window has been serving, and it can know its patience curve (Rounds 10–11) and its service distribution.
+
+The *twin display* (`--announce twin`) uses exactly that information. For each arrival it replays the queue 64 times with the unknowns sampled:
+- whether each ticket holder is still there, and when they will leave (patience drawn beyond the ticket's age);
+- remaining and future service times.
+
+It shows "over 15" when the q-quantile of the sampled waits is at least 15 minutes, meaning P̂(V ≥ 15) ≥ 1 − q, and nothing otherwise. Its draws use a separate random stream, so every other citizen is unchanged. After the replay was refactored to serve both displays, the oracle display's output stayed byte-identical. One timing run of the twin display (20 days, output discarded) was made before this registration.
+
+*Which q?* Sending home a citizen with probability p of being served late costs 1 − p expected failures directly. It also frees their window: a benefit that the theorem shows is always positive when the citizen would have been late, and can be positive even when they would have been on time. So the best rule sends citizens home on weaker evidence than p = ½, which means a quantile q above ½. E16b's best count cutoffs, 12.5 minutes in the five offices where counting helped most, point the same way.
+
+- **H57 (what a ticket office can know).** In the 12 E16 offices, with q ∈ {0.3, 0.5, 0.7} and 1,000 evaluation days:
+  - (a) the twin display with q = 0.5 has significantly fewer failures than the hidden queue in at least 10 of 12;
+  - (b) it has fewer failures than the best count cutoff, which was chosen in hindsight on the same days, in at least 9 of 12;
+  - (c) at its best q it achieves at least half of the oracle cutoff's reduction in at least 6 of 12;
+  - (d) the best q is 0.7 in at least 8 of 12.
+- **H58 (staffing for the display).** Staff each office by per-hour SIPP on lagged rates, once with the hidden-queue model (Lag-SIPP-G) and once with the cutoff-display model (§5.17 theory). This gives 12 plan pairs (2 offices × 3 patience curves × α ∈ {0.10, 0.20}). The theory's predicted savings in staff-hours are:
+
+  | Office | α | Exponential | Lognormal CV 0.5 | Lognormal CV 1.5 |
+  |---|---|---|---|---|
+  | 4 E | 0.10 | 0% | 12.5% | 0% |
+  | 4 E | 0.20 | 2.9% | 13.5% | 0% |
+  | 16 E | 0.10 | 1.6% | 11.1% | 0.8% |
+  | 16 E | 0.20 | 2.7% | 18.9% | 2.7% |
+
+  - (a) With the oracle cutoff display, the display-staffed plans meet the per-hour failure target (no hour significantly above α) in at least 11 of 12.
+  - (b) With the twin display (q = 0.5, registered before E16d's result), they meet it in at least 8 of 12.
+  - (c) Control: the hidden-staffed plans meet it on the hidden queue in 12 of 12 (Round 11b's safe rule).
 
 *Change after pre-registration (Round 2):* while testing H7 we found that Ciw cannot express CivicQ's staffing-change rule (see §5.6). H7 was therefore split into a strict test for constant staffing and a bounds test for changing staffing *before* E5 was run. This deviation is disclosed here.
 

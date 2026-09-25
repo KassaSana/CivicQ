@@ -661,6 +661,13 @@ class TestOracleDisplay(unittest.TestCase):
             self.assertEqual(self._rows("--announce", name),
                              self._rows("--announce", name, "--display-scale", "1"))
 
+    def test_twin_display_that_never_says_too_long_is_the_hidden_queue(self):
+        # Its sampling uses its own stream: a display nobody acts on changes nothing
+        hidden = self._rows()
+        twin = self._rows("--announce", "twin", "--display-scale", "0",
+                          "--twin-samples", "8")
+        self.assertEqual(hidden, twin)
+
     def test_cutoff_zero_turns_away_everyone_who_would_wait(self):
         a = self._rows("--announce", "count", "--display-cutoff", "0")
         b = self._rows("--announce", "oracle", "--display-scale", "1e9")

@@ -2519,6 +2519,123 @@ def run_e16c(days=2000):
         print(f"  {office:<13} {pname:<10} {kind:<5} done")
     write_csv("e16c_false_balkers.csv", rows)
 
+E16_TWIN_QUANTILES = [0.3, 0.5, 0.7]
+E16_ALPHAS = [0.10, 0.20]
+
+
+def _e16_twin(q):
+    return {"announce": "twin", "display_scale": 0.0, "display_cutoff": [THRESHOLD],
+            "twin_quantile": q, "twin_samples": 64}
+
+
+def run_e16d():
+    """H57: the twin display (what a ticket office can predict) in the 12 offices."""
+    print("E16d: twin displays in the 12 new offices")
+    settings = _e16_settings()
+    jobs = [(st, q) for st in settings for q in E16_TWIN_QUANTILES]
+
+    def one(job):
+        (office, pname, kind, rates, s, plan), q = job
+        mean, dist, cv = E16_PATIENCE[pname]
+        r = run_simulation(plan, rates, replications=EVAL_REPS, seed=EVAL_SEED, mean_service=s,
+                           wait_threshold=THRESHOLD, **_patience_kw("renege", mean, dist, cv),
+                           **_e16_twin(q))
+        late = np.array(r.daily_late, dtype=float).sum(axis=1)
+        aband = np.array(r.daily_abandoned, dtype=float).sum(axis=1)
+        served = np.array(r.daily_arrivals, dtype=float).sum(axis=1)
+        return {"fail_day": late + aband, "arrivals": served + aband,
+                "balked": np.array(r.daily_balked, dtype=float),
+                "wasted": np.array(r.daily_abandoned_wait, dtype=float),
+                "wait_sum": r.mean_wait * served.sum()}
+
+    out = dict(zip([(st[0], st[1], st[2], q) for st, q in jobs], pmap(one, jobs)))
+    # The references (hidden, oracle cutoff, best count cutoff) from E16b, re-run for the
+    # paired day-level differences (same seeds, so identical to E16b)
+    b = {(r["office"], r["patience"], r["plan_type"], r["regime"]): r
+         for r in csv.DictReader(open(RESULTS / "e16b_regimes.csv"))}
+    rows = []
+    for office, pname, kind, rates, s, plan in settings:
+        mean, dist, cv = E16_PATIENCE[pname]
+        best_c0 = min(E16_CUTOFFS, key=lambda m: float(b[(office, pname, kind, f"C0-M{m:g}")]
+                                                       ["fail"]))
+        refs = {}
+        for name, kw in (("H", {}), ("O-M15", _e16_regimes()["O-M15"][0]),
+                         ("C0best", _e16_regimes()[f"C0-M{best_c0:g}"][0])):
+            r = run_simulation(plan, rates, replications=EVAL_REPS, seed=EVAL_SEED,
+                               mean_service=s, wait_threshold=THRESHOLD,
+                               **_patience_kw("renege", mean, dist, cv), **kw)
+            refs[name] = (np.array(r.daily_late, dtype=float).sum(axis=1)
+                          + np.array(r.daily_abandoned, dtype=float).sum(axis=1))
+        h_fail = float(b[(office, pname, kind, "H")]["fail"])
+        o_fail = float(b[(office, pname, kind, "O-M15")]["fail"])
+        c_fail = float(b[(office, pname, kind, f"C0-M{best_c0:g}")]["fail"])
+        for q in E16_TWIN_QUANTILES:
+            o = out[(office, pname, kind, q)]
+            fail = float(o["fail_day"].sum() / o["arrivals"].sum())
+            row = {"office": office, "patience": pname, "plan_type": kind, "quantile": q,
+                   "fail": round(fail, 5), "H_fail": h_fail, "oracle_fail": o_fail,
+                   "best_count_cutoff": best_c0, "count_fail": c_fail,
+                   "share_of_oracle_gain": round((h_fail - fail) / (h_fail - o_fail), 3)
+                   if h_fail > o_fail else "",
+                   "balked_per_day": round(float(o["balked"].mean()), 3),
+                   "lost_min_per_arrival": round(float((o["wait_sum"] + o["wasted"].sum())
+                                                       / o["arrivals"].sum()), 3)}
+            for ref, d0 in refs.items():
+                d = o["fail_day"] - d0
+                half = 1.96 * d.std(ddof=1) / math.sqrt(len(d))
+                row[f"d_{ref}"] = round(float(d.mean()), 3)
+                row[f"d_{ref}_lo"] = round(float(d.mean() - half), 3)
+                row[f"d_{ref}_hi"] = round(float(d.mean() + half), 3)
+            rows.append(row)
+        sub = rows[-len(E16_TWIN_QUANTILES):]
+        print(f"  {office:<13} {pname:<10} {kind:<5} H {h_fail:.3f} oracle {o_fail:.3f} "
+              f"count(M{best_c0:g}) {c_fail:.3f} | twin " + " ".join(
+                  f"q{r['quantile']} {r['fail']:.3f} ({r['share_of_oracle_gain']})" for r in sub))
+    write_csv("e16d_twin.csv", rows)
+
+
+def run_e16e():
+    """H58: staffing for the cutoff display (Lag-SIPP with the display theory)."""
+    from abandonment import score
+    from displays import cutoff, sipp_display
+    from learning import sipp_g
+    from staffing_methods import lagged_rates
+    print("E16e: staffing with the cutoff display")
+    jobs = []
+    for office, (load, s) in E16_OFFICES.items():
+        rates = arrival_profile(load, s, 0.6)
+        lag = lagged_rates(rates, s)
+        for pname in E16_PATIENCE:
+            truth = _e16_truth(pname)
+            for alpha in E16_ALPHAS:
+                hidden = sipp_g(lag, s, THRESHOLD, alpha, truth)
+                disp = sipp_display(lag, s, THRESHOLD, alpha, truth, cutoff(THRESHOLD))
+                for plan_name, plan in (("hidden", hidden), ("display", disp)):
+                    for regime, kw in (("H", {}), ("O-M15", _e16_regimes()["O-M15"][0]),
+                                       ("twin", _e16_twin(0.5))):
+                        if plan_name == "display" and regime == "H":
+                            continue
+                        jobs.append((office, pname, alpha, rates, s, plan_name, plan,
+                                     regime, kw))
+
+    def one(job):
+        office, pname, alpha, rates, s, plan_name, plan, regime, kw = job
+        mean, dist, cv = E16_PATIENCE[pname]
+        return score(plan, rates, s, THRESHOLD, **_patience_kw("renege", mean, dist, cv), **kw)
+
+    rows = []
+    for job, ev in zip(jobs, pmap(one, jobs)):
+        office, pname, alpha, rates, s, plan_name, plan, regime, _ = job
+        rows.append({"office": office, "patience": pname, "alpha": alpha, "plan": plan_name,
+                     "staffing": "-".join(map(str, plan)), "staff_hours": sum(plan),
+                     "regime": regime, "overall_fail": round(ev.overall_fail, 5),
+                     "worst_fail": round(ev.worst("fail"), 4),
+                     "fail_misses": ev.misses("fail", alpha)})
+        print(f"  {office:<13} {pname:<10} a={alpha} {plan_name:<7} {sum(plan):>3} h "
+              f"{regime:<5} fail {ev.overall_fail:.3f} worst {ev.worst('fail'):.3f} "
+              f"misses {ev.misses('fail', alpha)}")
+    write_csv("e16e_staffing.csv", rows)
+
 
 EXPERIMENTS = {"e1b": run_e1b, "e1": run_e1, "e2": run_e2, "e2b": run_e2b,
                "e3a": run_e3a, "e3b": run_e3b, "e4": run_e4, "e5": run_e5, "e6": run_e6,
@@ -2534,7 +2651,7 @@ EXPERIMENTS = {"e1b": run_e1b, "e1": run_e1, "e2": run_e2, "e2b": run_e2b,
                "e14c": run_e14c, "e14d": run_e14d,
                "e15a": run_e15a, "e15b": run_e15b,
                "e15c": run_e15c, "e16p": run_e16p, "e16a": run_e16a, "e16b": run_e16b,
-               "e16c": run_e16c}
+               "e16c": run_e16c, "e16d": run_e16d, "e16e": run_e16e}
 
 
 def main():

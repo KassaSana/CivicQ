@@ -39,12 +39,14 @@ void print_usage() {
               << "  --patience-cv CV           Patience CV for lognormal (default: 1.0)\n"
               << "  --per-replication          One CSV row per replication instead of averages\n"
               << "  --citizen-log PATH         Also write one CSV row per citizen to PATH\n"
-              << "  --announce NAME            renege mode: none | tickets | count | les | oracle\n"
+              << "  --announce NAME            renege mode: none | tickets | count | les | oracle | twin\n"
               << "                             (default: none)\n"
               << "  --commit                   renege mode: citizens who join never leave\n"
               << "  --display-scale K          Shown wait = K * estimate (default: 1)\n"
               << "  --display-cutoff M[,M..]   Show 'too long' once the estimate reaches M minutes\n"
               << "                             (one value, or one per hour)\n"
+              << "  --twin-samples K           Twin display: sampled replays per arrival (default: 64)\n"
+              << "  --twin-quantile Q          Twin display: quantile of the sampled waits (default: 0.5)\n"
               << "  --output-waits             Include all wait times in output\n"
               << "  --help                     Show this help\n";
 }
@@ -179,6 +181,7 @@ int main(int argc, char* argv[]) {
             else if (name == "count") config.announce = Announce::COUNT;
             else if (name == "les") config.announce = Announce::LES;
             else if (name == "oracle") config.announce = Announce::ORACLE;
+            else if (name == "twin") config.announce = Announce::TWIN;
             else {
                 std::cerr << "Error: unknown announcement '" << name << "'\n";
                 return 1;
@@ -186,6 +189,12 @@ int main(int argc, char* argv[]) {
         }
         else if (arg == "--commit") {
             config.commit = true;
+        }
+        else if (arg == "--twin-samples" && i + 1 < argc) {
+            config.twin_samples = std::stoi(argv[++i]);
+        }
+        else if (arg == "--twin-quantile" && i + 1 < argc) {
+            config.twin_quantile = std::stod(argv[++i]);
         }
         else if (arg == "--display-scale" && i + 1 < argc) {
             config.display_scale = std::stod(argv[++i]);

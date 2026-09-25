@@ -179,7 +179,9 @@ def run_simulation(
     announce: str = "none",
     commit: bool = False,
     display_scale: float = 1.0,
-    display_cutoff: Optional[list] = None
+    display_cutoff: Optional[list] = None,
+    twin_quantile: float = 0.5,
+    twin_samples: int = 64
 ) -> SimulationResult:
     """
     Execute C++ simulator with given staffing configuration.
@@ -216,6 +218,8 @@ def run_simulation(
         display_cutoff: minutes (one value, or one per hour); once the
             estimate reaches it the display shows "too long" and every
             walk-in who sees it leaves
+        twin_quantile, twin_samples: announce="twin" shows this quantile of
+            the wait predicted by replaying the queue with sampled unknowns
 
     Returns:
         SimulationResult with aggregated metrics and 95% CIs
@@ -257,6 +261,9 @@ def run_simulation(
         cmd += ["--display-scale", repr(float(display_scale))]
     if display_cutoff is not None:
         cmd += ["--display-cutoff", ",".join(repr(float(m)) for m in display_cutoff)]
+    if announce == "twin":
+        cmd += ["--twin-quantile", repr(float(twin_quantile)),
+                "--twin-samples", str(int(twin_samples))]
 
     try:
         result = subprocess.run(

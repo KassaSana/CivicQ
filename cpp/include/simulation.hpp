@@ -52,8 +52,10 @@ enum class Announce {
     TICKETS,   // (uncalled tickets + 1) S / c; counts tickets whose holders have left
     COUNT,     // (people actually waiting + 1) S / c, as a physical line shows
     LES,       // Wait of the last citizen to start service
-    ORACLE     // The wait V this citizen would have if they stayed (replays FIFO
+    ORACLE,    // The wait V this citizen would have if they stayed (replays FIFO
                // over the people ahead with their drawn service times and patience)
+    TWIN       // A quantile of V predicted from what a ticket office can see
+               // (ticket ages, elapsed services) and the known distributions
 };
 
 /**
@@ -169,6 +171,8 @@ struct SimulationConfig {
     std::vector<double> display_cutoff;    // ... or "too long" (infinity) once the
                                            // estimate reaches the cutoff (minutes;
                                            // one value, or one per hour; empty = none)
+    int twin_samples;                      // TWIN display: sampled replays per arrival
+    double twin_quantile;                  // TWIN display: quantile of the sampled waits
 
     SimulationConfig()
         : mean_service_time(8.0)
@@ -187,7 +191,9 @@ struct SimulationConfig {
         , log_citizens(false)
         , announce(Announce::NONE)
         , commit(false)
-        , display_scale(1.0) {}
+        , display_scale(1.0)
+        , twin_samples(64)
+        , twin_quantile(0.5) {}
 };
 
 /**
@@ -231,6 +237,7 @@ private:
     std::mt19937 rate_rng_;
     std::mt19937 appointment_rng_;
     std::mt19937 patience_rng_;
+    std::mt19937 twin_rng_;              // Only the TWIN display draws from it
     std::exponential_distribution<double> service_dist_;
     std::lognormal_distribution<double> lognormal_dist_;
     std::uniform_real_distribution<double> uniform_dist_;
@@ -270,7 +277,15 @@ private:
     void serve_waiting_citizens();
     void add_busy_time(double start, double end);
     void add_unpaid_time(int window_id, double start, double end);
+    struct Ahead {
+        double leave_time;     // When they would give up (infinity: never)
+        double service_time;
+    };
+    double replay_start(std::vector<double> free_at, const std::vector<Ahead>& ahead) const;
     double offered_wait() const;
+    double twin_wait();
+    double draw_service(std::mt19937& rng) const;
+    double draw_patience(std::mt19937& rng) const;
     int find_free_window();
 
     SimulationResults compute_results() const;

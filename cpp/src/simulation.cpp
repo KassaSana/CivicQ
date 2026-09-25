@@ -89,6 +89,8 @@ void QueueSimulator::reset() {
     rate_rng_.seed(rate_seed);
     appointment_rng_.seed(appointment_seed);
     patience_rng_.seed(patience_seed);
+    std::seed_seq twin_seed{static_cast<unsigned>(config_.random_seed), 6u};
+    twin_rng_.seed(twin_seed);
     service_dist_.reset();
     lognormal_dist_.reset();
     uniform_dist_.reset();
@@ -219,12 +221,14 @@ double QueueSimulator::generate_patience() {
     }
 }
 
-double QueueSimulator::offered_wait() const {
-    // The wait a citizen arriving now would have if they stayed. Later arrivals
-    // queue behind them (FIFO), so it depends only on the people already here:
-    // replay the queue with their drawn service times and patience. A window
-    // can start a service only while open (index < staffing of the slot)
-    const int n = static_cast<int>(windows_.size());
+double QueueSimulator::replay_start(std::vector<double> free_at,
+                                    const std::vector<Ahead>& ahead) const {
+    // When a citizen arriving now would be called if they stayed. Later
+    // arrivals queue behind them (FIFO), so only the people ahead matter:
+    // replay them in order. A window can start a service only while open
+    // (index < staffing of the slot); someone whose patience runs out before
+    // a window reaches them leaves without using it
+    const int n = static_cast<int>(free_at.size());
     auto next_open = [&](int i, double t) {
         for (int slot = get_current_slot(t); slot < NUM_SLOTS; ++slot) {
             if (i < config_.staffing_per_slot[slot]) {
@@ -233,13 +237,6 @@ double QueueSimulator::offered_wait() const {
         }
         return std::numeric_limits<double>::infinity();
     };
-    std::vector<double> free_at(n, current_time_);
-    for (int i = 0; i < n; ++i) {
-        if (windows_[i].is_busy) {
-            const Citizen& c = citizens_[windows_[i].current_citizen_id];
-            free_at[i] = c.service_start_time + c.service_time;
-        }
-    }
     auto earliest = [&](int& window) {
         double best = std::numeric_limits<double>::infinity();
         window = -1;
@@ -252,24 +249,131 @@ double QueueSimulator::offered_wait() const {
         }
         return best;
     };
-    const bool may_renege = config_.abandonment == Abandonment::RENEGE && !config_.commit;
-    for (int id : waiting_queue_) {
-        const Citizen& p = citizens_[id];
-        if (p.abandoned) {
-            continue;
-        }
+    for (const Ahead& p : ahead) {
         int window;
         double start = earliest(window);
         if (window < 0) {
             break;
         }
-        if (may_renege && !p.is_appointment && p.arrival_time + p.patience < start) {
-            continue;   // Leaves before their ticket is called
+        if (p.leave_time < start) {
+            continue;
         }
         free_at[window] = start + p.service_time;
     }
     int window;
-    return earliest(window) - current_time_;
+    return earliest(window);
+}
+
+double QueueSimulator::offered_wait() const {
+    // The exact wait: the people ahead with their drawn service times and patience
+    const bool may_renege = config_.abandonment == Abandonment::RENEGE && !config_.commit;
+    std::vector<double> free_at(windows_.size(), current_time_);
+    for (std::size_t i = 0; i < windows_.size(); ++i) {
+        if (windows_[i].is_busy) {
+            const Citizen& c = citizens_[windows_[i].current_citizen_id];
+            free_at[i] = c.service_start_time + c.service_time;
+        }
+    }
+    std::vector<Ahead> ahead;
+    for (int id : waiting_queue_) {
+        const Citizen& p = citizens_[id];
+        if (p.abandoned) {
+            continue;
+        }
+        double leave = (may_renege && !p.is_appointment) ? p.arrival_time + p.patience
+                                                         : std::numeric_limits<double>::infinity();
+        ahead.push_back({leave, p.service_time});
+    }
+    return replay_start(free_at, ahead) - current_time_;
+}
+
+double QueueSimulator::draw_service(std::mt19937& rng) const {
+    const double mean = config_.mean_service_time;
+    switch (config_.service_dist) {
+        case ServiceDist::LOGNORMAL: {
+            double s2 = std::log(1.0 + config_.service_cv * config_.service_cv);
+            std::lognormal_distribution<double> d(std::log(mean) - 0.5 * s2, std::sqrt(s2));
+            return d(rng);
+        }
+        case ServiceDist::DETERMINISTIC:
+            return mean;
+        case ServiceDist::EXPONENTIAL:
+        default: {
+            std::exponential_distribution<double> d(1.0 / mean);
+            return d(rng);
+        }
+    }
+}
+
+double QueueSimulator::draw_patience(std::mt19937& rng) const {
+    const double mean = config_.mean_patience;
+    switch (config_.patience_dist) {
+        case ServiceDist::LOGNORMAL: {
+            double s2 = std::log(1.0 + config_.patience_cv * config_.patience_cv);
+            std::lognormal_distribution<double> d(std::log(mean) - 0.5 * s2, std::sqrt(s2));
+            return d(rng);
+        }
+        case ServiceDist::DETERMINISTIC:
+            return mean;
+        case ServiceDist::EXPONENTIAL:
+        default: {
+            std::exponential_distribution<double> d(1.0 / mean);
+            return d(rng);
+        }
+    }
+}
+
+double QueueSimulator::twin_wait() {
+    // What a ticket office can predict: it sees its uncalled tickets and their
+    // ages (not whether each holder is still there) and how long each window
+    // has been serving, and knows the patience and service distributions.
+    // Sample the unknowns (holder still present = patience beyond the ticket's
+    // age; remaining and future service times), replay, and return the
+    // requested quantile of the sampled waits
+    const bool may_renege = config_.abandonment == Abandonment::RENEGE && !config_.commit;
+    const int k = std::max(1, config_.twin_samples);
+    std::vector<double> waits(k);
+    std::vector<double> free_at(windows_.size());
+    std::vector<Ahead> ahead;
+    ahead.reserve(waiting_queue_.size());
+    for (int s = 0; s < k; ++s) {
+        for (std::size_t i = 0; i < windows_.size(); ++i) {
+            free_at[i] = current_time_;
+            if (!windows_[i].is_busy) {
+                continue;
+            }
+            double elapsed = current_time_
+                - citizens_[windows_[i].current_citizen_id].service_start_time;
+            double total = draw_service(twin_rng_);
+            if (config_.service_dist == ServiceDist::EXPONENTIAL) {
+                total = elapsed + total;              // Memoryless
+            } else {
+                for (int tries = 0; total <= elapsed && tries < 200; ++tries) {
+                    total = draw_service(twin_rng_);
+                }
+                total = std::max(total, elapsed);
+            }
+            free_at[i] = current_time_ - elapsed + total;
+        }
+        ahead.clear();
+        for (int id : waiting_queue_) {
+            const Citizen& p = citizens_[id];
+            double leave = std::numeric_limits<double>::infinity();
+            if (may_renege && !p.is_appointment) {
+                double tau = draw_patience(twin_rng_);
+                if (p.arrival_time + tau < current_time_) {
+                    continue;                          // Holder has already gone
+                }
+                leave = p.arrival_time + tau;
+            }
+            ahead.push_back({leave, draw_service(twin_rng_)});
+        }
+        waits[s] = replay_start(free_at, ahead) - current_time_;
+    }
+    std::size_t idx = std::min<std::size_t>(
+        k - 1, static_cast<std::size_t>(config_.twin_quantile * k));
+    std::nth_element(waits.begin(), waits.begin() + idx, waits.end());
+    return waits[idx];
 }
 
 int QueueSimulator::find_free_window() {
@@ -373,7 +477,9 @@ void QueueSimulator::admit_citizen(bool is_appointment) {
         citizen.est_tickets = free_now ? 0.0
             : (static_cast<double>(waiting_queue_.size()) + 1) * per;
         citizen.est_les = free_now ? 0.0 : last_start_wait_;
-        citizen.est_oracle = config_.announce == Announce::ORACLE ? offered_wait() : 0.0;
+        citizen.est_oracle = config_.announce == Announce::ORACLE ? offered_wait()
+                           : config_.announce == Announce::TWIN ? (free_now ? 0.0 : twin_wait())
+                           : 0.0;
     }
     // Drawn for every citizen, in arrival order, so patience stays aligned
     // across staffing plans just like service requirements
@@ -400,7 +506,8 @@ void QueueSimulator::admit_citizen(bool is_appointment) {
         // Ticket queue with a wait display: leave at once if it exceeds patience
         double est = config_.announce == Announce::TICKETS ? citizen.est_tickets
                    : config_.announce == Announce::COUNT ? citizen.est_count
-                   : config_.announce == Announce::ORACLE ? citizen.est_oracle
+                   : (config_.announce == Announce::ORACLE
+                      || config_.announce == Announce::TWIN) ? citizen.est_oracle
                    : citizen.est_les;
         double shown = config_.display_scale * est;
         if (!config_.display_cutoff.empty()) {
