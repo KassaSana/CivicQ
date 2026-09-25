@@ -1881,6 +1881,129 @@ def run_e13f():
               f"{rmse[30]:.3f}/{rmse[100]:.3f}/{rmse[300]:.3f}")
     write_csv("e13f_door_counter.csv", rows)
 
+# ============================================================================
+# Round 11: learning by staffing (E14)
+# ============================================================================
+
+E14_TRUTHS = {"exp30": ("exp", 30.0, 1.0), "logn30": ("lognormal", 30.0, 0.5)}
+
+
+def _e14_truth(pname):
+    from learning import Patience
+    fam, mean, cv = E14_TRUTHS[pname]
+    return Patience(fam, mean, cv)
+
+
+def _e14_starts(office, pname):
+    """Erlang-C SIPP, and the E7 plans for this truth (hidden queue)."""
+    rates, s = _e13_office(office)
+    starts = {"Erlang-C SIPP": analytic_plans(rates, s, THRESHOLD, ALPHA)["SIPP"]}
+    for r in load_results("e7_abandonment.csv"):
+        if r["office"] == office and r["patience"] == pname and r["mode"] == "renege":
+            for label in r["found_by"].split("; "):
+                if label in ("SGS-UCB (fail)@renege", "SGS-UCB (late)@renege",
+                             "SIPP-A (fail)@renege"):
+                    starts[label.replace("@renege", "")] = json.loads(r["plan"])
+    return starts
+
+
+def run_e14a(reps=200):
+    """The exact M/M/c+G model against the simulator (constant demand and staffing)."""
+    from abandonment import renege_metrics, score
+    from learning import Patience, mmcg_hour
+    print("E14a: exact M/M/c+G vs the simulator and vs Erlang-A")
+    cases = [(3, 15.0, 8.0, "exp30"), (2, 15.0, 8.0, "logn30"), (3, 15.0, 8.0, "logn30"),
+             (2, 20.0, 8.0, "logn30"), (8, 30.0, 16.0, "logn30"), (10, 40.0, 16.0, "logn30"),
+             (12, 48.0, 16.0, "logn30"), (10, 40.0, 16.0, "exp30")]
+    rows = []
+    for c, lam, s, pname in cases:
+        truth = _e14_truth(pname)
+        fam, mean, cv = E14_TRUTHS[pname]
+        exact = mmcg_hour(c, lam / 60.0, s, truth, THRESHOLD)
+        ev = score([c] * SLOTS, [lam] * SLOTS, s, THRESHOLD, reps=reps, seed=300_000,
+                   duration=20000, **_patience_kw("renege", mean, fam, cv))
+        row = {"windows": c, "rate_per_hour": lam, "service_time": s, "patience": pname,
+               "erlang_a_fail": (round(renege_metrics(c, lam / 60, s, mean, THRESHOLD).fail, 5)
+                                 if fam == "exp" else "")}
+        for name, sim, ci, ex in [("fail", ev.fail[7], ev.fail_ci[7], exact.fail),
+                                  ("served_late", ev.served_late[7], ev.served_late_ci[7],
+                                   exact.served_late)]:
+            se = (ci[1] - ci[0]) / (2 * 1.96)
+            row.update({f"{name}_exact": round(ex, 5), f"{name}_sim": round(sim, 5),
+                        f"{name}_z": round((sim - ex) / se, 2) if se > 0 else 0.0})
+        row.update({"abandon_exact": round(exact.abandon, 5), "abandon_sim": round(ev.abandon[7], 5)})
+        rows.append(row)
+        print(f"  c={c:<2} lam={lam:g} S={s:g} {pname}: fail {ev.fail[7]:.4f} vs {exact.fail:.4f} "
+              f"(z={row['fail_z']}), served-late z={row['served_late_z']}, abandon "
+              f"{ev.abandon[7]:.4f} vs {exact.abandon:.4f}")
+    write_csv("e14a_mmcg_validation.csv", rows)
+
+
+E14_CASES = [(8.0, 0.10), (8.0, 0.20), (32.0, 0.10), (32.0, 0.20)]   # (Erlangs, alpha), S = 16
+E14_S = 16.0
+E14_EXPLORE = [(0.1, 0.9), (0.2, 0.9), (0.1, 0.8), (0.2, 0.8)]      # (share of days p, scale phi)
+
+
+def run_e14b():
+    """Theory: the refit-and-restaff loop in the stationary large-sample limit."""
+    from learning import (explore_plan, failures_per_day, iterate_explore, iterate_map,
+                          plan_distribution, sipp_g)
+    print("E14b: fixed points of the learning loop (stationary limit)")
+    rows = []
+    # (1) The E7 offices at alpha = 0.10 from every E7 start
+    for office in ("office", "R8_S16_A0.6"):
+        rates, s = _e13_office(office)
+        for pname in E14_TRUTHS:
+            truth = _e14_truth(pname)
+            oracle = sipp_g(rates, s, THRESHOLD, ALPHA, truth)
+            for rule in ("A", "B"):
+                for sname, start in _e14_starts(office, pname).items():
+                    path = iterate_map(start, rates, s, truth, rule)
+                    end, fitted = path[-1]
+                    rows.append({"part": "starts", "office": office, "alpha": ALPHA,
+                                 "patience": pname, "rule": rule, "start": sname,
+                                 "p": 0.0, "phi": "", "start_hours": sum(start),
+                                 "fixed_point": json.dumps(end), "fixed_hours": sum(end),
+                                 "oracle_hours": sum(oracle), "fitted_mean": round(fitted.mean, 1),
+                                 "path_hours": json.dumps([sum(q) for q, _ in path])})
+                    print(f"  {office:<12} {pname:<6} rule {rule} from {sname:<22} {sum(start):>3} h "
+                          f"-> {sum(end):>3} h (oracle {sum(oracle)})")
+    # (2) Size x target, from Erlang-C, with and without exploration days
+    for R, alpha in E14_CASES:
+        rates = arrival_profile(R, E14_S, 0.6)
+        erl = analytic_plans(rates, E14_S, THRESHOLD, alpha)["SIPP"]
+        for pname in E14_TRUTHS:
+            truth = _e14_truth(pname)
+            oracle = sipp_g(rates, E14_S, THRESHOLD, alpha, truth)
+            for rule in ("A", "B"):
+                for p, phi in [(0.0, 1.0)] + (E14_EXPLORE if rule == "A" else []):
+                    path = iterate_explore(erl, rates, E14_S, truth, rule, p, phi, alpha=alpha)
+                    end, fitted = path[-1]
+                    ex = explore_plan(end, phi) if p > 0 else end
+                    fails = ((1 - p) * failures_per_day(end, rates, E14_S, truth)
+                             + p * failures_per_day(ex, rates, E14_S, truth))
+                    row = {"part": "size", "office": f"R{R:g}", "alpha": alpha, "patience": pname,
+                           "rule": rule, "start": "Erlang-C SIPP", "p": p,
+                           "phi": phi if p > 0 else "", "start_hours": sum(erl),
+                           "fixed_point": json.dumps(end), "fixed_hours": sum(end),
+                           "oracle_hours": sum(oracle), "fitted_mean": round(fitted.mean, 1),
+                           "path_hours": json.dumps([sum(q) for q, _ in path]),
+                           "paid_hours_per_day": round((1 - p) * sum(end) + p * sum(ex), 2),
+                           "failures_per_day": round(fails, 1),
+                           "oracle_failures_per_day": round(
+                               failures_per_day(oracle, rates, E14_S, truth), 1)}
+                    if p == 0:
+                        h, _ = plan_distribution([(erl, 1.0)], rates, E14_S, truth, rule, 30,
+                                                 draws=200, alpha=alpha)
+                        row.update({"first_refit_30d_mean": round(float(h.mean()), 2),
+                                    "first_refit_30d_sd": round(float(h.std()), 2)})
+                    rows.append(row)
+                    print(f"  R={R:g} a={alpha} {pname:<6} rule {rule} p={p} phi={phi}: "
+                          f"{sum(erl)} -> {sum(end)} h (path {row['path_hours']}; oracle "
+                          f"{sum(oracle)}), fitted mean {fitted.mean:.0f}, failures/day {fails:.1f}")
+    keys = list(dict.fromkeys(k for r in rows for k in r))
+    write_csv("e14b_fixed_points.csv", [{k: r.get(k, "") for k in keys} for r in rows])
+
 EXPERIMENTS = {"e1b": run_e1b, "e1": run_e1, "e2": run_e2, "e2b": run_e2b,
                "e3a": run_e3a, "e3b": run_e3b, "e4": run_e4, "e5": run_e5, "e6": run_e6,
                "e7a": run_e7a, "e7": run_e7, "e7c": run_e7c, "e8a": run_e8a, "e8b": run_e8b,
@@ -1891,7 +2014,7 @@ EXPERIMENTS = {"e1b": run_e1b, "e1": run_e1, "e2": run_e2, "e2b": run_e2b,
                "e11e": run_e11e, "e12a": run_e12a, "e12b": run_e12b, "e12c": run_e12c,
                "e12d": run_e12d, "e12e": run_e12e,
                "e13a": run_e13a, "e13b": run_e13b, "e13c": run_e13c, "e13d": run_e13d,
-               "e13e": run_e13e, "e13f": run_e13f}
+               "e13e": run_e13e, "e13f": run_e13f, "e14a": run_e14a, "e14b": run_e14b}
 
 
 def main():

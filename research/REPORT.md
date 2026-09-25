@@ -276,7 +276,58 @@ Hypotheses:
 
   The reasoning: a wrong family fitted to where the waits are should get G right over those waits, which is what staffing needs. Matching the mean does not.
 
-An exploratory run with no hypothesis, E13f, covers the visible line. The ticket log holds no trace of balkers. With a timestamped door counter, each arrival's decision is current-status data at its expected wait (q + 1)·S/c, which can be rebuilt from the log.
+An exploratory run with no hypothesis, E13f, covers the visible line.
+
+**Round 11** (stated after the theory runs E14a and E14b and before the simulated histories E14c). Round 10 showed an office learns patience only from citizens who wait, so what it learns depends on how it staffs. Refitting and restaffing is a feedback loop, plan → waits in the log → fitted patience → new plan. Its fixed points are *self-confirming*: the plan produces exactly the data that justify it. Round 11 asks whether an office that learns passively gets stuck, and whether deliberately running lean on some days ("exploration") pays.
+
+Tools, both validated before this registration:
+- **An exact per-hour model for any patience curve** (`research/learning.py`). This is the stationary M/M/c+G queue with reneging, built from the virtual-wait density of Baccelli & Hebuterne (1981): f(x) = λπ_{c−1}·exp(λH(x) − cμx), with H(x) = ∫₀ˣ(1 − G). A citizen fails if V > T, or if V ≤ T and their patience is below V.
+  - With exponential patience it reproduces Erlang-A to 2·10⁻⁷ in 6 cases.
+  - Against the simulator at constant demand it agrees in 8 cases, 6 of them lognormal (E14a, all |z| < 2).
+  - SIPP built on it ("SIPP-G") with the true patience curve is the **oracle** analytic plan.
+- **Two office rules.** Rule A fits an exponential to the log and staffs by Erlang-A SIPP: Round 10's H41 route, simple and possibly misspecified. Rule B fits the AIC-chosen family and staffs by SIPP-G.
+- **The loop in the large-sample, stationary limit (E14b).** The current-status MLE converges to the maximizer of the expected log-likelihood over the tickets a plan produces, which is computable hour by hour from f.
+
+What E14b found, starting from Erlang-C SIPP (S = 16; staff-hours per day):
+
+| Office, α | Erlang-C | Rule A fixed point (path) | Oracle = rule B | Rule A, exploring p = 0.1, φ = 0.9 | Rule A, p = 0.2, φ = 0.8 |
+|---|---|---|---|---|---|
+| 8 E, 0.10 | 81 | 78 (81, 78) | 77 | 77 | 77 |
+| 8 E, 0.20 | 78 | 72 (78, 73, 72) | 69 | 72 | 71 |
+| 32 E, 0.10 | 277 | 267 (277, 271, 268, 267) | 261 | 265 | 258 |
+| 32 E, 0.20 | 269 | 261 (269, 262, 261) | 250 | 255 | **249** |
+
+(Lognormal patience, mean 30, CV 0.5. With exponential patience both rules reach the oracle in one step: 73, 65, 242 and 214 h.)
+
+- **Rule B (right family):** no trap. It reaches the oracle in one refit from every start. The normal approximation gives a plan SD of 0.4–1.5 h after 30 days of log.
+- **Rule A (wrong family):** stops short. Fitted to the short waits of a safe plan, lognormal patience looks like an exponential with mean 156–366 min, so the rule credits too little abandonment. It ratchets down and settles 1–11 h (up to 4.4%) above the oracle. The gap is largest for large offices with lenient targets, as Round 5's min(α, G(T)) implies.
+- **Exploration days** (a share p of days at φ × plan) move rule A's fit and its fixed point toward the oracle. The fitted "patience" then depends on the exploration dose, and heavy exploration overshoots below the oracle (249 < 250 h). Exploration costs citizens: at 32 E it raises stationary failures from 32 to 67 (α = 0.10) and from 60 to 135 (α = 0.20) a day. With exponential patience it changes no plan and only adds failures.
+- **Starting point:** at the 8 E office with α = 0.10, all E7 starts (57–81 h) reach the same fixed point in one step (rule A 77–78 h, rule B 77 h). The simulation optimum there is 72 h. Most of the gap between Erlang-C (81 h) and the optimum is the stationary model's error, not missing information.
+
+**E14c design.**
+- **Offices and targets:** 8 E and 32 E (S = 16, double peak A = 0.6, hidden queue, T = 15), α = 0.10 and 0.20.
+- **Truths:** lognormal (mean 30, CV 0.5) and, as a control, exponential (mean 30).
+- **Histories:** each office starts from Erlang-C SIPP and runs 8 periods of 30 days. After each period it refits on all its log so far and restaffs.
+- **Policies:**
+  - rule A;
+  - rule B (AIC family);
+  - rule A with exploration: days 10, 20 and 30 of each period run φ = 0.9 × plan, i.e. p = 0.1.
+- **Replication:** 10 histories per policy and setting, on log seeds 700000 onwards.
+- **Scoring:** each final plan is scored on the E7 evaluation seeds.
+
+Hypotheses:
+- **H42 (with the right model, one refit is enough).** Rule B, lognormal truth, in all 4 settings:
+  - after the first refit the plan is within ±3 h (8 E) or ±5 h (32 E) of the oracle in at least 9 of 10 histories;
+  - after the last refit it is within ±2 h (8 E) or ±3 h (32 E) in at least 9 of 10.
+- **H43 (a misspecified rule gets stuck above the oracle).** Rule A, lognormal truth.
+  - The mean final plan exceeds the oracle by at least half E14b's gap: at least 1.5 h at 8 E with α = 0.20, 3 h at 32 E with α = 0.10, and 5.5 h at 32 E with α = 0.20. The 8 E, α = 0.10 gap of 1 h is too small to test.
+  - In every setting the mean plan never rises by more than 1 h from one refit to the next (the ratchet).
+- **H44 (exploration closes part of the gap and costs citizens).** Rule A with exploration against rule A without, lognormal truth.
+  - At 32 E, the mean final plan is lower by at least half of E14b's difference: at least 1 h (α = 0.10) and 3 h (α = 0.20).
+  - At 32 E, observed failures per day over the whole history rise by at least 50% in both settings.
+  - Control (exponential truth): exploration changes the mean final plan by at most 1 h in all 4 settings and raises failures per day in all 4.
+- **H45 (a better model beats more data).** Rule B without exploration ends at no more staff-hours than rule A with exploration in all 4 lognormal settings, and at least 2 h fewer at 32 E in both settings.
+- **H46 (learned plans stay safe).** Every policy's final plan meets the failure target (no hour significantly above α on the evaluation days) in at least 95% of histories, pooled over settings and truths. The reasoning: stationary per-hour plans carry slack against the opening-empty day (§5.2). The ticket log holds no trace of balkers. With a timestamped door counter, each arrival's decision is current-status data at its expected wait (q + 1)·S/c, which can be rebuilt from the log.
 
 *Change after pre-registration (Round 2):* while testing H7 we found that Ciw cannot express CivicQ's staffing-change rule (see §5.6). H7 was therefore split into a strict test for constant staffing and a bounds test for changing staffing *before* E5 was run. This deviation is disclosed here.
 
