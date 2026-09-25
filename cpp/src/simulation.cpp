@@ -77,6 +77,7 @@ void QueueSimulator::reset() {
     slot_busy_time_.assign(NUM_SLOTS, 0.0);
     spill_minutes_ = 0.0;
     overtime_busy_minutes_ = 0.0;
+    last_start_wait_ = 0.0;
 
     // Reseed independent streams (common random numbers across staffing plans)
     std::seed_seq arrival_seed{static_cast<unsigned>(config_.random_seed), 1u};
@@ -235,6 +236,7 @@ void QueueSimulator::start_service(int citizen_id, int window_id) {
 
     citizens_[citizen_id].service_start_time = current_time_;
     citizens_[citizen_id].call_time = current_time_;
+    last_start_wait_ = current_time_ - citizens_[citizen_id].arrival_time;
     --waiting_count_;
 
     double departure_time = current_time_ + citizens_[citizen_id].service_time;
@@ -308,6 +310,18 @@ void QueueSimulator::admit_citizen(bool is_appointment) {
     citizen.call_time = -1.0;
     citizen.queue_ahead = waiting_count_;
     citizen.open_at_arrival = get_open_windows(current_time_);
+    citizen.balked = false;
+    // What each display would show. With a window free and nobody waiting the
+    // citizen is served at once; otherwise (n + 1) completions at rate c / S
+    {
+        int open = citizen.open_at_arrival;
+        bool free_now = waiting_count_ == 0 && find_free_window() >= 0;
+        double per = config_.mean_service_time / open;
+        citizen.est_count = free_now ? 0.0 : (waiting_count_ + 1) * per;
+        citizen.est_tickets = free_now ? 0.0
+            : (static_cast<double>(waiting_queue_.size()) + 1) * per;
+        citizen.est_les = free_now ? 0.0 : last_start_wait_;
+    }
     // Drawn for every citizen, in arrival order, so patience stays aligned
     // across staffing plans just like service requirements
     bool may_abandon = false;
@@ -321,12 +335,22 @@ void QueueSimulator::admit_citizen(bool is_appointment) {
         // The citizen sees the line: q people waiting and c open windows. With
         // every window busy they expect (q + 1) service completions at rate
         // c / S before their turn; with a free window they are served at once
-        int open = get_open_windows(current_time_);
-        bool free_now = waiting_count_ == 0 && find_free_window() >= 0;
-        double estimate = free_now ? 0.0
-            : (waiting_count_ + 1) * config_.mean_service_time / open;
-        if (estimate > citizen.patience) {
+        if (citizen.est_count > citizen.patience) {
             citizens_.back().abandoned = true;
+            citizens_.back().balked = true;
+            citizens_.back().abandon_time = current_time_;
+            return;
+        }
+    }
+    if (may_abandon && config_.abandonment == Abandonment::RENEGE
+            && config_.announce != Announce::NONE) {
+        // Ticket queue with a wait display: leave at once if it exceeds patience
+        double shown = config_.announce == Announce::TICKETS ? citizen.est_tickets
+                     : config_.announce == Announce::COUNT ? citizen.est_count
+                     : citizen.est_les;
+        if (shown > citizen.patience) {
+            citizens_.back().abandoned = true;
+            citizens_.back().balked = true;
             citizens_.back().abandon_time = current_time_;
             return;
         }
@@ -337,7 +361,7 @@ void QueueSimulator::admit_citizen(bool is_appointment) {
     ++waiting_count_;
     serve_waiting_citizens();
 
-    if (may_abandon && config_.abandonment == Abandonment::RENEGE
+    if (may_abandon && config_.abandonment == Abandonment::RENEGE && !config_.commit
             && citizens_[citizen.id].service_start_time < 0) {
         event_queue_.push({current_time_ + citizen.patience, EventType::RENEGE, -1, citizen.id});
     }
@@ -434,6 +458,7 @@ SimulationResults QueueSimulator::compute_results() const {
     results.appointment_wait_sum = 0.0;
     results.abandoned_per_slot.assign(NUM_SLOTS, 0);
     results.abandoned_wait_sum = 0.0;
+    results.balked = 0;
     results.spill_minutes = spill_minutes_;
     results.overtime_busy_minutes = overtime_busy_minutes_;
 
@@ -444,6 +469,9 @@ SimulationResults QueueSimulator::compute_results() const {
         if (citizen.abandoned) {
             results.abandoned_per_slot[get_current_slot(citizen.arrival_time)]++;
             results.abandoned_wait_sum += citizen.abandon_time - citizen.arrival_time;
+            if (citizen.balked) {
+                results.balked++;
+            }
         }
         if (citizen.departure_time >= 0) {
             results.total_served++;

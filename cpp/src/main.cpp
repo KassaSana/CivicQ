@@ -39,6 +39,8 @@ void print_usage() {
               << "  --patience-cv CV           Patience CV for lognormal (default: 1.0)\n"
               << "  --per-replication          One CSV row per replication instead of averages\n"
               << "  --citizen-log PATH         Also write one CSV row per citizen to PATH\n"
+              << "  --announce NAME            renege mode: none | tickets | count | les (default: none)\n"
+              << "  --commit                   renege mode: citizens who join never leave\n"
               << "  --output-waits             Include all wait times in output\n"
               << "  --help                     Show this help\n";
 }
@@ -166,6 +168,20 @@ int main(int argc, char* argv[]) {
         else if (arg == "--per-replication") {
             per_replication = true;
         }
+        else if (arg == "--announce" && i + 1 < argc) {
+            std::string name = argv[++i];
+            if (name == "none") config.announce = Announce::NONE;
+            else if (name == "tickets") config.announce = Announce::TICKETS;
+            else if (name == "count") config.announce = Announce::COUNT;
+            else if (name == "les") config.announce = Announce::LES;
+            else {
+                std::cerr << "Error: unknown announcement '" << name << "'\n";
+                return 1;
+            }
+        }
+        else if (arg == "--commit") {
+            config.commit = true;
+        }
         else if (arg == "--citizen-log" && i + 1 < argc) {
             citizen_log_path = argv[++i];
             config.log_citizens = true;
@@ -219,15 +235,17 @@ int main(int argc, char* argv[]) {
             return 1;
         }
         log << std::setprecision(10);
-        log << "rep,arrival,booked,patience,outcome,call_time,leave_time,queue_ahead,open_windows\n";
-        // outcome: 0 served, 1 reneged (hidden queue), 2 balked (visible line)
-        int left = config.abandonment == Abandonment::BALK ? 2 : 1;
+        log << "rep,arrival,booked,patience,outcome,call_time,leave_time,queue_ahead,open_windows,"
+               "est_tickets,est_count,est_les\n";
         for (size_t r = 0; r < results.size(); ++r) {
             for (const auto& c : results[r].citizen_log) {
                 double leave = c.abandoned ? c.abandon_time : c.departure_time;
                 log << r << "," << c.arrival_time << "," << (c.is_appointment ? 1 : 0) << ","
-                    << c.patience << "," << (c.abandoned ? left : 0) << "," << c.call_time << ","
-                    << leave << "," << c.queue_ahead << "," << c.open_at_arrival << "\n";
+                    // outcome: 0 served, 1 reneged, 2 balked (left on arrival)
+                    << c.patience << "," << (!c.abandoned ? 0 : c.balked ? 2 : 1) << ","
+                    << c.call_time << "," << leave << "," << c.queue_ahead << ","
+                    << c.open_at_arrival << "," << c.est_tickets << "," << c.est_count << ","
+                    << c.est_les << "\n";
             }
         }
     }
@@ -251,7 +269,7 @@ int main(int argc, char* argv[]) {
         for (int j = 0; j < 8; ++j) {
             std::cout << ",aband_" << j;
         }
-        std::cout << ",aband_wait_sum,spill_busy,overtime_busy";
+        std::cout << ",aband_wait_sum,spill_busy,overtime_busy,balked";
         std::cout << "\n";
         for (size_t r = 0; r < results.size(); ++r) {
             const auto& res = results[r];
@@ -274,7 +292,7 @@ int main(int argc, char* argv[]) {
                 std::cout << "," << res.abandoned_per_slot[j];
             }
             std::cout << "," << res.abandoned_wait_sum << "," << res.spill_minutes << ","
-                      << res.overtime_busy_minutes;
+                      << res.overtime_busy_minutes << "," << res.balked;
             std::cout << "\n";
         }
         return 0;
