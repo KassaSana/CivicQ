@@ -921,6 +921,84 @@ def fig_return_chains():
     save(fig, "fig16_return_chains.png")
 
 
+def fig_patience_estimates():
+    """Round 10: G(t) from the office's own ticket log, 30 and 300 days."""
+    curves = load("e13b_curves.csv")
+    cases = [("office", "exp30", "Office, exponential patience, lean plan (16 h)"),
+             ("R8_S16_A0.6", "logn30", "8 E, lognormal patience, citizen-optimal plan (72 h)")]
+    fig, axes = plt.subplots(2, 2, figsize=(11, 7), sharex=True)
+    for i, (office, pname, title) in enumerate(cases):
+        for j, days in enumerate((30, 300)):
+            ax = axes[i, j]
+            sub = [r for r in curves if r["office"] == office and r["patience"] == pname
+                   and int(r["days"]) == days]
+            t = np.array([float(r["t"]) for r in sub])
+            col = lambda k: np.array([float(r[k]) for r in sub])  # noqa: E731
+            ax.plot(t, col("truth"), color=INK, lw=2.0, label="truth")
+            ax.step(t, col("naive_km"), where="post", color="#e34948", lw=1.4,
+                    label="call-center KM (call time as departure)")
+            ax.step(t, col("npmle"), where="post", color="#2a78d6", lw=1.4,
+                    label="current-status NPMLE")
+            ax.plot(t, col("parametric"), color="#1baf7a", lw=1.4, ls="--",
+                    label=f"parametric CS-MLE ({sub[0]['family']}, by AIC)")
+            ax.axvline(15, color=MUTED, ls=":", lw=1)
+            ax.axvspan(float(sub[0]["v_max"]), 60, color=GRID, alpha=0.5, lw=0)
+            ax.set_title(f"{title}: {days} days" if j == 0 else f"{days} days", loc="left")
+            ax.set_ylim(0, 0.9 if pname == "exp30" else 0.45)
+            ax.set_xlim(0, 60)
+            if j == 0:
+                ax.set_ylabel("G(t) = P(patience < t)")
+            if i == 1:
+                ax.set_xlabel("Minutes (shaded: beyond the longest wait in the log)")
+    axes[0, 0].legend(fontsize=8, loc="upper left")
+    fig.tight_layout()
+    save(fig, "fig17_patience_estimates.png")
+
+
+def fig_patience_learning():
+    """Round 10: how fast an office learns G(15), and the family, from its log."""
+    rates = load("e13c_rates.csv")
+    fam = load("e13d_family.csv")
+    fig, (a, b) = plt.subplots(1, 2, figsize=(12, 4.2))
+    styles = {("office", "npmle"): ("#2a78d6", "o", "office, NPMLE"),
+              ("office", "exp_mle"): ("#2a78d6", "s", "office, exponential CS-MLE"),
+              ("R8_S16_A0.6", "npmle"): ("#e34948", "o", "8 E, NPMLE"),
+              ("R8_S16_A0.6", "exp_mle"): ("#e34948", "s", "8 E, exponential CS-MLE")}
+    for (office, est), (color, marker, label) in styles.items():
+        sub = [r for r in rates if r["office"] == office and r["estimator"] == est]
+        n = np.array([int(r["days"]) for r in sub])
+        y = np.array([float(r["rmse"]) for r in sub])
+        a.loglog(n, y, color=color, marker=marker, lw=1.4,
+                 ls="-" if est == "npmle" else "--",
+                 label=f"{label} (slope {float(sub[0]['slope']):+.2f})")
+    ref = np.array([10, 1000])
+    a.loglog(ref, 0.07 * (ref / 10) ** (-1 / 3), color=MUTED, lw=0.8, ls=":")
+    a.loglog(ref, 0.03 * (ref / 10) ** (-1 / 2), color=MUTED, lw=0.8, ls=":")
+    a.text(1100, 0.07 * 100 ** (-1 / 3), "n^(-1/3)", color=MUTED, fontsize=8, va="center")
+    a.text(1100, 0.03 * 100 ** (-1 / 2), "n^(-1/2)", color=MUTED, fontsize=8, va="center")
+    a.set_xlabel("Days of ticket log")
+    a.set_ylabel("RMSE of G(15)")
+    a.set_title("(a) Learning G(15), exponential patience", loc="left")
+    a.legend(fontsize=7.5)
+    for office, color in (("office", "#2a78d6"), ("R8_S16_A0.6", "#e34948")):
+        for kind, ls in (("lean", "--"), ("citizen", "-")):
+            sub = [r for r in fam if r["office"] == office and r["patience"] == "exp30"
+                   and r["plan_type"] == kind]
+            b.plot([int(r["days"]) for r in sub], [float(r["correct"]) for r in sub],
+                   color=color, ls=ls, marker="o", ms=3, lw=1.4,
+                   label=f"{'office' if office == 'office' else '8 E'}, {kind} plan "
+                         f"({sub[0]['staff_hours']} h)")
+    b.axhline(0.9, color=MUTED, ls=":", lw=1)
+    b.set_xscale("log")
+    b.set_ylim(0.7, 1.01)
+    b.set_xlabel("Days of ticket log")
+    b.set_ylabel("Share of logs where AIC picks exponential")
+    b.set_title("(b) Recognising exponential patience (lognormal: ≥ 95% by day 5)", loc="left")
+    b.legend(fontsize=7.5, loc="lower right")
+    fig.tight_layout()
+    save(fig, "fig18_patience_learning.png")
+
+
 if __name__ == "__main__":
     fig_gap_heatmap()
     fig_hourly()
@@ -938,3 +1016,5 @@ if __name__ == "__main__":
     fig_paid_overtime()
     fig_tipping()
     fig_return_chains()
+    fig_patience_estimates()
+    fig_patience_learning()

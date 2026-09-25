@@ -234,6 +234,7 @@ void QueueSimulator::start_service(int citizen_id, int window_id) {
     windows_[window_id].current_citizen_id = citizen_id;
 
     citizens_[citizen_id].service_start_time = current_time_;
+    citizens_[citizen_id].call_time = current_time_;
     --waiting_count_;
 
     double departure_time = current_time_ + citizens_[citizen_id].service_time;
@@ -242,18 +243,20 @@ void QueueSimulator::start_service(int citizen_id, int window_id) {
 }
 
 void QueueSimulator::serve_waiting_citizens() {
-    // FIFO: fill every free open window from the front of the queue
+    // FIFO: fill every free open window from the front of the queue. A ticket
+    // is called only when a window is free; a reneger's ticket is called then,
+    // nobody comes, and the same window calls the next ticket
     while (!waiting_queue_.empty()) {
-        int next_citizen = waiting_queue_.front();
-        if (citizens_[next_citizen].abandoned) {
-            waiting_queue_.pop();   // Reneged while in line
-            continue;
-        }
         int free_window = find_free_window();
         if (free_window < 0) {
             break;
         }
+        int next_citizen = waiting_queue_.front();
         waiting_queue_.pop();
+        if (citizens_[next_citizen].abandoned) {
+            citizens_[next_citizen].call_time = current_time_;   // Reneged while in line
+            continue;
+        }
         start_service(next_citizen, free_window);
     }
 }
@@ -302,6 +305,9 @@ void QueueSimulator::admit_citizen(bool is_appointment) {
     citizen.abandon_time = -1.0;
     citizen.service_start_time = -1.0;
     citizen.departure_time = -1.0;
+    citizen.call_time = -1.0;
+    citizen.queue_ahead = waiting_count_;
+    citizen.open_at_arrival = get_open_windows(current_time_);
     // Drawn for every citizen, in arrival order, so patience stays aligned
     // across staffing plans just like service requirements
     bool may_abandon = false;
@@ -463,6 +469,9 @@ SimulationResults QueueSimulator::compute_results() const {
     }
 
     results.all_wait_times = wait_times;
+    if (config_.log_citizens) {
+        results.citizen_log = citizens_;
+    }
 
     // Compute mean wait time
     if (!wait_times.empty()) {

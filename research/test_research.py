@@ -26,6 +26,9 @@ from tipping import (  # noqa: E402
     classify_roots, fluid_day_renege, fluid_fixed_point, fluid_return_curve,
     simulate_return_chain, stationary_return_roots,
 )
+from patience_logs import (  # noqa: E402
+    ARRIVAL, CALL, LEAVE, OUTCOME, PATIENCE, cs_mle, cs_npmle, naive_km, pick_family, raw_log,
+)
 
 SIMULATOR = find_simulator()
 
@@ -421,6 +424,70 @@ class TestTipping(unittest.TestCase):
         path = simulate_return_chain([3, 4, 3, 2, 2, 3, 4, 3], self.RATES, 8.0, 0.0,
                                      "profile", 5, abandonment="renege", patience=30.0)
         self.assertTrue(all(p["returns"] == 0 for p in path))
+
+
+class TestPatienceLogs(unittest.TestCase):
+    def test_npmle_matches_brute_force_isotonic_fit(self):
+        # Brute force: the least-squares nondecreasing fit on 0/1 data is the
+        # max-min formula g_i = max_{j<=i} min_{k>=i} mean(y_j..y_k)
+        rng = np.random.default_rng(3)
+        for _ in range(20):
+            v = rng.uniform(0, 30, 12)
+            y = rng.uniform(size=12) < v / 30
+            t, g = cs_npmle(v, y)
+            ys = y[np.argsort(v)].astype(float)
+            n = len(ys)
+            brute = [max(min(ys[j:k + 1].mean() for k in range(i, n)) for j in range(i + 1))
+                     for i in range(n)]
+            np.testing.assert_allclose(g, brute, atol=1e-12)
+            self.assertTrue(np.all(np.diff(t) >= 0))
+
+    def test_parametric_mle_recovers_iid_current_status(self):
+        rng = np.random.default_rng(11)
+        v = rng.exponential(20.0, 40_000)
+        tau = rng.exponential(30.0, 40_000)
+        fit = cs_mle(v, tau < v, "exp")
+        self.assertAlmostEqual(fit.mean, 30.0, delta=1.0)
+        sigma = math.sqrt(math.log(1.25))
+        tau = np.exp(math.log(30.0) - sigma ** 2 / 2 + sigma * rng.standard_normal(40_000))
+        fam, fits = pick_family(v, tau < v)
+        self.assertEqual(fam, "lognormal")
+        self.assertAlmostEqual(fits["lognormal"].mean, 30.0, delta=1.5)
+        self.assertAlmostEqual(fits["lognormal"].params[1], sigma, delta=0.05)
+
+    def test_naive_km_without_leavers_is_zero(self):
+        t, g = naive_km(np.array([3.0, 1.0, 2.0]), np.array([False, False, False]))
+        np.testing.assert_array_equal(g, [0.0, 0.0, 0.0])
+
+    def test_citizen_log_invariants(self):
+        for mode in ("renege", "balk"):
+            rows = raw_log([2] * 8, OFFICE_RATES, 8.0, mode=mode, days=50, seed=7)
+            served = rows[rows[:, OUTCOME] == 0]
+            left = rows[rows[:, OUTCOME] != 0]
+            self.assertTrue(len(left) > 0)
+            self.assertTrue(np.all(served[:, CALL] >= served[:, ARRIVAL]))
+            self.assertTrue(np.all(served[:, LEAVE] >= served[:, CALL]))
+            if mode == "renege":
+                self.assertTrue(np.all(left[:, OUTCOME] == 1))
+                np.testing.assert_allclose(left[:, LEAVE], left[:, ARRIVAL] + left[:, PATIENCE])
+                # Called only after they left, so an office sees absent <=> patience < V
+                self.assertTrue(np.all(left[:, CALL] >= left[:, LEAVE] - 1e-9))
+                v = rows[:, CALL] - rows[:, ARRIVAL]
+                np.testing.assert_array_equal(rows[:, OUTCOME] == 1, rows[:, PATIENCE] < v)
+            else:
+                self.assertTrue(np.all(left[:, OUTCOME] == 2))
+                np.testing.assert_array_equal(left[:, LEAVE], left[:, ARRIVAL])
+                self.assertTrue(np.all(left[:, CALL] == -1))
+            # Per-day aggregates are unchanged by logging
+            args = [str(SIMULATOR), "--staffing", "2,2,2,2,2,2,2,2", "--abandonment", mode,
+                    "--replications", "20", "--seed", "7", "--per-replication"]
+            import subprocess
+            import tempfile
+            plain = subprocess.run(args, capture_output=True, text=True, check=True).stdout
+            with tempfile.TemporaryDirectory() as tmp:
+                logged = subprocess.run(args + ["--citizen-log", str(Path(tmp) / "c.csv")],
+                                        capture_output=True, text=True, check=True).stdout
+            self.assertEqual(plain, logged)
 
 
 if __name__ == "__main__":

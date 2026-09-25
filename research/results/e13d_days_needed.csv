@@ -1,0 +1,5 @@
+office,plan_type,days_exp,days_logn,first_exp,first_logn,days_needed
+office,lean,45,5,45,5,45
+office,citizen,180,5,180,5,180
+R8_S16_A0.6,lean,45,5,45,5,45
+R8_S16_A0.6,citizen,45,5,45,5,45
