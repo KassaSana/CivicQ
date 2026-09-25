@@ -26,6 +26,7 @@ The target is that at most 10% of each hour's arrivals wait more than 15 minutes
 - **Paying for unpaid work (Round 8).** When service after closing and at closing windows is paid, a large office needs its full workload plus a small constant slack, about 8·(S/T)·ln(1/α) window-hours. Round 7's below-workload result and its √R correction both came from that free work. SIPP's excess still grows with service time, but now through threshold stringency and lag. Who stays after closing (staff leaving when idle, or everyone waiting for the last citizen) moves paid costs by up to 16%, more than a time-and-a-half premium does.
 - **Mandatory services fade, they do not tip (Round 9).** When every citizen who leaves must come back, the office has one steady state at every staffing level, both in theory (the fluid and stationary models) and in 12 simulated return curves. There is no second state for a bad day to push it into. What grows near collapse is recovery time: after one closure day, 5 days at the citizen-optimal plan and 47 days with 21% fewer window-hours, while the daily numbers still look calm. With returners at opening, cutting 5% of window-hours raises the steady state from 30 to 142 repeat visits per 100. The fluid's error on the steady state is a fixed number of citizens, about 30–65 a day, at both 8 and 32 Erlangs.
 - **An office can learn its citizens' patience from its own ticket log, but slowly, and not the call-center way (Round 10).** A ticket system never sees anyone leave; it sees tickets called with nobody there. That makes its log current-status data, and the current-status estimator recovers the patience curve in every setting tested. The call-center recipe (call time as departure time) measures the patience CDF times the hazard of the office's own waits. Its error flips sign with the staffing plan: +28% to +39% at the citizen-optimal plans, −14% to −61% elsewhere. Learning runs at the cube-root rate: over a year of logs to pin G(15) to ±0.02, and 180 days for a well-staffed small office to tell exponential from lognormal patience. Mean patience is not identified at all. An exponential deliberately fitted to 60 days of log made Erlang-A safe in the one case where it had failed (20 of 20 plans met the target, at 77 h against the 72 h optimum).
+- **Learning by staffing (Round 11).** An office that refits patience on its own log and restaffs is running a feedback loop. With the right patience family it lands on its staffing within one month of normal operation, and running lean to learn is unnecessary. A simpler misspecified model (exponential patience) is trapped: at a safe plan citizens seldom wait long enough to reveal how patient they are, so it stops 1–4% above the right plan. Exploration days free it only partly, at 2.5–3.6 extra citizens failed per staff-hour saved. The surprise is that the correctly learned plan was *unsafe* at 32 Erlangs: the misspecified model's overstaffing had been hiding the stationary model's blind spot after the peaks. Learning the curve and staffing on lagged rates was safe in all 80 confirmatory histories and 6–7% cheaper. A new exact model for any patience curve (M/M/c+G) makes this possible.
 - **Independent validation (Round 2).** An independent implementation in the open-source Ciw library agrees with CivicQ: 0 of 54 tests reject under constant staffing, and CivicQ stays within Ciw's bounds in all 25 hours tested under changing staffing. Along the way we found that Ciw's hourly schedules silently add overtime capacity at every shift boundary, which halves the measured lateness if used naively.
 
 ## 1. Background and gap
@@ -994,13 +995,65 @@ A small office with a visible line cannot learn its patience at the threshold fr
 3. **Learning is slow and uneven.** Nonparametrically, it takes more than a year of logs to fix G(15) to ±0.02. A well-staffed small office needs about 180 days even to tell exponential from lognormal. The more waiting an office prevents, the less it learns.
 4. **For staffing, fit the curve where the waits are, not the mean.** A deliberately simple exponential fitted to 60 days of the log made Erlang-A safe in the one case where the mean-matched version failed, at a cost of about 5 staff-hours.
 
+### 5.15 Learning by staffing (E14)
+
+An office learns patience only from citizens who wait (§5.14), so refitting and restaffing form a loop: plan → log → fitted patience → plan. Round 11 asked whether that loop gets stuck, and whether deliberately running lean pays. The tools, the stationary theory (E14a–b) and H42–H46 were registered in cb1f480 before any history was simulated. H47 was registered in 354a066 after E14c and before E14d.
+
+*Disclosure.* Before E14c, one 2-period development history (history index 999, outside the registered 0–9) was run to test the pipeline. E14a's four S = 16 cases have z between −1.9 and −1.2. They share random numbers, so they are one correlated check, and the exponential case, where the formula equals Erlang-A exactly, shows the same small lean.
+
+**The histories (E14c; 10 per policy, lognormal patience).** Staff-hours per day, starting from Erlang-C:
+
+| Office, α | Start | Rule A | A + exploration | Rule B | SIPP-G oracle | *B + Lag-SIPP-G (E14d)* |
+|---|---|---|---|---|---|---|
+| 8 E, 0.10 | 81 | 77.2 | 77.1 | 76.4 | 77 | *73.0* |
+| 8 E, 0.20 | 78 | 72.1 | 71.7 | 69.0 | 69 | *67.3* |
+| 32 E, 0.10 | 277 | 267.1 | 265.2 | 260.4 ✗ | 261 ✗ | *251.6* |
+| 32 E, 0.20 | 269 | 260.4 | 255.8 | 249.5 ✗ | 250 ✗ | *242.0* |
+
+✗ = misses the failure target on the evaluation days in every history.
+
+**H42: supported.** With the right family, one refit is enough. Rule B was within tolerance of the oracle in 10 of 10 histories after the first 30 days and after all 240, in all four settings, and AIC chose the lognormal every time.
+
+**H43: supported.** The misspecified rule stops short where the theory said it would. Rule A settled 3.1, 6.1 and 10.4 h above the oracle (E14b: 3, 6, 11) and never rose more than 0.3 h between refits (Fig. 19). This is a self-confirming trap. A safely staffed office sees mostly short waits, where lognormal patience looks like an exponential with a mean of several hours. It concludes that few people leave, and staffs so that it keeps seeing short waits.
+
+**H44: supported.** Exploration closes part of the gap, and citizens pay for it. On one day in ten at 90% staffing, rule A's final 32 E plans fell by 1.9 and 4.6 h, while failures per day over the history rose by 72% and 77%. Counting the paid hours of the whole history, exploration saved 4.6 and 5.9 staff-hours a day for 11.4 and 21.5 extra citizens late or left: 2.5–3.6 failures per staff-hour saved. With exponential patience, where rule A is correctly specified, exploration changed no plan and added 7–11% failures. In E14b the fitted "patience" slid from a mean of 366 to 138 min as exploration grew: a misspecified model's estimate is a property of the design.
+
+**H45: supported.** A better model beats more data. Rule B without exploration ended 0.7–6.3 h below rule A with exploration in every setting, with no citizens sacrificed to learning.
+
+![Learning paths](figures/fig19_learning_paths.png)
+
+**H46: rejected.** Only 160 of 240 final plans (67%) were safe. Every miss is at 32 E:
+- all rule B plans under lognormal patience;
+- all plans of every policy under exponential patience;
+- the SIPP-G oracle itself.
+
+They miss in the hours after the peaks: 10–11, 11–12 and 3–4 PM, worst 12.6% against 10%, and 23.7% against 20% at α = 0.20. A peak's backlog spills into the next hour, which a stationary per-hour model cannot see. It is Round 1's lag effect, which without abandonment never produced a significant miss (§5.2). Rule A was safe only because its misspecification overstaffs. **Learning the right patience curve removed a hidden safety margin.**
+
+**H47 (confirmatory): supported.** Learn the curve and staff for the lag. Rule B restaffing by SIPP-G on Round 1's lagged rates (Lag-SIPP-G), in 80 new histories:
+- (a) all 80 final plans met the failure target;
+- (b) all 80 were within 1 h of Lag-SIPP-G with the true curve;
+- (c) under lognormal patience it used 15.5 and 18.4 h fewer than rule A at 32 E (6–7%), and 4.2 and 4.8 h fewer at 8 E.
+
+At the 8 E office with α = 0.10 it reaches 73 h, against the simulation optimum of 72 h. Learning also ran fast: every setting was within 1 h of its final plan after the first 30 days.
+
+![Cost and safety of each policy](figures/fig20_learning_tradeoff.png)
+
+*Fig. 20 note:* with exponential patience, rules A, A with exploration and B reach the same plan, so their markers overlap. Points slightly above the dashed line are within sampling error ("safe" means no hour significantly above α).
+
+**Where the 8 E office's 9 hours go** (α = 0.10, lognormal patience): Erlang-C SIPP 81 h → learning the patience curve 77 h (4 h, what the data are worth) → accounting for the lag 73 h (4 h, what the model is worth) → the simulation optimum 72 h.
+
+**What changes.**
+1. **Passive learning works if the model can represent what it sees.** With the right family the office learns its staffing within a month of ordinary operation. Exploration is not needed.
+2. **A simple, misspecified model traps the office above the right plan, and exploration only partly frees it.** Exploration buys staff-hours with citizens' failures (2.5–3.6 per hour saved here), and the answer then depends on how much the office explored.
+3. **Learning the truth can make a plan less safe if the staffing model is wrong in another way.** The misspecified rule's overstaffing had been covering the stationary model's blind spot after the peaks. Improve the model and the data together: learned patience plus a lag-aware rule was safe everywhere and cheapest.
+
 ## 6. Threats to validity
 - **Synthetic demand.** Arrival rates follow a stylized double-peak profile. There are no public arrival-count data for walk-in offices; the CA DMV data contain only waits.
 - **Exponential service in E1.** This favours the Erlang-C rules, which assume it. With CV < 1, as is typical for lognormal service, the analytic rules would overstaff even more (E2).
 - **Fixed service threshold.** T = 15 min is the same for every S. The same target is harder to meet with S = 32 than with S = 4.
 - **Fixed schedule structure.** One-hour blocks. §5.5 adds shifts, but without lunch breaks, part-time limits or labor rules. Rounds 1–2 have no abandonment or appointments, and every round has a single service type.
 - **The regime analysis (§5.9) is per hour and stationary.** The crossover and the fluid limit come from steady-state models. The time-varying tests agree with them, but the office's own +1 h is a marginal effect near the target, not a stationary one. The fluid limit is an asymptotic argument; the table shows how fast each case converges. Round 6 (§5.10) is also stationary, per hour, and limited to exponential patience and service. Its diffusion constants are heuristic, and the variable that governs convergence (β̂) was identified only after the results were in.
-- **Abandonment is stylized (§5.8).** Patience distributions are assumed, not calibrated; no public data measure walk-away behaviour at government offices. §5.14 shows how an office could calibrate from its own ticket log, but it was tested only on simulated logs whose patience comes from the assumed families. It also assumes calling an absent ticket takes no clerk time, that every absence is a reneger (not someone who stepped out and came back), and that patience does not depend on things the log cannot see, such as the line a citizen saw on arrival. Balkers judge the wait from the line with the true mean service time and ignore people ahead who would leave. There is no mixed behaviour (balking *and* reneging) and no priority or callback. In E7c every leaver returns (r = 1) with the same patience, either following the demand curve or all at opening; real return timing lies somewhere between, and the fixed point assumes a stationary day-to-day regime.
+- **Abandonment is stylized (§5.8).** Patience distributions are assumed, not calibrated; no public data measure walk-away behaviour at government offices. §5.14 shows how an office could calibrate from its own ticket log, but it was tested only on simulated logs whose patience comes from the assumed families. It also assumes calling an absent ticket takes no clerk time, that every absence is a reneger (not someone who stepped out and came back), and that patience does not depend on things the log cannot see, such as the line a citizen saw on arrival. §5.15's histories refit every 30 days with a stationary per-hour model; demand is the same every day, and patience does not change over time or in response to service. Balkers judge the wait from the line with the true mean service time and ignore people ahead who would leave. There is no mixed behaviour (balking *and* reneging) and no priority or callback. In E7c every leaver returns (r = 1) with the same patience, either following the demand curve or all at opening; real return timing lies somewhere between, and the fixed point assumes a stationary day-to-day regime.
 - **Appointments are simplified.** They are served FIFO, with no priority for booked citizens. No-shows are independent with a fixed rate, bookings are evenly spaced within each hour, and there are no walk-in balking or booking-lead-time effects.
 - **Integrated search is a local search.** It is multi-started and never worse than its two-step start, but it is not proven optimal for large offices.
 - **The Ciw bounds test is weak for long-service, large offices** (§5.6); the strict constant-staffing test is the main evidence.
@@ -1023,15 +1076,16 @@ A small office with a visible line cannot learn its patience at the threshold fr
 10. **Don't assume walk-outs save staff.** They do only in larger offices with lenient targets, by at most the target share α and at most the share of citizens who would give up within the threshold. With strict targets or in small offices they cost staff, and for a mandatory service the long-run saving is zero. For an office with c windows, "strict" means α < K₁/√c (§5.10): about 0.03 at 100 windows when service takes 8 min and patience averages 30.
 11. **Watch recovery time for mandatory services.** An office close to collapse does not look different on a normal day; it takes weeks instead of days to recover from a closure or a system outage (§5.13). If a one-day disruption is still visible in repeat visits two weeks later, add staff, first-hour staff especially when returners come at opening.
 12. **Learn patience from "called, nobody came", not from call times.** Log every ticket called with nobody there. Estimate the patience curve as current-status data (isotonic regression of "absent" on the wait until the call), never by treating the call as the moment the citizen left: that confuses patience with the office's own staffing. Expect to need months of logs, more if the office is well staffed. Trust the curve only over the waits the office actually produces, and treat any "mean patience" as a guess.
-13. **Don't pick Erlang-A's patience model by habit.** Its exponential assumption can understaff when few people leave early. If the line is visible, a balking model with a realistic patience distribution is exact and was safe here.
-14. **If you use Ciw for time-varying staffing, merge consecutive equal shifts.** Otherwise each shift boundary adds phantom overtime capacity.
+13. **When you refit and restaff from your own log, fix the model before collecting more data.** An office that learns from a well-staffed log sees only short waits. A too-simple patience model then keeps it overstaffed, and running lean to learn costs citizens for a partial fix. A model that can represent what it sees learns within a month. And if the staffing rule itself is stationary, correct it for the lag after peaks before trusting the learned plan: the learned curve removes slack that was covering that gap.
+14. **Don't pick Erlang-A's patience model by habit.** Its exponential assumption can understaff when few people leave early. If the line is visible, a balking model with a realistic patience distribution is exact and was safe here.
+15. **If you use Ciw for time-varying staffing, merge consecutive equal shifts.** Otherwise each shift boundary adds phantom overtime capacity.
 
 ## 8. Reproducing
 ```bash
 g++ -std=c++17 -O2 -static -Icpp/include -o cpp/build/queue_sim.exe cpp/src/simulation.cpp cpp/src/main.cpp
 pip install -r research/requirements.txt   # numpy, matplotlib, scipy, ciw
 python research/test_research.py
-python research/experiments.py --all     # about 2.8 hours on 8 cores (E7 takes 25, E8a 3, E8b 5, E9 5, E10 60, E11 20, E12 3, E13 20)
+python research/experiments.py --all     # about 2.8 hours on 8 cores (E7 takes 25, E8a 3, E8b 5, E9 5, E10 60, E11 20, E12 3, E13 20, E14 8)
 python research/figures.py
 ```
 
@@ -1048,6 +1102,7 @@ python research/figures.py
 - Hassin, R., & Mendel, S. (2008). Scheduling arrivals to queues: A single-server model with no-shows. *Management Science*, 54(3), 565–572.
 - Staffing a service system with appointment-based customer arrivals (2014). *Journal of the Operational Research Society*, 65(10). doi:10.1057/jors.2013.110
 - Brown, L., Gans, N., Mandelbaum, A., Sakov, A., Shen, H., Zeltyn, S., & Zhao, L. (2005). Statistical analysis of a telephone call center: A queueing-science perspective. *JASA*, 100(469), 36–50.
+- Baccelli, F., & Hebuterne, G. (1981). On queues with impatient customers. In *Performance '81*, 159–179. North-Holland.
 - Groeneboom, P., & Wellner, J. A. (1992). *Information Bounds and Nonparametric Maximum Likelihood Estimation*. DMV Seminar 19, Birkhäuser.
 - Atlason, J., Epelman, M. A., & Henderson, S. G. (2004). Call center staffing with simulation and cutting plane methods. *Annals of Operations Research*, 127, 333–358.
 - Ingolfsson, A., Haque, M. A., & Umnikov, A. (2002). Accounting for time-varying queueing effects in workforce scheduling. *European Journal of Operational Research*, 139(3), 585–597.

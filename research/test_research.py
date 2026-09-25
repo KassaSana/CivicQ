@@ -26,6 +26,9 @@ from tipping import (  # noqa: E402
     classify_roots, fluid_day_renege, fluid_fixed_point, fluid_return_curve,
     simulate_return_chain, stationary_return_roots,
 )
+from learning import (  # noqa: E402
+    Patience, explore_plan, limit_fit, mmcg_hour, run_history, sipp_g,
+)
 from patience_logs import (  # noqa: E402
     ARRIVAL, CALL, LEAVE, OUTCOME, PATIENCE, cs_mle, cs_npmle, naive_km, pick_family, raw_log,
 )
@@ -489,6 +492,40 @@ class TestPatienceLogs(unittest.TestCase):
                                         capture_output=True, text=True, check=True).stdout
             self.assertEqual(plain, logged)
 
+
+
+class TestLearning(unittest.TestCase):
+    def test_mmcg_with_exponential_patience_is_erlang_a(self):
+        for c, lam, s, m in [(2, 12, 8, 30), (8, 40, 16, 30), (2, 20, 8, 10), (5, 40, 8, 200)]:
+            e = renege_metrics(c, lam / 60, s, m, 15.0)
+            g = mmcg_hour(c, lam / 60, s, Patience("exp", m), 15.0)
+            self.assertAlmostEqual(g.fail, e.fail, places=5)
+            self.assertAlmostEqual(g.abandon, e.abandon, places=5)
+            self.assertAlmostEqual(g.served_late, e.served_late, places=5)
+
+    def test_sipp_g_matches_erlang_a_sipp(self):
+        from abandonment import sipp_abandonment
+        self.assertEqual(sipp_g(OFFICE_RATES, 8.0, 15.0, 0.1, Patience("exp", 30.0)),
+                         sipp_abandonment(OFFICE_RATES, 8.0, 15.0, 0.1, "renege", 30.0, "fail"))
+
+    def test_limit_fit_recovers_the_right_family(self):
+        plan = [3, 3, 3, 2, 2, 3, 3, 3]
+        for truth in (Patience("exp", 30.0), Patience("lognormal", 30.0, 0.5)):
+            fit = limit_fit(plan, OFFICE_RATES, 8.0, truth, truth.family)
+            self.assertAlmostEqual(fit.mean, 30.0, delta=0.3)
+            self.assertAlmostEqual(fit.cv, truth.cv, delta=0.01)
+
+    def test_explore_plan_removes_at_least_one_window(self):
+        self.assertEqual(explore_plan([2, 10, 1], 0.9), [1, 9, 1])
+        self.assertEqual(explore_plan([30, 40], 0.9), [27, 36])
+
+    def test_history_records_every_period(self):
+        out = run_history((OFFICE_RATES, 8.0, 0.1, Patience("exp", 30.0), "A", True,
+                           [3, 3, 3, 2, 2, 3, 3, 3], 998, 2, 10, 15.0))
+        self.assertEqual([r["period"] for r in out], [1, 2])
+        self.assertTrue(all(len(r["new_plan"]) == 8 for r in out))
+        # Exploration days run fewer windows, so paid hours fall below the plan
+        self.assertLess(out[0]["paid_hours_per_day"], out[0]["hours_run"])
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

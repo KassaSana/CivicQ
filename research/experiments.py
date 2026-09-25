@@ -2102,6 +2102,85 @@ def run_e14c():
     write_csv("e14c_summary.csv", summary)
 
 
+
+def run_e14d():
+    """H47 (confirmatory): rule B restaffing by Lag-SIPP-G, new histories."""
+    from abandonment import score
+    from learning import run_history, sipp_g
+    from staffing_methods import lagged_rates
+    print("E14d: learn the patience curve, staff for the lag")
+    rule_a = {(r["office"], float(r["alpha"]), r["patience"]): float(r["final_mean"])
+              for r in load_results("e14c_summary.csv")
+              if r["rule"] == "A" and r["explore"] == "False"}
+    tasks, keys = [], []
+    for R, alpha in E14_CASES:
+        rates = arrival_profile(R, E14_S, 0.6)
+        erl = analytic_plans(rates, E14_S, THRESHOLD, alpha)["SIPP"]
+        for pname in E14_TRUTHS:
+            truth = _e14_truth(pname)
+            for h in range(E14_HISTORIES):
+                tasks.append((rates, E14_S, alpha, truth, "B", False, erl, h, E14_PERIODS,
+                              E14_DAYS, THRESHOLD, True, 800_000))
+                keys.append((R, alpha, pname, h))
+    histories = pmap_processes(run_history, tasks)
+    rows = []
+    for (R, alpha, pname, h), hist in zip(keys, histories):
+        for rec in hist:
+            rows.append({"office": f"R{R:g}", "alpha": alpha, "patience": pname, "history": h,
+                         "period": rec["period"], "hours_run": rec["hours_run"],
+                         "new_hours": rec["new_hours"], "new_plan": json.dumps(rec["new_plan"]),
+                         "failures_per_day": round(rec["failures_per_day"], 2),
+                         "fitted_family": rec["fitted_family"],
+                         "fitted_mean": round(rec["fitted_mean"], 1),
+                         "fitted_cv": round(rec["fitted_cv"], 3)})
+    write_csv("e14d_histories.csv", rows)
+    finals = {}
+    for r in rows:
+        if r["period"] == E14_PERIODS:
+            finals.setdefault((r["office"], r["alpha"], r["patience"], r["new_plan"]), None)
+
+    def score_one(key):
+        office, alpha, pname, plan = key
+        fam, mean, cv = E14_TRUTHS[pname]
+        ev = score(json.loads(plan), arrival_profile(float(office[1:]), E14_S, 0.6), E14_S,
+                   THRESHOLD, **_patience_kw("renege", mean, fam, cv))
+        return ev.misses("fail", alpha), round(ev.worst("fail"), 4)
+
+    for key, res in zip(finals, pmap(score_one, list(finals))):
+        finals[key] = res
+    summary = []
+    for R, alpha in E14_CASES:
+        office = f"R{R:g}"
+        rates = arrival_profile(R, E14_S, 0.6)
+        for pname in E14_TRUTHS:
+            target = sum(sipp_g(lagged_rates(rates, E14_S), E14_S, THRESHOLD, alpha,
+                                _e14_truth(pname)))
+            last = [r for r in rows if (r["office"], r["alpha"], r["patience"], r["period"])
+                    == (office, alpha, pname, E14_PERIODS)]
+            scored = [finals[(office, alpha, pname, r["new_plan"])] for r in last]
+            final_mean = float(np.mean([r["new_hours"] for r in last]))
+            summary.append({"office": office, "alpha": alpha, "patience": pname,
+                            "lag_sipp_g_true": target,
+                            "final_mean": round(final_mean, 2),
+                            "final_min": min(r["new_hours"] for r in last),
+                            "final_max": max(r["new_hours"] for r in last),
+                            "within": sum(abs(r["new_hours"] - target) <= (2 if R == 8 else 3)
+                                          for r in last),
+                            "safe": sum(m == 0 for m, _ in scored),
+                            "worst_fail": max(w for _, w in scored),
+                            "rule_a_final_mean": rule_a[(office, alpha, pname)],
+                            "saving_vs_rule_a": round(rule_a[(office, alpha, pname)] - final_mean, 2),
+                            "failures_per_day": round(float(np.mean(
+                                [r["failures_per_day"] for r in rows if (r["office"], r["alpha"],
+                                 r["patience"]) == (office, alpha, pname)])), 2)})
+            x = summary[-1]
+            print(f"  {office} a={alpha} {pname:<6}: final {x['final_mean']:.1f} "
+                  f"[{x['final_min']}-{x['final_max']}] vs Lag-SIPP-G(true) {target}, within "
+                  f"{x['within']}/10, safe {x['safe']}/10 (worst {x['worst_fail']}), "
+                  f"rule A {x['rule_a_final_mean']}")
+    write_csv("e14d_summary.csv", summary)
+
+
 EXPERIMENTS = {"e1b": run_e1b, "e1": run_e1, "e2": run_e2, "e2b": run_e2b,
                "e3a": run_e3a, "e3b": run_e3b, "e4": run_e4, "e5": run_e5, "e6": run_e6,
                "e7a": run_e7a, "e7": run_e7, "e7c": run_e7c, "e8a": run_e8a, "e8b": run_e8b,
@@ -2113,7 +2192,7 @@ EXPERIMENTS = {"e1b": run_e1b, "e1": run_e1, "e2": run_e2, "e2b": run_e2b,
                "e12d": run_e12d, "e12e": run_e12e,
                "e13a": run_e13a, "e13b": run_e13b, "e13c": run_e13c, "e13d": run_e13d,
                "e13e": run_e13e, "e13f": run_e13f, "e14a": run_e14a, "e14b": run_e14b,
-               "e14c": run_e14c}
+               "e14c": run_e14c, "e14d": run_e14d}
 
 
 def main():
